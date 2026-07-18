@@ -1,0 +1,536 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly VERSION="0.1"
+readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
+
+usage() {
+    cat <<'EOF'
+Usage:
+  codex-git-finalize --repo <absolute-repo> --message <commit-message> [--dry-run] -- <file>...
+
+Options:
+  --repo <path>       Absolute path to the Git worktree root.
+  --message <text>    Non-empty commit message.
+  --dry-run           Report scope and risks without add, commit, fetch, or push.
+  -h, --help          Show this help.
+EOF
+}
+
+fail() {
+    printf 'ERROR: %s\n' "$*" >&2
+    exit 1
+}
+
+fail_after_commit() {
+    printf 'ERROR: %s\n' "$*" >&2
+    printf '本地提交 %s 已创建，但未完成 push；未执行 pull、rebase、merge 或 reset。\n' "$commit_hash" >&2
+    exit 1
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || fail "缺少必需命令: $1"
+}
+
+print_value_or() {
+    local value=$1
+    local empty_value=$2
+
+    if [[ -n "$value" ]]; then
+        printf '%s\n' "$value"
+    else
+        printf '%s\n' "$empty_value"
+    fi
+}
+
+print_path() {
+    printf '  - %q\n' "$1"
+}
+
+redact_stream() {
+    sed -E \
+        -e 's#(https?://)[^/@[:space:]]+@#\1[redacted]@#g' \
+        -e 's#([?&](access_token|auth|credential|password|secret|token)=)[^&[:space:]]+#\1[redacted]#gI' \
+        -e 's#(github_pat_|gh[pousr]_|sk-(proj-)?|xox[baprs]-)[A-Za-z0-9_.-]{8,}#\1[redacted]#g'
+}
+
+run_git_mutation() {
+    local display=$1
+    shift
+    local output
+    local status
+
+    printf '$ %s\n' "$display"
+    if output=$("$@" 2>&1); then
+        if [[ -n "$output" ]]; then
+            printf '%s\n' "$output" | redact_stream
+        fi
+        return 0
+    else
+        status=$?
+        if [[ -n "$output" ]]; then
+            printf '%s\n' "$output" | redact_stream >&2
+        fi
+        return "$status"
+    fi
+}
+
+sensitive_path_reason() {
+    local path=${1,,}
+    local env_re='(^|/)\.env($|[._-])'
+    local marker_re='(^|[/._ -])(credentials?|secrets?|tokens?)([/._ -]|$)'
+    local key_re='(^|[/._ -])(private|ssh)[._ -]?key([/._ -]|$)'
+    local ssh_name_re='(^|/)(id_rsa|id_dsa|id_ecdsa|id_ed25519)(\.pub)?$'
+
+    if [[ $path =~ $env_re ]]; then
+        printf '.env 路径'
+        return 0
+    fi
+    if [[ $path =~ $marker_re ]]; then
+        printf 'credential/secret/token 路径标记'
+        return 0
+    fi
+    if [[ $path =~ $key_re ]] || [[ $path =~ $ssh_name_re ]]; then
+        printf 'private key/SSH key 路径标记'
+        return 0
+    fi
+    return 1
+}
+
+working_content_reason() {
+    local path=$1
+    local private_key_re='-----BEGIN ([A-Z0-9]+[[:space:]]+)*PRIVATE KEY-----'
+    local known_token_re='(AKIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,})'
+    local ssh_key_re='(^|[[:space:]])ssh-(rsa|dss|ecdsa|ed25519)[[:space:]]+[A-Za-z0-9+/]{40,}'
+    local assignment_re="(credential|password|passwd|secret|token|api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token)[[:space:]]*[:=][[:space:]]*['\"][^'\"]{12,}['\"]"
+
+    if LC_ALL=C grep -aEiq -- "$private_key_re" "$path"; then
+        printf 'private key 内容签名'
+        return 0
+    fi
+    if LC_ALL=C grep -aEiq -- "$known_token_re" "$path"; then
+        printf '高置信度 token/credential 内容签名'
+        return 0
+    fi
+    if LC_ALL=C grep -aEiq -- "$ssh_key_re" "$path"; then
+        printf 'SSH key 内容签名'
+        return 0
+    fi
+    if LC_ALL=C grep -aEiq -- "$assignment_re" "$path"; then
+        printf '疑似硬编码 credential/secret/token'
+        return 0
+    fi
+    return 1
+}
+
+staged_content_reason() {
+    local oid=$1
+    local private_key_re='-----BEGIN ([A-Z0-9]+[[:space:]]+)*PRIVATE KEY-----'
+    local known_token_re='(AKIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,})'
+    local ssh_key_re='(^|[[:space:]])ssh-(rsa|dss|ecdsa|ed25519)[[:space:]]+[A-Za-z0-9+/]{40,}'
+    local assignment_re="(credential|password|passwd|secret|token|api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token)[[:space:]]*[:=][[:space:]]*['\"][^'\"]{12,}['\"]"
+
+    if LC_ALL=C grep -aEiq -- "$private_key_re" < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null); then
+        printf 'private key 内容签名'
+        return 0
+    fi
+    if LC_ALL=C grep -aEiq -- "$known_token_re" < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null); then
+        printf '高置信度 token/credential 内容签名'
+        return 0
+    fi
+    if LC_ALL=C grep -aEiq -- "$ssh_key_re" < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null); then
+        printf 'SSH key 内容签名'
+        return 0
+    fi
+    if LC_ALL=C grep -aEiq -- "$assignment_re" < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null); then
+        printf '疑似硬编码 credential/secret/token'
+        return 0
+    fi
+    return 1
+}
+
+is_working_large_binary() {
+    local path=$1
+    local size
+
+    [[ -f "$path" && ! -L "$path" ]] || return 1
+    size=$(stat -c '%s' -- "$path") || return 1
+    ((size > MAX_BINARY_BYTES)) || return 1
+    if LC_ALL=C grep -Iq -- . "$path"; then
+        return 1
+    fi
+    return 0
+}
+
+get_index_entry() {
+    local path=$1
+    local entry
+    local metadata
+
+    entry=$(git -C "$repo" --literal-pathspecs ls-files -s -- "$path") || return 1
+    [[ -n "$entry" && "$entry" == *$'\t'* ]] || return 1
+    metadata=${entry%%$'\t'*}
+    read -r _ index_oid index_stage <<<"$metadata"
+    [[ "$index_stage" == "0" ]]
+}
+
+is_staged_large_binary() {
+    local path=$1
+    local size
+    local numstat
+
+    get_index_entry "$path" || return 1
+    [[ $(git -C "$repo" cat-file -t "$index_oid" 2>/dev/null) == "blob" ]] || return 1
+    size=$(git -C "$repo" cat-file -s "$index_oid") || return 1
+    ((size > MAX_BINARY_BYTES)) || return 1
+    numstat=$(git -C "$repo" --literal-pathspecs diff --cached --numstat --no-renames -- "$path")
+    [[ "$numstat" == $'-\t-\t'* ]]
+}
+
+collect_staged_paths() {
+    mapfile -d '' -t staged_paths < <(
+        git -C "$repo" --literal-pathspecs diff --cached --name-only --no-renames -z
+    )
+}
+
+check_staged_scope() {
+    local path
+
+    collect_staged_paths
+    for path in "${staged_paths[@]}"; do
+        if [[ -z ${allowed_paths[$path]+present} ]]; then
+            fail "staged 文件超出显式范围: $(printf '%q' "$path")"
+        fi
+    done
+}
+
+print_snapshot() {
+    local head
+    local status
+    local remotes
+
+    current_branch=$(git -C "$repo" branch --show-current)
+    if ! head=$(git -C "$repo" rev-parse HEAD 2>/dev/null); then
+        head='(unborn HEAD)'
+    fi
+    status=$(git -C "$repo" status --short)
+    remotes=$(git -C "$repo" remote -v)
+    if ! current_upstream=$(
+        git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null
+    ); then
+        current_upstream=''
+    fi
+
+    printf '\n== Git Finalizer v%s: 提交前状态 ==\n' "$VERSION"
+    printf '$ git branch --show-current\n'
+    print_value_or "$current_branch" '(detached)'
+    printf '$ git rev-parse HEAD\n%s\n' "$head"
+    printf '$ git status --short\n'
+    print_value_or "$status" '(clean)'
+    printf '$ git remote -v\n'
+    if [[ -n "$remotes" ]]; then
+        printf '%s\n' "$remotes" | redact_stream
+    else
+        printf '(none)\n'
+    fi
+    printf '$ git rev-parse --abbrev-ref --symbolic-full-name @{upstream}\n'
+    print_value_or "$current_upstream" '(none)'
+}
+
+risk_count=0
+add_risk() {
+    printf '  - %s\n' "$*"
+    risk_count=$((risk_count + 1))
+}
+
+repo_arg=''
+message=''
+dry_run=0
+repo_seen=0
+message_seen=0
+separator_seen=0
+
+while (($# > 0)); do
+    case "$1" in
+        --repo)
+            (($# >= 2)) || fail '--repo 缺少参数'
+            ((repo_seen == 0)) || fail '--repo 只能指定一次'
+            repo_arg=$2
+            repo_seen=1
+            shift 2
+            ;;
+        --message)
+            (($# >= 2)) || fail '--message 缺少参数'
+            ((message_seen == 0)) || fail '--message 只能指定一次'
+            message=$2
+            message_seen=1
+            shift 2
+            ;;
+        --dry-run)
+            ((dry_run == 0)) || fail '--dry-run 只能指定一次'
+            dry_run=1
+            shift
+            ;;
+        --)
+            separator_seen=1
+            shift
+            break
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            fail "未知参数（文件列表前必须使用 --）: $1"
+            ;;
+    esac
+done
+
+((separator_seen == 1)) || fail '缺少文件列表分隔符 --'
+input_paths=("$@")
+
+((repo_seen == 1)) || fail '必须指定 --repo'
+((message_seen == 1)) || fail '必须指定 --message'
+[[ -n ${message//[[:space:]]/} ]] || fail 'commit message 不能为空'
+((${#input_paths[@]} > 0)) || fail '文件列表不能为空'
+[[ "$repo_arg" == /* ]] || fail '--repo 必须是绝对路径'
+[[ -d "$repo_arg" ]] || fail "repo 路径不存在或不是目录: $repo_arg"
+
+for command_name in git realpath stat grep sed; do
+    require_command "$command_name"
+done
+
+repo=$(realpath -e -- "$repo_arg") || fail "无法解析 repo 路径: $repo_arg"
+[[ $(git -C "$repo" rev-parse --is-inside-work-tree 2>/dev/null) == 'true' ]] ||
+    fail "不是 Git worktree: $repo"
+repo_root=$(git -C "$repo" rev-parse --show-toplevel)
+repo_root=$(realpath -e -- "$repo_root")
+[[ "$repo" == "$repo_root" ]] || fail "--repo 必须指向 worktree 根目录: $repo_root"
+
+declare -a paths=()
+declare -a absolute_paths=()
+declare -a staged_paths=()
+declare -A allowed_paths=()
+
+for input_path in "${input_paths[@]}"; do
+    [[ -n "$input_path" ]] || fail '文件路径不能为空'
+    [[ "$input_path" != *$'\n'* && "$input_path" != *$'\r'* && "$input_path" != *$'\t'* ]] ||
+        fail '文件路径不能包含换行符、回车符或制表符'
+
+    if [[ "$input_path" == /* ]]; then
+        candidate=$input_path
+    else
+        candidate=$repo/$input_path
+    fi
+    lexical_path=$(realpath -m -s -- "$candidate") || fail "无法解析文件路径: $input_path"
+    [[ "$lexical_path" == "$repo/"* ]] || fail "文件不在 repo 内: $input_path"
+    [[ "$lexical_path" != "$repo" ]] || fail '不能把 repo 根目录作为提交文件'
+
+    relative_path=${lexical_path#"$repo/"}
+    [[ "$relative_path" != '.git' && "$relative_path" != .git/* ]] ||
+        fail "禁止提交 Git 元数据路径: $input_path"
+    [[ -z ${allowed_paths[$relative_path]+present} ]] ||
+        fail "重复文件路径: $(printf '%q' "$relative_path")"
+
+    if [[ -L "$lexical_path" ]]; then
+        :
+    else
+        resolved_path=$(realpath -m -- "$candidate") || fail "无法解析文件路径: $input_path"
+        [[ "$resolved_path" == "$repo/"* ]] || fail "文件经符号链接解析后不在 repo 内: $input_path"
+        [[ ! -d "$lexical_path" ]] || fail "只接受显式文件，不能指定目录: $input_path"
+    fi
+
+    if [[ ! -e "$lexical_path" && ! -L "$lexical_path" ]]; then
+        git -C "$repo" --literal-pathspecs ls-files --error-unmatch -- "$relative_path" \
+            >/dev/null 2>&1 || fail "文件不存在且不是 tracked deletion: $input_path"
+    fi
+
+    allowed_paths["$relative_path"]=1
+    paths+=("$relative_path")
+    absolute_paths+=("$lexical_path")
+done
+
+print_snapshot
+
+printf '\n== 显式范围 ==\n'
+printf 'repo: %s\n' "$repo"
+printf 'branch: %s\n' "${current_branch:-'(detached)'}"
+printf 'commit message: %q\n' "$message"
+printf 'files:\n'
+for path in "${paths[@]}"; do
+    print_path "$path"
+done
+
+collect_staged_paths
+if ((dry_run == 1)); then
+    printf '\n== DRY-RUN 风险 ==\n'
+    [[ -n "$current_branch" ]] || add_risk '当前为 detached HEAD；真实运行会拒绝 commit'
+    if [[ -z "$current_upstream" ]] ||
+        ! git -C "$repo" rev-parse --verify '@{upstream}^{commit}' >/dev/null 2>&1; then
+        add_risk '当前分支没有可解析的 upstream；真实运行会在本地 commit 后停止 push'
+    fi
+
+    for path in "${staged_paths[@]}"; do
+        if [[ -z ${allowed_paths[$path]+present} ]]; then
+            add_risk "已有 staged 文件超出显式范围: $(printf '%q' "$path")"
+        fi
+    done
+
+    for index in "${!paths[@]}"; do
+        path=${paths[$index]}
+        absolute_path=${absolute_paths[$index]}
+        if reason=$(sensitive_path_reason "$path"); then
+            add_risk "真实运行会拒绝 $(printf '%q' "$path"): $reason"
+            continue
+        fi
+        if is_working_large_binary "$absolute_path"; then
+            add_risk "真实运行会拒绝大于 5 MiB 的明显二进制文件: $(printf '%q' "$path")"
+        fi
+        if [[ -f "$absolute_path" && ! -L "$absolute_path" ]]; then
+            if [[ ! -r "$absolute_path" ]]; then
+                add_risk "文件不可读: $(printf '%q' "$path")"
+            elif reason=$(working_content_reason "$absolute_path"); then
+                add_risk "真实运行会拒绝 $(printf '%q' "$path"): $reason"
+            fi
+        fi
+        path_status=$(
+            git -C "$repo" --literal-pathspecs status --short --untracked-files=all -- "$path"
+        )
+        if [[ -z "$path_status" ]]; then
+            add_risk "当前没有可见改动，可能导致 staged diff 为空: $(printf '%q' "$path")"
+        fi
+    done
+
+    if ((risk_count == 0)); then
+        printf '  - 未发现上述静态风险；实际运行前仍需保证测试和审查已通过。\n'
+    fi
+    printf '\nDRY-RUN 完成：未执行 git add、git commit、git fetch 或 git push。\n'
+    exit 0
+fi
+
+[[ -n "$current_branch" ]] || fail '当前为 detached HEAD，拒绝 commit'
+
+for path in "${staged_paths[@]}"; do
+    if [[ -z ${allowed_paths[$path]+present} ]]; then
+        fail "已有 staged 文件超出显式范围: $(printf '%q' "$path")"
+    fi
+done
+
+for index in "${!paths[@]}"; do
+    path=${paths[$index]}
+    absolute_path=${absolute_paths[$index]}
+    if reason=$(sensitive_path_reason "$path"); then
+        fail "拒绝敏感文件 $(printf '%q' "$path"): $reason"
+    fi
+    if is_working_large_binary "$absolute_path"; then
+        fail "拒绝大于 5 MiB 的明显二进制文件: $(printf '%q' "$path")"
+    fi
+    if [[ -f "$absolute_path" && ! -L "$absolute_path" ]]; then
+        [[ -r "$absolute_path" ]] || fail "文件不可读: $(printf '%q' "$path")"
+        if reason=$(working_content_reason "$absolute_path"); then
+            fail "拒绝敏感文件 $(printf '%q' "$path"): $reason"
+        fi
+    fi
+done
+
+printf '\n== 显式暂存 ==\n'
+if ! run_git_mutation 'git add -- <explicit paths>' \
+    git -C "$repo" --literal-pathspecs add -- "${paths[@]}"; then
+    fail 'git add 失败；未执行 commit 或 push'
+fi
+
+check_staged_scope
+((${#staged_paths[@]} > 0)) || fail 'staged diff 为空；未执行 commit 或 push'
+
+if [[ -n $(git -C "$repo" ls-files -u) ]]; then
+    fail 'index 存在未解决冲突；未执行 commit 或 push'
+fi
+
+printf '$ git diff --cached --name-status\n'
+git -C "$repo" --literal-pathspecs diff --cached --name-status --no-renames
+printf '$ git diff --cached --check\n'
+if ! git -C "$repo" diff --cached --check >/dev/null; then
+    fail 'git diff --cached --check 失败；未执行 commit 或 push'
+fi
+printf '(passed)\n'
+
+for path in "${staged_paths[@]}"; do
+    if reason=$(sensitive_path_reason "$path"); then
+        fail "拒绝敏感 staged 文件 $(printf '%q' "$path"): $reason"
+    fi
+    if is_staged_large_binary "$path"; then
+        fail "拒绝大于 5 MiB 的明显 staged 二进制文件: $(printf '%q' "$path")"
+    fi
+    if get_index_entry "$path" &&
+        [[ $(git -C "$repo" cat-file -t "$index_oid" 2>/dev/null) == 'blob' ]]; then
+        if reason=$(staged_content_reason "$index_oid"); then
+            fail "拒绝敏感 staged 文件 $(printf '%q' "$path"): $reason"
+        fi
+    fi
+done
+
+printf '\n== Commit ==\n'
+if ! run_git_mutation 'git commit -m <message>' git -C "$repo" commit -m "$message"; then
+    fail 'git commit 失败；未执行 fetch 或 push'
+fi
+
+commit_hash=$(git -C "$repo" rev-parse HEAD)
+commit_message=$(git -C "$repo" log -1 --format=%B)
+mapfile -d '' -t committed_paths < <(
+    git -C "$repo" diff-tree --root --no-commit-id --name-only -r --no-renames -z "$commit_hash"
+)
+for path in "${committed_paths[@]}"; do
+    if [[ -z ${allowed_paths[$path]+present} ]]; then
+        fail_after_commit "commit 包含超出显式范围的文件: $(printf '%q' "$path")"
+    fi
+done
+
+printf 'commit hash: %s\n' "$commit_hash"
+printf 'commit message: %q\n' "$commit_message"
+printf 'changed files:\n'
+git -C "$repo" diff-tree --root --no-commit-id --name-status -r --no-renames "$commit_hash"
+
+printf '\n== Fetch 与 fast-forward 检查 ==\n'
+if ! run_git_mutation 'git fetch' git -C "$repo" fetch; then
+    fail_after_commit 'git fetch 失败'
+fi
+
+if ! upstream_name=$(
+    git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null
+); then
+    fail_after_commit '当前分支不存在 upstream'
+fi
+if ! upstream_hash=$(git -C "$repo" rev-parse '@{upstream}' 2>/dev/null); then
+    fail_after_commit "upstream 无法解析: $upstream_name"
+fi
+
+local_hash=$(git -C "$repo" rev-parse HEAD)
+if ! git -C "$repo" merge-base --is-ancestor "$upstream_hash" "$local_hash"; then
+    counts=$(git -C "$repo" rev-list --left-right --count "$local_hash...$upstream_hash" 2>/dev/null || true)
+    fail_after_commit "本地落后或已与 upstream 分叉（HEAD...upstream ahead/behind: ${counts:-unknown}）"
+fi
+printf 'upstream: %s\n' "$upstream_name"
+printf 'fast-forward check: passed\n'
+
+printf '\n== Push ==\n'
+if ! run_git_mutation 'git push' git -C "$repo" push; then
+    fail_after_commit 'git push 失败'
+fi
+
+printf '\n== Push 后验证 ==\n'
+printf '$ git rev-parse HEAD\n'
+final_head=$(git -C "$repo" rev-parse HEAD)
+printf '%s\n' "$final_head"
+printf '$ git rev-parse @{upstream}\n'
+final_upstream=$(git -C "$repo" rev-parse '@{upstream}') ||
+    fail_after_commit 'push 后无法解析 upstream'
+printf '%s\n' "$final_upstream"
+printf '$ git status --short\n'
+final_status=$(git -C "$repo" status --short)
+print_value_or "$final_status" '(clean)'
+
+[[ "$final_head" == "$final_upstream" ]] ||
+    fail_after_commit 'push 后本地 HEAD 与 upstream 不一致'
+
+printf '\nGit Finalizer 完成：commit 与 push 已验证。\n'
