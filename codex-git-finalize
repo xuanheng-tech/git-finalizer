@@ -8,13 +8,15 @@ readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 usage() {
     cat <<'EOF'
 Usage:
-  codex-git-finalize --repo <absolute-repo> --message <commit-message> [--dry-run] -- <file>...
+  codex-git-finalize --repo <absolute-repo> --message <commit-message> [--dry-run]
+    [--allow-test-fixture <repo-relative-path>]... -- <file>...
 
 Options:
-  --repo <path>       Absolute path to the Git worktree root.
-  --message <text>    Non-empty commit message.
-  --dry-run           Report scope and risks without add, commit, fetch, or push.
-  -h, --help          Show this help.
+  --repo <path>                  Absolute path to the Git worktree root.
+  --message <text>               Non-empty commit message.
+  --allow-test-fixture <path>    Ignore content secret signatures for this exact tests/ file.
+  --dry-run                      Report scope and risks without add, commit, fetch, or push.
+  -h, --help                     Show this help.
 EOF
 }
 
@@ -171,7 +173,7 @@ get_index_entry() {
     entry=$(git -C "$repo" --literal-pathspecs ls-files -s -- "$path") || return 1
     [[ -n "$entry" && "$entry" == *$'\t'* ]] || return 1
     metadata=${entry%%$'\t'*}
-    read -r _ index_oid index_stage <<<"$metadata"
+    read -r index_mode index_oid index_stage <<<"$metadata"
     [[ "$index_stage" == "0" ]]
 }
 
@@ -202,6 +204,26 @@ check_staged_scope() {
         if [[ -z ${allowed_paths[$path]+present} ]]; then
             fail "staged 文件超出显式范围: $(printf '%q' "$path")"
         fi
+    done
+}
+
+check_test_fixture_staged_scope() {
+    local path
+    declare -A current_staged_paths=()
+
+    ((${#test_fixture_paths[@]} > 0)) || return 0
+    for path in "${staged_paths[@]}"; do
+        current_staged_paths["$path"]=1
+    done
+    for path in "${paths[@]}"; do
+        [[ -n ${current_staged_paths[$path]+present} ]] ||
+            fail "test fixture 例外要求 staged 范围精确等于显式文件范围: $(printf '%q' "$path")"
+    done
+    for path in "${test_fixture_paths[@]}"; do
+        get_index_entry "$path" ||
+            fail "test fixture 必须作为普通文件出现在 staged 范围: $(printf '%q' "$path")"
+        [[ "$index_mode" == '100644' || "$index_mode" == '100755' ]] ||
+            fail "test fixture staged 条目必须是普通文件: $(printf '%q' "$path")"
     done
 }
 
@@ -250,6 +272,7 @@ dry_run=0
 repo_seen=0
 message_seen=0
 separator_seen=0
+declare -a allow_test_fixture_args=()
 
 while (($# > 0)); do
     case "$1" in
@@ -271,6 +294,11 @@ while (($# > 0)); do
             ((dry_run == 0)) || fail '--dry-run 只能指定一次'
             dry_run=1
             shift
+            ;;
+        --allow-test-fixture)
+            (($# >= 2)) || fail '--allow-test-fixture 缺少参数'
+            allow_test_fixture_args+=("$2")
+            shift 2
             ;;
         --)
             separator_seen=1
@@ -312,6 +340,8 @@ declare -a paths=()
 declare -a absolute_paths=()
 declare -a staged_paths=()
 declare -A allowed_paths=()
+declare -a test_fixture_paths=()
+declare -A test_fixture_content_overrides=()
 
 for input_path in "${input_paths[@]}"; do
     [[ -n "$input_path" ]] || fail '文件路径不能为空'
@@ -351,6 +381,38 @@ for input_path in "${input_paths[@]}"; do
     absolute_paths+=("$lexical_path")
 done
 
+for fixture_arg in "${allow_test_fixture_args[@]}"; do
+    [[ -n "$fixture_arg" ]] || fail '--allow-test-fixture 路径不能为空'
+    [[ "$fixture_arg" != /* ]] || fail '--allow-test-fixture 必须是 repo-relative path'
+    [[ "$fixture_arg" != *$'\n'* && "$fixture_arg" != *$'\r'* && "$fixture_arg" != *$'\t'* ]] ||
+        fail '--allow-test-fixture 路径不能包含换行符、回车符或制表符'
+
+    fixture_lexical=$(realpath -m -s -- "$repo/$fixture_arg") ||
+        fail "无法解析 test fixture 路径: $fixture_arg"
+    [[ "$fixture_lexical" == "$repo/"* && "$fixture_lexical" != "$repo" ]] ||
+        fail "test fixture 不在 repo 内: $fixture_arg"
+    fixture_relative=${fixture_lexical#"$repo/"}
+    [[ "$fixture_arg" == "$fixture_relative" ]] ||
+        fail "--allow-test-fixture 必须是规范的 repo-relative path: $fixture_arg"
+    [[ "$fixture_relative" == tests/* ]] ||
+        fail "test fixture 内容例外只允许 tests/ 目录下的文件: $fixture_arg"
+    [[ -n ${allowed_paths[$fixture_relative]+present} ]] ||
+        fail "test fixture 不在本次显式文件范围内: $fixture_arg"
+    [[ -f "$fixture_lexical" && ! -L "$fixture_lexical" ]] ||
+        fail "test fixture 必须是仓库内普通文件: $fixture_arg"
+    fixture_resolved=$(realpath -e -- "$fixture_lexical") ||
+        fail "无法解析 test fixture 文件: $fixture_arg"
+    [[ "$fixture_resolved" == "$repo/"* ]] ||
+        fail "test fixture 经符号链接解析后不在 repo 内: $fixture_arg"
+    [[ "$fixture_resolved" == "$fixture_lexical" ]] ||
+        fail "test fixture 路径不能包含符号链接: $fixture_arg"
+    [[ -z ${test_fixture_content_overrides[$fixture_relative]+present} ]] ||
+        fail "重复 test fixture 内容例外: $(printf '%q' "$fixture_relative")"
+
+    test_fixture_content_overrides["$fixture_relative"]=1
+    test_fixture_paths+=("$fixture_relative")
+done
+
 print_snapshot
 
 printf '\n== 显式范围 ==\n'
@@ -360,6 +422,9 @@ printf 'commit message: %q\n' "$message"
 printf 'files:\n'
 for path in "${paths[@]}"; do
     print_path "$path"
+done
+for path in "${test_fixture_paths[@]}"; do
+    printf 'test fixture content override: %q\n' "$path"
 done
 
 collect_staged_paths
@@ -390,7 +455,8 @@ if ((dry_run == 1)); then
         if [[ -f "$absolute_path" && ! -L "$absolute_path" ]]; then
             if [[ ! -r "$absolute_path" ]]; then
                 add_risk "文件不可读: $(printf '%q' "$path")"
-            elif reason=$(working_content_reason "$absolute_path"); then
+            elif [[ -z ${test_fixture_content_overrides[$path]+present} ]] &&
+                reason=$(working_content_reason "$absolute_path"); then
                 add_risk "真实运行会拒绝 $(printf '%q' "$path"): $reason"
             fi
         fi
@@ -428,7 +494,8 @@ for index in "${!paths[@]}"; do
     fi
     if [[ -f "$absolute_path" && ! -L "$absolute_path" ]]; then
         [[ -r "$absolute_path" ]] || fail "文件不可读: $(printf '%q' "$path")"
-        if reason=$(working_content_reason "$absolute_path"); then
+        if [[ -z ${test_fixture_content_overrides[$path]+present} ]] &&
+            reason=$(working_content_reason "$absolute_path"); then
             fail "拒绝敏感文件 $(printf '%q' "$path"): $reason"
         fi
     fi
@@ -441,6 +508,7 @@ if ! run_git_mutation 'git add -- <explicit paths>' \
 fi
 
 check_staged_scope
+check_test_fixture_staged_scope
 ((${#staged_paths[@]} > 0)) || fail 'staged diff 为空；未执行 commit 或 push'
 
 if [[ -n $(git -C "$repo" ls-files -u) ]]; then
@@ -464,7 +532,8 @@ for path in "${staged_paths[@]}"; do
     fi
     if get_index_entry "$path" &&
         [[ $(git -C "$repo" cat-file -t "$index_oid" 2>/dev/null) == 'blob' ]]; then
-        if reason=$(staged_content_reason "$index_oid"); then
+        if [[ -z ${test_fixture_content_overrides[$path]+present} ]] &&
+            reason=$(staged_content_reason "$index_oid"); then
             fail "拒绝敏感 staged 文件 $(printf '%q' "$path"): $reason"
         fi
     fi
