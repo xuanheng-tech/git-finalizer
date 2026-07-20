@@ -10,10 +10,15 @@ usage() {
 Usage:
   codex-git-finalize --repo <absolute-repo> --message <commit-message> [--dry-run]
     [--allow-test-fixture <repo-relative-path>]... -- <file>...
+  codex-git-finalize --initial-publish --remote <remote-name>
+    --repo <absolute-repo> --message <commit-message> [--dry-run]
+    [--allow-test-fixture <repo-relative-path>]... -- <file>...
 
 Options:
   --repo <path>                  Absolute path to the Git worktree root.
   --message <text>               Non-empty commit message.
+  --initial-publish              Publish one root commit from an unborn branch.
+  --remote <name>                Required remote name for --initial-publish.
   --allow-test-fixture <path>    Ignore content secret signatures for this exact tests/ file.
   --dry-run                      Report scope and risks without add, commit, fetch, or push.
   -h, --help                     Show this help.
@@ -28,6 +33,15 @@ fail() {
 fail_after_commit() {
     printf 'ERROR: %s\n' "$*" >&2
     printf '本地提交 %s 已创建，但未完成 push；未执行 pull、rebase、merge 或 reset。\n' "$commit_hash" >&2
+    exit 1
+}
+
+fail_initial_after_commit() {
+    printf 'ERROR: %s\n' "$*" >&2
+    printf '本地 root commit %s 已保留；不得重跑 --initial-publish。\n' "$commit_hash" >&2
+    printf '未来恢复入口（本版本尚未实现）:\n' >&2
+    printf '  codex-git-finalize --resume-initial-publish %s --remote %q --repo %q\n' \
+        "$commit_hash" "$initial_remote" "$repo" >&2
     exit 1
 }
 
@@ -469,6 +483,204 @@ check_normal_remote_state() {
     printf 'fast-forward check: passed\n'
 }
 
+resolve_initial_target() {
+    local symbolic_head
+    local show_ref_status
+    local existing_commit
+    local branch_remote_values
+    local branch_merge_values
+    local configured_remotes
+    local fetch_urls
+    local push_urls
+
+    initial_target_error=''
+    if ! symbolic_head=$(git -C "$repo" symbolic-ref --quiet HEAD 2>/dev/null); then
+        initial_target_error='initial-publish 要求 symbolic attached branch'
+        return 1
+    fi
+    if [[ "$symbolic_head" != refs/heads/* || "$symbolic_head" == 'refs/heads/' ]]; then
+        initial_target_error='initial-publish 的 symbolic HEAD 不是本地 branch'
+        return 1
+    fi
+    initial_branch_ref=$symbolic_head
+    initial_branch=${initial_branch_ref#refs/heads/}
+    if [[ "$current_branch" != "$initial_branch" ]]; then
+        initial_target_error='symbolic HEAD 与当前 branch 名不一致'
+        return 1
+    fi
+
+    if git -C "$repo" show-ref --verify --quiet "$initial_branch_ref"; then
+        initial_target_error='initial-publish 只接受 branch ref 尚不存在的 unborn 仓库'
+        return 1
+    else
+        show_ref_status=$?
+        if ((show_ref_status != 1)); then
+            initial_target_error='无法安全确认当前 branch ref 尚不存在'
+            return 1
+        fi
+    fi
+    if git -C "$repo" rev-parse --verify 'HEAD^{commit}' >/dev/null 2>&1; then
+        initial_target_error='initial-publish 不接受已有 HEAD commit 的仓库'
+        return 1
+    fi
+    if ! existing_commit=$(git -C "$repo" rev-list --all --max-count=1 2>/dev/null); then
+        initial_target_error='无法确认本地仓库不存在可解析 commit'
+        return 1
+    fi
+    if [[ -n "$existing_commit" ]]; then
+        initial_target_error='initial-publish 不接受已有可解析 commit 的仓库'
+        return 1
+    fi
+
+    branch_remote_values=$(
+        git -C "$repo" config --get-all "branch.$initial_branch.remote" 2>/dev/null || true
+    )
+    branch_merge_values=$(
+        git -C "$repo" config --get-all "branch.$initial_branch.merge" 2>/dev/null || true
+    )
+    if [[ -n "$current_upstream" || -n "$branch_remote_values" || -n "$branch_merge_values" ]]; then
+        initial_target_error='initial-publish 要求当前 unborn branch 未配置 upstream'
+        return 1
+    fi
+
+    if [[ -z "$remote_arg" || "$remote_arg" == -* ||
+        "$remote_arg" == *$'\n'* || "$remote_arg" == *$'\r'* || "$remote_arg" == *$'\t'* ]]; then
+        initial_target_error='--remote 必须是有效的已配置 remote 名'
+        return 1
+    fi
+    if ! configured_remotes=$(git -C "$repo" remote 2>/dev/null); then
+        initial_target_error='无法读取已配置 remote'
+        return 1
+    fi
+    if ! grep -Fxq -- "$remote_arg" <<<"$configured_remotes"; then
+        initial_target_error="未配置指定 remote: $remote_arg"
+        return 1
+    fi
+    initial_remote=$remote_arg
+
+    if ! fetch_urls=$(git -C "$repo" remote get-url --all "$initial_remote" 2>/dev/null) ||
+        [[ -z "$fetch_urls" || "$fetch_urls" == *$'\n'* ]]; then
+        initial_target_error='initial remote 缺失或配置了多个 fetch endpoint'
+        return 1
+    fi
+    if ! push_urls=$(git -C "$repo" remote get-url --push --all "$initial_remote" 2>/dev/null) ||
+        [[ -z "$push_urls" || "$push_urls" == *$'\n'* ]]; then
+        initial_target_error='initial remote 缺失或配置了多个 push endpoint'
+        return 1
+    fi
+    if [[ "$fetch_urls" != "$push_urls" ]]; then
+        initial_target_error='initial remote 的 fetch 与 push endpoint 不一致'
+        return 1
+    fi
+}
+
+check_initial_worktree_scope() {
+    local entry
+    local path
+
+    initial_scope_error=''
+    while IFS= read -r -d '' entry; do
+        if ((${#entry} < 4)); then
+            initial_scope_error='无法解析 initial-publish worktree 状态'
+            return 1
+        fi
+        path=${entry:3}
+        if [[ -z ${allowed_paths[$path]+present} ]]; then
+            initial_scope_error="initial-publish 存在显式范围外改动: $(printf '%q' "$path")"
+            return 1
+        fi
+    done < <(
+        git -C "$repo" --literal-pathspecs status --porcelain=v1 -z --untracked-files=all
+    )
+}
+
+check_initial_remote_empty() {
+    local output
+    local status
+
+    initial_remote_error=''
+    if output=$(git -C "$repo" ls-remote --quiet "$initial_remote" 2>/dev/null); then
+        :
+    else
+        status=$?
+        initial_remote_error="远端空状态查询失败（exit $status）"
+        return 1
+    fi
+    if [[ -n "$output" ]]; then
+        initial_remote_error='远端不是完全空 remote'
+        return 1
+    fi
+    printf 'remote empty check: passed\n'
+}
+
+verify_initial_root_commit() {
+    local resolved_head
+    local parent_line
+    local symbolic_head
+    local path
+    declare -A expected_paths=()
+
+    initial_commit_error=''
+    if ! resolved_head=$(git -C "$repo" rev-parse --verify 'HEAD^{commit}' 2>/dev/null) ||
+        [[ "$resolved_head" != "$commit_hash" ]]; then
+        initial_commit_error='root commit 后 HEAD 无法精确解析'
+        return 1
+    fi
+    if ! parent_line=$(git -C "$repo" rev-list --parents -n 1 "$commit_hash" 2>/dev/null) ||
+        [[ "$parent_line" != "$commit_hash" ]]; then
+        initial_commit_error='initial-publish 创建的 commit 不是 root commit'
+        return 1
+    fi
+    if ((${#committed_paths[@]} == 0)); then
+        initial_commit_error='initial-publish 不允许空 root commit'
+        return 1
+    fi
+    if ((${#committed_paths[@]} != ${#staged_paths[@]})); then
+        initial_commit_error='root commit 文件范围与 staged 范围不一致'
+        return 1
+    fi
+    for path in "${staged_paths[@]}"; do
+        expected_paths["$path"]=1
+    done
+    for path in "${committed_paths[@]}"; do
+        if [[ -z ${expected_paths[$path]+present} ]]; then
+            initial_commit_error='root commit 文件范围与 staged 范围不一致'
+            return 1
+        fi
+    done
+    if ! symbolic_head=$(git -C "$repo" symbolic-ref --quiet HEAD 2>/dev/null) ||
+        [[ "$symbolic_head" != "$initial_branch_ref" ]]; then
+        initial_commit_error='root commit 后 symbolic branch 发生变化'
+        return 1
+    fi
+}
+
+query_initial_published_remote() {
+    local output
+    local status
+    local ref_name
+    local extra
+
+    initial_remote_error=''
+    if output=$(git -C "$repo" ls-remote --quiet --refs "$initial_remote" 2>/dev/null); then
+        :
+    else
+        status=$?
+        initial_remote_error="push 后远端 ref 查询失败（exit $status）"
+        return 1
+    fi
+    if [[ -z "$output" || "$output" == *$'\n'* ]]; then
+        initial_remote_error='push 后远端 ref 集合不是唯一目标 branch'
+        return 1
+    fi
+    IFS=$'\t' read -r initial_remote_oid ref_name extra <<<"$output"
+    if [[ ! "$initial_remote_oid" =~ ^[0-9a-f]+$ ||
+        "$ref_name" != "$initial_branch_ref" || -n "$extra" ]]; then
+        initial_remote_error='push 后远端 ref 集合不是唯一目标 branch'
+        return 1
+    fi
+}
+
 risk_count=0
 add_risk() {
     printf '  - %s\n' "$*"
@@ -477,9 +689,12 @@ add_risk() {
 
 repo_arg=''
 message=''
+remote_arg=''
 dry_run=0
+initial_publish=0
 repo_seen=0
 message_seen=0
+remote_seen=0
 separator_seen=0
 declare -a allow_test_fixture_args=()
 
@@ -497,6 +712,18 @@ while (($# > 0)); do
             ((message_seen == 0)) || fail '--message 只能指定一次'
             message=$2
             message_seen=1
+            shift 2
+            ;;
+        --initial-publish)
+            ((initial_publish == 0)) || fail '--initial-publish 只能指定一次'
+            initial_publish=1
+            shift
+            ;;
+        --remote)
+            (($# >= 2)) || fail '--remote 缺少参数'
+            ((remote_seen == 0)) || fail '--remote 只能指定一次'
+            remote_arg=$2
+            remote_seen=1
             shift 2
             ;;
         --dry-run)
@@ -529,6 +756,14 @@ input_paths=("$@")
 
 ((repo_seen == 1)) || fail '必须指定 --repo'
 ((message_seen == 1)) || fail '必须指定 --message'
+if ((initial_publish == 1)); then
+    ((remote_seen == 1)) || fail '--initial-publish 必须指定 --remote'
+    [[ -n "$remote_arg" && "$remote_arg" != -* &&
+        "$remote_arg" != *$'\n'* && "$remote_arg" != *$'\r'* && "$remote_arg" != *$'\t'* ]] ||
+        fail '--remote 必须是有效的 remote 名'
+else
+    ((remote_seen == 0)) || fail '--remote 只允许与 --initial-publish 一起使用'
+fi
 [[ -n ${message//[[:space:]]/} ]] || fail 'commit message 不能为空'
 ((${#input_paths[@]} > 0)) || fail '文件列表不能为空'
 [[ "$repo_arg" == /* ]] || fail '--repo 必须是绝对路径'
@@ -626,6 +861,10 @@ print_snapshot
 
 printf '\n== 显式范围 ==\n'
 printf 'repo: %s\n' "$repo"
+if ((initial_publish == 1)); then
+    printf 'mode: initial-publish\n'
+    printf 'remote: %s\n' "$remote_arg"
+fi
 printf 'branch: %s\n' "${current_branch:-'(detached)'}"
 printf 'commit message: %q\n' "$message"
 printf 'files:\n'
@@ -639,7 +878,18 @@ done
 collect_staged_paths
 if ((dry_run == 1)); then
     printf '\n== DRY-RUN 风险 ==\n'
-    if ! resolve_normal_target; then
+    if ((initial_publish == 1)); then
+        if ! resolve_initial_target; then
+            add_risk "$initial_target_error；真实运行会在 git add 和 commit 前停止"
+        fi
+        if [[ -n $(git -C "$repo" ls-files --stage) ]]; then
+            add_risk 'initial-publish 检测到预先存在的 index 条目'
+        fi
+        if ! check_initial_worktree_scope; then
+            add_risk "$initial_scope_error"
+        fi
+        printf '  - dry-run 未执行 ls-remote；未实时核验远端是否完全为空。\n'
+    elif ! resolve_normal_target; then
         add_risk "$normal_target_error；真实运行会在 git add 和 commit 前停止"
     else
         printf '  - dry-run 未执行 fetch；未实时核验远端 branch 或 ahead/behind。\n'
@@ -684,7 +934,17 @@ if ((dry_run == 1)); then
     exit 0
 fi
 
-if ! resolve_normal_target; then
+if ((initial_publish == 1)); then
+    if ! resolve_initial_target; then
+        fail "$initial_target_error"
+    fi
+    if [[ -n $(git -C "$repo" ls-files --stage) ]]; then
+        fail 'initial-publish 不允许预先存在 index 或 staged 内容'
+    fi
+    if ! check_initial_worktree_scope; then
+        fail "$initial_scope_error"
+    fi
+elif ! resolve_normal_target; then
     fail "$normal_target_error"
 fi
 
@@ -712,9 +972,16 @@ for index in "${!paths[@]}"; do
     fi
 done
 
-printf '\n== Commit 前 fetch 与 fast-forward 检查 ==\n'
-if ! check_normal_remote_state 'commit 前'; then
-    fail "$normal_remote_error；未执行新增 git add、commit 或 push"
+if ((initial_publish == 1)); then
+    printf '\n== Root commit 前远端空状态检查 ==\n'
+    if ! check_initial_remote_empty; then
+        fail "$initial_remote_error；未执行新增 git add、commit 或 push"
+    fi
+else
+    printf '\n== Commit 前 fetch 与 fast-forward 检查 ==\n'
+    if ! check_normal_remote_state 'commit 前'; then
+        fail "$normal_remote_error；未执行新增 git add、commit 或 push"
+    fi
 fi
 
 printf '\n== 显式暂存 ==\n'
@@ -767,56 +1034,112 @@ mapfile -d '' -t committed_paths < <(
 )
 for path in "${committed_paths[@]}"; do
     if [[ -z ${allowed_paths[$path]+present} ]]; then
-        fail_after_commit "commit 包含超出显式范围的文件: $(printf '%q' "$path")"
+        if ((initial_publish == 1)); then
+            fail_initial_after_commit \
+                "root commit 包含超出显式范围的文件: $(printf '%q' "$path")"
+        else
+            fail_after_commit "commit 包含超出显式范围的文件: $(printf '%q' "$path")"
+        fi
     fi
 done
+
+if ((initial_publish == 1)) && ! verify_initial_root_commit; then
+    fail_initial_after_commit "$initial_commit_error"
+fi
 
 printf 'commit hash: %s\n' "$commit_hash"
 printf 'commit message: %q\n' "$commit_message"
 printf 'changed files:\n'
 git -C "$repo" diff-tree --root --no-commit-id --name-status -r --no-renames "$commit_hash"
 
-printf '\n== Commit 后 fetch 与 fast-forward 检查 ==\n'
-if ! resolve_normal_target; then
-    fail_after_commit "$normal_target_error"
-fi
-if ! check_normal_remote_state 'commit 后'; then
-    fail_after_commit "$normal_remote_error"
-fi
+if ((initial_publish == 1)); then
+    printf '\n== Root commit 后远端空状态复查 ==\n'
+    if ! check_initial_remote_empty; then
+        fail_initial_after_commit "$initial_remote_error"
+    fi
 
-printf '\n== Push ==\n'
-if ! run_git_remote_command 'git push <upstream remote> HEAD:<upstream branch>' \
-    git -C "$repo" push "$upstream_remote" "HEAD:$upstream_branch_ref"; then
-    fail_after_commit 'git push 失败'
-fi
+    printf '\n== Initial push ==\n'
+    if ! run_git_remote_command \
+        'git push --set-upstream --no-follow-tags <remote> HEAD:<branch>' \
+        git -C "$repo" push --set-upstream --no-follow-tags \
+        "$initial_remote" "HEAD:$initial_branch_ref"; then
+        fail_initial_after_commit 'initial push 失败或结果无法确认'
+    fi
 
-printf '\n== Push 后验证 ==\n'
-printf '$ git rev-parse HEAD\n'
-final_head=$(git -C "$repo" rev-parse HEAD)
-printf '%s\n' "$final_head"
-printf '$ git rev-parse @{upstream}\n'
-final_upstream=$(git -C "$repo" rev-parse '@{upstream}^{commit}') ||
-    fail_after_commit 'push 后无法解析 upstream'
-printf '%s\n' "$final_upstream"
-if ! query_remote_branch; then
-    fail_after_commit "push 后 $remote_query_error"
-fi
-printf 'remote branch OID: %s\n' "$remote_branch_oid"
-if ! final_counts=$(
-    git -C "$repo" rev-list --left-right --count "$final_head...$final_upstream" 2>/dev/null
-); then
-    fail_after_commit 'push 后无法计算 HEAD 与 upstream 的 ahead/behind'
-fi
-printf 'ahead/behind: %s\n' "$final_counts"
-printf '$ git status --short\n'
-final_status=$(git -C "$repo" status --short)
-print_value_or "$final_status" '(clean)'
+    printf '\n== Initial push 后验证 ==\n'
+    final_head=$(git -C "$repo" rev-parse --verify 'HEAD^{commit}') ||
+        fail_initial_after_commit 'push 后无法解析 HEAD'
+    final_upstream=$(git -C "$repo" rev-parse --verify '@{upstream}^{commit}') ||
+        fail_initial_after_commit 'push 后无法解析 upstream'
+    if ! query_initial_published_remote; then
+        fail_initial_after_commit "$initial_remote_error"
+    fi
+    if ! final_counts=$(
+        git -C "$repo" rev-list --left-right --count "$final_head...$final_upstream" 2>/dev/null
+    ); then
+        fail_initial_after_commit 'push 后无法计算 HEAD 与 upstream 的 ahead/behind'
+    fi
+    final_status=$(git -C "$repo" status --porcelain=v1 --untracked-files=all)
 
-[[ "$final_head" == "$final_upstream" ]] ||
-    fail_after_commit 'push 后本地 HEAD 与 upstream 不一致'
-[[ "$final_head" == "$remote_branch_oid" ]] ||
-    fail_after_commit 'push 后本地 HEAD 与远端 branch 不一致'
-[[ "$final_counts" == $'0\t0' ]] ||
-    fail_after_commit 'push 后本地 HEAD 与 upstream ahead/behind 不是 0/0'
+    printf 'HEAD: %s\n' "$final_head"
+    printf 'upstream: %s\n' "$final_upstream"
+    printf 'remote branch OID: %s\n' "$initial_remote_oid"
+    printf 'ahead/behind: %s\n' "$final_counts"
+    printf 'worktree: %s\n' "${final_status:-clean}"
+
+    [[ "$final_head" == "$final_upstream" ]] ||
+        fail_initial_after_commit 'push 后本地 HEAD 与 upstream 不一致'
+    [[ "$final_head" == "$initial_remote_oid" ]] ||
+        fail_initial_after_commit 'push 后本地 HEAD 与远端 branch 不一致'
+    [[ "$final_counts" == $'0\t0' ]] ||
+        fail_initial_after_commit 'push 后本地 HEAD 与 upstream ahead/behind 不是 0/0'
+    [[ -z "$final_status" ]] ||
+        fail_initial_after_commit 'push 后 worktree 不干净'
+    git -C "$repo" diff --cached --quiet ||
+        fail_initial_after_commit 'push 后 index 不干净'
+else
+    printf '\n== Commit 后 fetch 与 fast-forward 检查 ==\n'
+    if ! resolve_normal_target; then
+        fail_after_commit "$normal_target_error"
+    fi
+    if ! check_normal_remote_state 'commit 后'; then
+        fail_after_commit "$normal_remote_error"
+    fi
+
+    printf '\n== Push ==\n'
+    if ! run_git_remote_command 'git push <upstream remote> HEAD:<upstream branch>' \
+        git -C "$repo" push "$upstream_remote" "HEAD:$upstream_branch_ref"; then
+        fail_after_commit 'git push 失败'
+    fi
+
+    printf '\n== Push 后验证 ==\n'
+    printf '$ git rev-parse HEAD\n'
+    final_head=$(git -C "$repo" rev-parse HEAD)
+    printf '%s\n' "$final_head"
+    printf '$ git rev-parse @{upstream}\n'
+    final_upstream=$(git -C "$repo" rev-parse '@{upstream}^{commit}') ||
+        fail_after_commit 'push 后无法解析 upstream'
+    printf '%s\n' "$final_upstream"
+    if ! query_remote_branch; then
+        fail_after_commit "push 后 $remote_query_error"
+    fi
+    printf 'remote branch OID: %s\n' "$remote_branch_oid"
+    if ! final_counts=$(
+        git -C "$repo" rev-list --left-right --count "$final_head...$final_upstream" 2>/dev/null
+    ); then
+        fail_after_commit 'push 后无法计算 HEAD 与 upstream 的 ahead/behind'
+    fi
+    printf 'ahead/behind: %s\n' "$final_counts"
+    printf '$ git status --short\n'
+    final_status=$(git -C "$repo" status --short)
+    print_value_or "$final_status" '(clean)'
+
+    [[ "$final_head" == "$final_upstream" ]] ||
+        fail_after_commit 'push 后本地 HEAD 与 upstream 不一致'
+    [[ "$final_head" == "$remote_branch_oid" ]] ||
+        fail_after_commit 'push 后本地 HEAD 与远端 branch 不一致'
+    [[ "$final_counts" == $'0\t0' ]] ||
+        fail_after_commit 'push 后本地 HEAD 与 upstream ahead/behind 不是 0/0'
+fi
 
 printf '\nGit Finalizer 完成：commit 与 push 已验证。\n'

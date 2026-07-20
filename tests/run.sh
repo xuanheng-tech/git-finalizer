@@ -102,6 +102,37 @@ make_synced_repo() {
     git -C "$test_repo" push --quiet --set-upstream origin main
 }
 
+make_unborn_repo() {
+    local case_dir=$1
+
+    test_repo=$case_dir/repo
+    test_remote=$case_dir/remote.git
+    mkdir -p -- "$case_dir"
+    git init --quiet --bare --initial-branch=main "$test_remote"
+    git init --quiet --initial-branch=main "$test_repo"
+    configure_author "$test_repo"
+    git -C "$test_repo" remote add origin "$test_remote"
+}
+
+make_seed_repo() {
+    local destination=$1
+
+    git init --quiet --initial-branch=main "$destination"
+    configure_author "$destination"
+    printf 'seed\n' >"$destination/seed.txt"
+    git -C "$destination" add -- seed.txt
+    git -C "$destination" commit --quiet -m 'seed'
+}
+
+push_seed_ref() {
+    local seed=$1
+    local remote=$2
+    local destination_ref=$3
+
+    make_seed_repo "$seed"
+    git -C "$seed" push --quiet "$remote" "HEAD:$destination_ref"
+}
+
 make_competitor() {
     local destination=$1
 
@@ -123,6 +154,37 @@ file_snapshot() {
 
 remote_main() {
     git --git-dir="$1" rev-parse refs/heads/main
+}
+
+remote_refs() {
+    git --git-dir="$1" for-each-ref --format='%(objectname)%09%(refname)'
+}
+
+git_metadata_snapshot() {
+    local repo=$1
+    local path
+
+    while IFS= read -r -d '' path; do
+        printf '%s\t' "${path#"$repo/.git/"}"
+        sha256sum "$path" | awk '{print $1}'
+    done < <(find "$repo/.git" -type f -print0 | sort -z)
+}
+
+assert_unborn() {
+    local repo=$1
+
+    if git -C "$repo" rev-parse --verify HEAD >/dev/null 2>&1; then
+        fail_assertion 'repository is no longer unborn'
+    fi
+}
+
+assert_root_commit() {
+    local repo=$1
+    local head
+
+    head=$(git -C "$repo" rev-parse HEAD)
+    assert_equal "$head" "$(git -C "$repo" rev-list --parents -n 1 HEAD)" \
+        'commit is not a root commit'
 }
 
 assert_precommit_state_unchanged() {
@@ -512,6 +574,466 @@ test_push_target_mismatch() {
         "$test_repo" "$head_before" "$index_before" "$status_before" "$file_before"
 }
 
+test_initial_publish_success() {
+    local case_dir=$tmp_root/initial-success
+    local output=$case_dir/output.log
+    local head committed_paths counts
+
+    make_unborn_repo "$case_dir"
+    printf 'first file\n' >"$test_repo/first.txt"
+    printf 'second file\n' >"$test_repo/second.txt"
+
+    expect_success "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message 'initial commit' -- first.txt second.txt
+
+    head=$(git -C "$test_repo" rev-parse HEAD)
+    assert_root_commit "$test_repo"
+    assert_equal '1' "$(git -C "$test_repo" rev-list --count HEAD)" \
+        'initial publish created more than one commit'
+    committed_paths=$(git -C "$test_repo" diff-tree --root --no-commit-id --name-only -r HEAD)
+    assert_equal $'first.txt\nsecond.txt' "$committed_paths" \
+        'root commit did not contain the explicit files'
+    assert_equal "$head" "$(git -C "$test_repo" rev-parse '@{upstream}')" \
+        'initial upstream mismatch'
+    assert_equal "$head" "$(remote_main "$test_remote")" 'initial remote mismatch'
+    assert_equal "$head"$'\trefs/heads/main' "$(remote_refs "$test_remote")" \
+        'initial remote contains unexpected refs'
+    counts=$(git -C "$test_repo" rev-list --left-right --count 'HEAD...@{upstream}')
+    assert_equal $'0\t0' "$counts" 'initial ahead/behind is not 0/0'
+    assert_equal '' "$(status_snapshot "$test_repo")" 'initial success left worktree dirty'
+    assert_equal '' "$(git -C "$test_repo" diff --cached --name-only)" \
+        'initial success left staged changes'
+}
+
+test_initial_rejects_same_branch_remote() {
+    local case_dir=$tmp_root/initial-remote-main
+    local output=$case_dir/output.log
+    local refs_before
+
+    make_unborn_repo "$case_dir"
+    push_seed_ref "$case_dir/seed" "$test_remote" refs/heads/main
+    refs_before=$(remote_refs "$test_remote")
+    printf 'first file\n' >"$test_repo/first.txt"
+
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message test -- first.txt
+    assert_file_contains "$output" '远端不是完全空 remote' \
+        'same-branch remote was not rejected'
+    assert_unborn "$test_repo"
+    assert_equal '' "$(index_snapshot "$test_repo")" 'same-branch rejection changed index'
+    assert_equal "$refs_before" "$(remote_refs "$test_remote")" \
+        'same-branch rejection changed remote'
+}
+
+test_initial_rejects_other_branch_remote() {
+    local case_dir=$tmp_root/initial-remote-other
+    local output=$case_dir/output.log
+    local refs_before
+
+    make_unborn_repo "$case_dir"
+    push_seed_ref "$case_dir/seed" "$test_remote" refs/heads/other
+    refs_before=$(remote_refs "$test_remote")
+    printf 'first file\n' >"$test_repo/first.txt"
+
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message test -- first.txt
+    assert_file_contains "$output" '远端不是完全空 remote' \
+        'other-branch remote was not rejected'
+    assert_unborn "$test_repo"
+    assert_equal '' "$(index_snapshot "$test_repo")" 'other-branch rejection changed index'
+    assert_equal "$refs_before" "$(remote_refs "$test_remote")" \
+        'other-branch rejection changed remote'
+}
+
+test_initial_rejects_tag_only_remote() {
+    local case_dir=$tmp_root/initial-remote-tag
+    local output=$case_dir/output.log
+    local refs_before
+
+    make_unborn_repo "$case_dir"
+    push_seed_ref "$case_dir/seed" "$test_remote" refs/tags/v0
+    refs_before=$(remote_refs "$test_remote")
+    printf 'first file\n' >"$test_repo/first.txt"
+
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message test -- first.txt
+    assert_file_contains "$output" '远端不是完全空 remote' 'tag-only remote was not rejected'
+    assert_unborn "$test_repo"
+    assert_equal '' "$(index_snapshot "$test_repo")" 'tag-only rejection changed index'
+    assert_equal "$refs_before" "$(remote_refs "$test_remote")" \
+        'tag-only rejection changed remote'
+}
+
+test_initial_remote_configuration_validation() {
+    local case_dir=$tmp_root/initial-remote-config
+    local output
+    local other_remote
+    local endpoint_marker='PRIVATE_INITIAL_ENDPOINT_DO_NOT_PRINT'
+
+    make_unborn_repo "$case_dir/missing"
+    printf 'first file\n' >"$test_repo/first.txt"
+    output=$case_dir/missing.log
+    expect_failure "$output" "$finalizer" --initial-publish --remote missing \
+        --repo "$test_repo" --message test -- first.txt
+    assert_file_contains "$output" '未配置指定 remote' 'missing initial remote was not rejected'
+    assert_unborn "$test_repo"
+
+    make_unborn_repo "$case_dir/multi-fetch"
+    other_remote=$case_dir/$endpoint_marker-fetch.git
+    git init --quiet --bare --initial-branch=main "$other_remote"
+    git -C "$test_repo" config --add remote.origin.url "$other_remote"
+    printf 'first file\n' >"$test_repo/first.txt"
+    output=$case_dir/multi-fetch.log
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message test -- first.txt
+    assert_file_contains "$output" '多个 fetch endpoint' \
+        'multiple fetch endpoints were not rejected'
+    assert_file_not_contains "$output" "$endpoint_marker" \
+        'multiple-fetch diagnostic disclosed endpoint'
+    assert_unborn "$test_repo"
+
+    make_unborn_repo "$case_dir/multi-push"
+    other_remote=$case_dir/$endpoint_marker-push.git
+    git init --quiet --bare --initial-branch=main "$other_remote"
+    git -C "$test_repo" config --add remote.origin.pushurl "$test_remote"
+    git -C "$test_repo" config --add remote.origin.pushurl "$other_remote"
+    printf 'first file\n' >"$test_repo/first.txt"
+    output=$case_dir/multi-push.log
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message test -- first.txt
+    assert_file_contains "$output" '多个 push endpoint' \
+        'multiple push endpoints were not rejected'
+    assert_file_not_contains "$output" "$endpoint_marker" \
+        'multiple-push diagnostic disclosed endpoint'
+    assert_unborn "$test_repo"
+
+    make_unborn_repo "$case_dir/mismatch"
+    other_remote=$case_dir/$endpoint_marker-mismatch.git
+    git init --quiet --bare --initial-branch=main "$other_remote"
+    git -C "$test_repo" config remote.origin.pushurl "$other_remote"
+    printf 'first file\n' >"$test_repo/first.txt"
+    output=$case_dir/mismatch.log
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message test -- first.txt
+    assert_file_contains "$output" 'fetch 与 push endpoint 不一致' \
+        'mismatched endpoints were not rejected'
+    assert_file_not_contains "$output" "$endpoint_marker" \
+        'endpoint-mismatch diagnostic disclosed endpoint'
+    assert_unborn "$test_repo"
+
+    make_unborn_repo "$case_dir/upstream"
+    git -C "$test_repo" config branch.main.remote origin
+    git -C "$test_repo" config branch.main.merge refs/heads/main
+    printf 'first file\n' >"$test_repo/first.txt"
+    output=$case_dir/upstream.log
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message test -- first.txt
+    assert_file_contains "$output" '未配置 upstream' \
+        'abnormal unborn upstream configuration was not rejected'
+    assert_unborn "$test_repo"
+}
+
+test_initial_rejects_non_unborn_repositories() {
+    local case_dir=$tmp_root/initial-invalid-state
+    local repo=$case_dir/repo
+    local remote=$case_dir/remote.git
+    local bare=$case_dir/bare.git
+    local plain=$case_dir/plain
+    local output
+    local head_before
+
+    mkdir -p -- "$case_dir" "$plain"
+    git init --quiet --bare --initial-branch=main "$remote"
+    git init --quiet --initial-branch=main "$repo"
+    configure_author "$repo"
+    printf 'base\n' >"$repo/first.txt"
+    git -C "$repo" add -- first.txt
+    git -C "$repo" commit --quiet -m base
+    git -C "$repo" remote add origin "$remote"
+    head_before=$(git -C "$repo" rev-parse HEAD)
+    printf 'change\n' >>"$repo/first.txt"
+    output=$case_dir/attached.log
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$repo" --message test -- first.txt
+    assert_file_contains "$output" 'unborn' 'attached initial mode diagnostic absent'
+    assert_equal "$head_before" "$(git -C "$repo" rev-parse HEAD)" \
+        'attached initial mode created a commit'
+
+    git -C "$repo" checkout --quiet --detach
+    output=$case_dir/detached.log
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$repo" --message test -- first.txt
+    assert_file_contains "$output" 'symbolic attached branch' \
+        'detached initial mode diagnostic absent'
+    assert_equal "$head_before" "$(git -C "$repo" rev-parse HEAD)" \
+        'detached initial mode changed HEAD'
+
+    git init --quiet --bare "$bare"
+    printf 'plain\n' >"$plain/first.txt"
+    output=$case_dir/bare.log
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$bare" --message test -- first.txt
+    assert_file_contains "$output" '不是 Git worktree' 'bare initial mode diagnostic absent'
+    output=$case_dir/plain.log
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$plain" --message test -- first.txt
+    assert_file_contains "$output" '不是 Git worktree' 'non-Git initial mode diagnostic absent'
+}
+
+test_initial_rejects_existing_index() {
+    local case_dir=$tmp_root/initial-index
+    local output=$case_dir/output.log
+    local index_before status_before
+
+    make_unborn_repo "$case_dir"
+    printf 'first file\n' >"$test_repo/first.txt"
+    git -C "$test_repo" add -- first.txt
+    index_before=$(index_snapshot "$test_repo")
+    status_before=$(status_snapshot "$test_repo")
+
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message test -- first.txt
+    assert_file_contains "$output" '预先存在 index 或 staged 内容' \
+        'pre-staged initial content was not rejected'
+    assert_unborn "$test_repo"
+    assert_equal "$index_before" "$(index_snapshot "$test_repo")" \
+        'pre-staged rejection changed index'
+    assert_equal "$status_before" "$(status_snapshot "$test_repo")" \
+        'pre-staged rejection changed worktree state'
+}
+
+test_initial_rejects_out_of_scope_changes() {
+    local case_dir=$tmp_root/initial-outside
+    local output=$case_dir/output.log
+    local status_before
+
+    make_unborn_repo "$case_dir"
+    printf 'first file\n' >"$test_repo/first.txt"
+    printf 'outside file\n' >"$test_repo/outside.txt"
+    status_before=$(status_snapshot "$test_repo")
+
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message test -- first.txt
+    assert_file_contains "$output" '显式范围外改动' \
+        'out-of-scope initial file was not rejected'
+    assert_file_contains "$output" 'outside.txt' 'out-of-scope path missing from diagnostic'
+    assert_unborn "$test_repo"
+    assert_equal '' "$(index_snapshot "$test_repo")" 'out-of-scope rejection changed index'
+    assert_equal "$status_before" "$(status_snapshot "$test_repo")" \
+        'out-of-scope rejection changed worktree state'
+}
+
+test_initial_fixture_override() {
+    local case_dir=$tmp_root/initial-fixture
+    local default_output=$case_dir/default.log
+    local mismatch_output=$case_dir/mismatch.log
+    local success_output=$case_dir/success.log
+
+    make_unborn_repo "$case_dir"
+    mkdir -p -- "$test_repo/tests"
+    printf 'github_%s%s\n' 'pat_' 'SYNTHETIC_ONLY_0123456789ABCDEF' \
+        >"$test_repo/tests/allowed.txt"
+    printf 'github_%s%s\n' 'pat_' 'SYNTHETIC_ONLY_ABCDEF0123456789' \
+        >"$test_repo/tests/blocked.txt"
+
+    expect_failure "$default_output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message test -- tests/allowed.txt tests/blocked.txt
+    assert_file_contains "$default_output" '高置信度 token/credential' \
+        'initial fixture was not rejected by default'
+    assert_unborn "$test_repo"
+    assert_equal '' "$(index_snapshot "$test_repo")" 'default fixture rejection changed index'
+
+    expect_failure "$mismatch_output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message test --allow-test-fixture tests/allowed.txt \
+        -- tests/allowed.txt tests/blocked.txt
+    assert_file_contains "$mismatch_output" 'tests/blocked.txt' \
+        'initial fixture override was not exact'
+    assert_unborn "$test_repo"
+    assert_equal '' "$(index_snapshot "$test_repo")" 'fixture mismatch changed index'
+
+    rm -- "$test_repo/tests/blocked.txt"
+    expect_success "$success_output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message 'allowed fixture' \
+        --allow-test-fixture tests/allowed.txt -- tests/allowed.txt
+    assert_root_commit "$test_repo"
+    assert_equal 'tests/allowed.txt' \
+        "$(git -C "$test_repo" diff-tree --root --no-commit-id --name-only -r HEAD)" \
+        'initial exact fixture commit contained another file'
+    assert_equal '' "$(status_snapshot "$test_repo")" \
+        'initial fixture success left worktree dirty'
+}
+
+test_initial_second_empty_check() {
+    local case_dir=$tmp_root/initial-second-check
+    local seed=$case_dir/seed
+    local output=$case_dir/output.log
+    local head
+
+    make_unborn_repo "$case_dir"
+    make_seed_repo "$seed"
+    printf '#!/usr/bin/env bash\nset -euo pipefail\nunset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX\ngit -C %q push --quiet %q HEAD:refs/heads/other\n' \
+        "$seed" "$test_remote" >"$test_repo/.git/hooks/post-commit"
+    chmod 700 "$test_repo/.git/hooks/post-commit"
+    printf 'first file\n' >"$test_repo/first.txt"
+
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message 'initial race' -- first.txt
+    head=$(git -C "$test_repo" rev-parse HEAD)
+    assert_file_contains "$output" '远端不是完全空 remote' \
+        'second empty check did not detect a new ref'
+    assert_file_contains "$output" '不得重跑 --initial-publish' \
+        'second-check failure omitted rerun warning'
+    assert_file_contains "$output" '--resume-initial-publish' \
+        'second-check failure omitted future resume command'
+    assert_file_contains "$output" "$head" 'second-check failure omitted full root OID'
+    assert_root_commit "$test_repo"
+    assert_equal '1' "$(git -C "$test_repo" rev-list --count HEAD)" \
+        'second-check failure retained more than one local commit'
+    if git --git-dir="$test_remote" show-ref --verify --quiet refs/heads/main; then
+        fail_assertion 'second-check failure pushed the target branch'
+    fi
+    git --git-dir="$test_remote" show-ref --verify --quiet refs/heads/other ||
+        fail_assertion 'second-check competitor ref is absent'
+}
+
+test_initial_same_branch_push_race() {
+    local case_dir=$tmp_root/initial-same-branch-race
+    local seed=$case_dir/seed
+    local output=$case_dir/output.log
+    local head remote_head
+
+    make_unborn_repo "$case_dir"
+    make_seed_repo "$seed"
+    printf '#!/usr/bin/env bash\nset -euo pipefail\nunset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX\ngit -C %q push --quiet %q HEAD:refs/heads/main\n' \
+        "$seed" "$test_remote" >"$test_repo/.git/hooks/pre-push"
+    chmod 700 "$test_repo/.git/hooks/pre-push"
+    printf 'first file\n' >"$test_repo/first.txt"
+
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message 'initial race' -- first.txt
+    head=$(git -C "$test_repo" rev-parse HEAD)
+    remote_head=$(remote_main "$test_remote")
+    assert_file_contains "$output" 'initial push 失败或结果无法确认' \
+        'same-branch race did not fail at non-force push'
+    assert_file_contains "$output" '--resume-initial-publish' \
+        'same-branch race omitted future resume command'
+    assert_file_contains "$output" "$head" 'same-branch race omitted full root OID'
+    assert_root_commit "$test_repo"
+    assert_equal '1' "$(git -C "$test_repo" rev-list --count HEAD)" \
+        'same-branch race retained more than one local commit'
+    [[ "$head" != "$remote_head" ]] || fail_assertion 'same-branch race overwrote remote commit'
+}
+
+test_initial_other_ref_post_push_race() {
+    local case_dir=$tmp_root/initial-other-ref-race
+    local seed=$case_dir/seed
+    local output=$case_dir/output.log
+    local head
+
+    make_unborn_repo "$case_dir"
+    make_seed_repo "$seed"
+    printf '#!/usr/bin/env bash\nset -euo pipefail\nunset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX\ngit -C %q push --quiet %q HEAD:refs/heads/other\n' \
+        "$seed" "$test_remote" >"$test_repo/.git/hooks/pre-push"
+    chmod 700 "$test_repo/.git/hooks/pre-push"
+    printf 'first file\n' >"$test_repo/first.txt"
+
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message 'initial race' -- first.txt
+    head=$(git -C "$test_repo" rev-parse HEAD)
+    assert_file_contains "$output" 'ref 集合不是唯一目标 branch' \
+        'post-push verification missed an extra remote ref'
+    assert_file_contains "$output" '--resume-initial-publish' \
+        'post-push ref failure omitted future resume command'
+    assert_root_commit "$test_repo"
+    assert_equal "$head" "$(remote_main "$test_remote")" \
+        'target branch was not published before post-push ref failure'
+    git --git-dir="$test_remote" show-ref --verify --quiet refs/heads/other ||
+        fail_assertion 'post-push competitor ref is absent'
+    assert_equal '2' "$(remote_refs "$test_remote" | wc -l)" \
+        'post-push race did not leave exactly two remote refs'
+}
+
+test_initial_push_failure_and_rerun() {
+    local case_dir=$tmp_root/initial-push-failure
+    local output=$case_dir/output.log
+    local rerun_output=$case_dir/rerun.log
+    local head
+
+    make_unborn_repo "$case_dir"
+    printf '#!/usr/bin/env bash\nexit 1\n' >"$test_remote/hooks/pre-receive"
+    chmod 700 "$test_remote/hooks/pre-receive"
+    printf 'first file\n' >"$test_repo/first.txt"
+
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message 'rejected initial push' -- first.txt
+    head=$(git -C "$test_repo" rev-parse HEAD)
+    assert_file_contains "$output" 'initial push 失败或结果无法确认' \
+        'initial push rejection diagnostic absent'
+    assert_file_contains "$output" "$head" 'initial push failure omitted full root OID'
+    assert_file_contains "$output" '--resume-initial-publish' \
+        'initial push failure omitted future resume command'
+    assert_root_commit "$test_repo"
+    assert_equal '1' "$(git -C "$test_repo" rev-list --count HEAD)" \
+        'initial push failure created more than one commit'
+    assert_equal '' "$(remote_refs "$test_remote")" 'rejected initial push changed remote'
+
+    expect_failure "$rerun_output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message 'must not repeat' -- first.txt
+    assert_file_contains "$rerun_output" 'unborn' 'initial rerun was not rejected'
+    assert_equal "$head" "$(git -C "$test_repo" rev-parse HEAD)" \
+        'initial rerun changed HEAD'
+    assert_equal '1' "$(git -C "$test_repo" rev-list --count HEAD)" \
+        'initial rerun created another commit'
+}
+
+test_initial_dry_run() {
+    local case_dir=$tmp_root/initial-dry-run
+    local output=$case_dir/output.log
+    local status_before metadata_before
+
+    make_unborn_repo "$case_dir"
+    git -C "$test_repo" remote set-url origin "$case_dir/does-not-exist.git"
+    printf 'first file\n' >"$test_repo/first.txt"
+    status_before=$(status_snapshot "$test_repo")
+    metadata_before=$(git_metadata_snapshot "$test_repo")
+
+    expect_success "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message test --dry-run -- first.txt
+    assert_file_contains "$output" 'mode: initial-publish' 'initial dry-run mode absent'
+    assert_file_contains "$output" 'remote: origin' 'initial dry-run remote absent'
+    assert_file_contains "$output" '未执行 ls-remote' 'initial dry-run remote notice absent'
+    assert_unborn "$test_repo"
+    assert_equal '' "$(index_snapshot "$test_repo")" 'initial dry-run changed index'
+    assert_equal "$status_before" "$(status_snapshot "$test_repo")" \
+        'initial dry-run changed worktree state'
+    assert_equal "$metadata_before" "$(git_metadata_snapshot "$test_repo")" \
+        'initial dry-run changed Git metadata'
+}
+
+test_initial_cli_validation() {
+    local case_dir=$tmp_root/initial-cli
+    local missing_output=$case_dir/missing.log
+    local conflict_output=$case_dir/conflict.log
+    local status_before
+
+    make_unborn_repo "$case_dir"
+    printf 'first file\n' >"$test_repo/first.txt"
+    status_before=$(status_snapshot "$test_repo")
+
+    expect_failure "$missing_output" "$finalizer" --initial-publish \
+        --repo "$test_repo" --message test -- first.txt
+    assert_file_contains "$missing_output" '必须指定 --remote' \
+        'initial mode accepted missing --remote'
+    expect_failure "$conflict_output" "$finalizer" --remote origin \
+        --repo "$test_repo" --message test -- first.txt
+    assert_file_contains "$conflict_output" '只允许与 --initial-publish' \
+        'normal mode accepted --remote'
+    assert_unborn "$test_repo"
+    assert_equal '' "$(index_snapshot "$test_repo")" 'CLI validation changed index'
+    assert_equal "$status_before" "$(status_snapshot "$test_repo")" \
+        'CLI validation changed worktree state'
+}
+
 run_case() {
     current_case=$1
     shift
@@ -536,5 +1058,29 @@ run_case 'bare and non-Git repositories are rejected' test_invalid_repositories
 run_case 'dry-run performs no remote or Git mutation' test_dry_run
 run_case 'fixture override remains exact' test_fixture_scope
 run_case 'push target mismatch is rejected' test_push_target_mismatch
+run_case 'initial publish creates and verifies one root commit' test_initial_publish_success
+run_case 'initial publish rejects an existing target branch' \
+    test_initial_rejects_same_branch_remote
+run_case 'initial publish rejects an existing other branch' \
+    test_initial_rejects_other_branch_remote
+run_case 'initial publish rejects a tag-only remote' test_initial_rejects_tag_only_remote
+run_case 'initial remote configuration is validated locally' \
+    test_initial_remote_configuration_validation
+run_case 'initial publish rejects attached detached bare and non-Git states' \
+    test_initial_rejects_non_unborn_repositories
+run_case 'initial publish rejects a pre-existing index' test_initial_rejects_existing_index
+run_case 'initial publish rejects out-of-scope changes' \
+    test_initial_rejects_out_of_scope_changes
+run_case 'initial fixture override remains exact' test_initial_fixture_override
+run_case 'initial second empty check retains the root commit' \
+    test_initial_second_empty_check
+run_case 'initial non-force push rejects a same-branch race' \
+    test_initial_same_branch_push_race
+run_case 'initial post-push verification detects another ref' \
+    test_initial_other_ref_post_push_race
+run_case 'initial push failure and rerun retain one root commit' \
+    test_initial_push_failure_and_rerun
+run_case 'initial dry-run performs no remote or Git mutation' test_initial_dry_run
+run_case 'initial CLI combinations are explicit' test_initial_cli_validation
 
 printf 'all %s integration tests passed\n' "$passed"
