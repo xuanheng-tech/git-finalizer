@@ -78,6 +78,22 @@ run_git_mutation() {
     fi
 }
 
+run_git_remote_command() {
+    local display=$1
+    shift
+    local status
+
+    printf '$ %s\n' "$display"
+    if "$@" >/dev/null 2>&1; then
+        printf '(completed)\n'
+        return 0
+    else
+        status=$?
+        printf 'remote check failed (exit %s)\n' "$status" >&2
+        return "$status"
+    fi
+}
+
 sensitive_path_reason() {
     local path=${1,,}
     local env_re='(^|/)\.env($|[._-])'
@@ -237,7 +253,7 @@ print_snapshot() {
         head='(unborn HEAD)'
     fi
     status=$(git -C "$repo" status --short)
-    remotes=$(git -C "$repo" remote -v)
+    remotes=$(git -C "$repo" remote)
     if ! current_upstream=$(
         git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null
     ); then
@@ -250,14 +266,207 @@ print_snapshot() {
     printf '$ git rev-parse HEAD\n%s\n' "$head"
     printf '$ git status --short\n'
     print_value_or "$status" '(clean)'
-    printf '$ git remote -v\n'
+    printf '$ git remote\n'
     if [[ -n "$remotes" ]]; then
-        printf '%s\n' "$remotes" | redact_stream
+        printf '%s\n' "$remotes"
     else
         printf '(none)\n'
     fi
     printf '$ git rev-parse --abbrev-ref --symbolic-full-name @{upstream}\n'
     print_value_or "$current_upstream" '(none)'
+}
+
+resolve_normal_target() {
+    local head_ref
+    local show_ref_status
+    local upstream_details
+    local branch_remote_values
+    local branch_merge_values
+    local branch_push_remote
+    local default_push_remote
+    local effective_push_remote
+    local fetch_urls
+    local push_urls
+
+    normal_target_error=''
+    [[ -n "$current_branch" ]] || {
+        normal_target_error='当前为 detached HEAD，拒绝 commit'
+        return 1
+    }
+
+    if ! head_ref=$(git -C "$repo" symbolic-ref --quiet HEAD 2>/dev/null); then
+        normal_target_error='当前 HEAD 不是 symbolic attached branch，拒绝 commit'
+        return 1
+    fi
+    [[ "$head_ref" == "refs/heads/$current_branch" ]] || {
+        normal_target_error='当前 symbolic HEAD 与 branch 名不一致，拒绝 commit'
+        return 1
+    }
+
+    if ! git -C "$repo" rev-parse --verify 'HEAD^{commit}' >/dev/null 2>&1; then
+        if git -C "$repo" show-ref --verify --quiet "$head_ref"; then
+            normal_target_error='当前 HEAD 无法解析为 commit，拒绝 commit'
+        else
+            show_ref_status=$?
+            if ((show_ref_status == 1)); then
+                normal_target_error='当前为 unborn HEAD；正常模式拒绝 commit'
+            else
+                normal_target_error='当前 branch ref 无效，拒绝 commit'
+            fi
+        fi
+        return 1
+    fi
+
+    if ! upstream_details=$(
+        git -C "$repo" for-each-ref \
+            --format='%(upstream:short)%09%(upstream:remotename)%09%(upstream:remoteref)' \
+            "$head_ref"
+    ); then
+        normal_target_error='无法解析当前分支 upstream'
+        return 1
+    fi
+    if [[ -z "$upstream_details" || "$upstream_details" == *$'\n'* ]]; then
+        normal_target_error='当前分支不存在唯一可解析的 upstream'
+        return 1
+    fi
+    IFS=$'\t' read -r upstream_name upstream_remote upstream_branch_ref <<<"$upstream_details"
+    if [[ -z "$upstream_name" || -z "$upstream_remote" ||
+        "$upstream_remote" == '.' || "$upstream_branch_ref" != refs/heads/* ]]; then
+        normal_target_error='upstream 不是可验证的远端 branch'
+        return 1
+    fi
+
+    branch_remote_values=$(
+        git -C "$repo" config --get-all "branch.$current_branch.remote" 2>/dev/null || true
+    )
+    branch_merge_values=$(
+        git -C "$repo" config --get-all "branch.$current_branch.merge" 2>/dev/null || true
+    )
+    if [[ -z "$branch_remote_values" || "$branch_remote_values" == *$'\n'* ||
+        "$branch_remote_values" != "$upstream_remote" || -z "$branch_merge_values" ||
+        "$branch_merge_values" == *$'\n'* || "$branch_merge_values" != "$upstream_branch_ref" ]]; then
+        normal_target_error='upstream 配置缺失、含糊或与远端 branch 不一致'
+        return 1
+    fi
+
+    branch_push_remote=$(
+        git -C "$repo" config --get-all "branch.$current_branch.pushRemote" 2>/dev/null || true
+    )
+    default_push_remote=$(git -C "$repo" config --get-all remote.pushDefault 2>/dev/null || true)
+    if [[ "$branch_push_remote" == *$'\n'* || "$default_push_remote" == *$'\n'* ]]; then
+        normal_target_error='push remote 配置含糊，无法证明唯一 push 目标'
+        return 1
+    fi
+    effective_push_remote=${branch_push_remote:-${default_push_remote:-$upstream_remote}}
+    [[ "$effective_push_remote" == "$upstream_remote" ]] || {
+        normal_target_error='实际 push remote 与 upstream remote 不一致'
+        return 1
+    }
+
+    if ! fetch_urls=$(git -C "$repo" remote get-url --all "$upstream_remote" 2>/dev/null) ||
+        [[ -z "$fetch_urls" || "$fetch_urls" == *$'\n'* ]]; then
+        normal_target_error='upstream remote 缺失或配置了多个 fetch endpoint'
+        return 1
+    fi
+    if ! push_urls=$(git -C "$repo" remote get-url --push --all "$upstream_remote" 2>/dev/null) ||
+        [[ -z "$push_urls" || "$push_urls" == *$'\n'* ]]; then
+        normal_target_error='upstream remote 缺失或配置了多个 push endpoint'
+        return 1
+    fi
+    [[ "$fetch_urls" == "$push_urls" ]] || {
+        normal_target_error='upstream 的 fetch 与 push endpoint 不一致'
+        return 1
+    }
+}
+
+query_remote_branch() {
+    local output
+    local status
+    local ref_name
+    local extra
+
+    remote_query_error=''
+    if output=$(
+        git -C "$repo" ls-remote --quiet --refs "$upstream_remote" \
+            "$upstream_branch_ref" 2>/dev/null
+    ); then
+        :
+    else
+        status=$?
+        remote_query_error="远端 branch 查询失败（exit $status）"
+        return 1
+    fi
+    if [[ -z "$output" ]]; then
+        remote_query_error="远端 branch 不存在: $upstream_branch_ref"
+        return 1
+    fi
+    if [[ "$output" == *$'\n'* ]]; then
+        remote_query_error="远端 branch 查询返回含糊结果: $upstream_branch_ref"
+        return 1
+    fi
+
+    IFS=$'\t' read -r remote_branch_oid ref_name extra <<<"$output"
+    if [[ ! "$remote_branch_oid" =~ ^[0-9a-f]+$ ||
+        "$ref_name" != "$upstream_branch_ref" || -n "$extra" ]]; then
+        remote_query_error="远端 branch 查询结果无效: $upstream_branch_ref"
+        return 1
+    fi
+}
+
+check_normal_remote_state() {
+    local phase=$1
+    local local_hash
+    local upstream_hash
+    local counts
+    local ahead
+    local behind
+
+    normal_remote_error=''
+    if ! run_git_remote_command 'git fetch <upstream remote>' \
+        git -C "$repo" fetch --no-tags --no-recurse-submodules "$upstream_remote"; then
+        normal_remote_error="$phase git fetch 失败"
+        return 1
+    fi
+    if ! query_remote_branch; then
+        normal_remote_error="$phase $remote_query_error"
+        return 1
+    fi
+    if ! upstream_hash=$(git -C "$repo" rev-parse --verify '@{upstream}^{commit}' 2>/dev/null); then
+        normal_remote_error="$phase upstream 无法解析为 commit: $upstream_name"
+        return 1
+    fi
+    if [[ "$upstream_hash" != "$remote_branch_oid" ]]; then
+        normal_remote_error="$phase fetch 后 upstream 与远端 branch OID 不一致"
+        return 1
+    fi
+    if ! local_hash=$(git -C "$repo" rev-parse --verify 'HEAD^{commit}' 2>/dev/null); then
+        normal_remote_error="$phase HEAD 无法解析为 commit"
+        return 1
+    fi
+    if ! counts=$(
+        git -C "$repo" rev-list --left-right --count "$local_hash...$upstream_hash" 2>/dev/null
+    ); then
+        normal_remote_error="$phase 无法计算 HEAD 与 upstream 的 ahead/behind"
+        return 1
+    fi
+    read -r ahead behind <<<"$counts"
+    if [[ ! "$ahead" =~ ^[0-9]+$ || ! "$behind" =~ ^[0-9]+$ ]]; then
+        normal_remote_error="$phase ahead/behind 输出无效"
+        return 1
+    fi
+    if ((behind > 0)); then
+        if ((ahead > 0)); then
+            normal_remote_error="$phase 本地已与 upstream 分叉（HEAD...upstream ahead/behind: $ahead/$behind）"
+        else
+            normal_remote_error="$phase 本地落后 upstream（HEAD...upstream ahead/behind: $ahead/$behind）"
+        fi
+        return 1
+    fi
+
+    printf 'upstream: %s\n' "$upstream_name"
+    printf 'remote branch: %s\n' "$upstream_branch_ref"
+    printf 'ahead/behind: %s/%s\n' "$ahead" "$behind"
+    printf 'fast-forward check: passed\n'
 }
 
 risk_count=0
@@ -430,10 +639,10 @@ done
 collect_staged_paths
 if ((dry_run == 1)); then
     printf '\n== DRY-RUN 风险 ==\n'
-    [[ -n "$current_branch" ]] || add_risk '当前为 detached HEAD；真实运行会拒绝 commit'
-    if [[ -z "$current_upstream" ]] ||
-        ! git -C "$repo" rev-parse --verify '@{upstream}^{commit}' >/dev/null 2>&1; then
-        add_risk '当前分支没有可解析的 upstream；真实运行会在本地 commit 后停止 push'
+    if ! resolve_normal_target; then
+        add_risk "$normal_target_error；真实运行会在 git add 和 commit 前停止"
+    else
+        printf '  - dry-run 未执行 fetch；未实时核验远端 branch 或 ahead/behind。\n'
     fi
 
     for path in "${staged_paths[@]}"; do
@@ -475,7 +684,9 @@ if ((dry_run == 1)); then
     exit 0
 fi
 
-[[ -n "$current_branch" ]] || fail '当前为 detached HEAD，拒绝 commit'
+if ! resolve_normal_target; then
+    fail "$normal_target_error"
+fi
 
 for path in "${staged_paths[@]}"; do
     if [[ -z ${allowed_paths[$path]+present} ]]; then
@@ -500,6 +711,11 @@ for index in "${!paths[@]}"; do
         fi
     fi
 done
+
+printf '\n== Commit 前 fetch 与 fast-forward 检查 ==\n'
+if ! check_normal_remote_state 'commit 前'; then
+    fail "$normal_remote_error；未执行新增 git add、commit 或 push"
+fi
 
 printf '\n== 显式暂存 ==\n'
 if ! run_git_mutation 'git add -- <explicit paths>' \
@@ -560,30 +776,17 @@ printf 'commit message: %q\n' "$commit_message"
 printf 'changed files:\n'
 git -C "$repo" diff-tree --root --no-commit-id --name-status -r --no-renames "$commit_hash"
 
-printf '\n== Fetch 与 fast-forward 检查 ==\n'
-if ! run_git_mutation 'git fetch' git -C "$repo" fetch; then
-    fail_after_commit 'git fetch 失败'
+printf '\n== Commit 后 fetch 与 fast-forward 检查 ==\n'
+if ! resolve_normal_target; then
+    fail_after_commit "$normal_target_error"
 fi
-
-if ! upstream_name=$(
-    git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null
-); then
-    fail_after_commit '当前分支不存在 upstream'
+if ! check_normal_remote_state 'commit 后'; then
+    fail_after_commit "$normal_remote_error"
 fi
-if ! upstream_hash=$(git -C "$repo" rev-parse '@{upstream}' 2>/dev/null); then
-    fail_after_commit "upstream 无法解析: $upstream_name"
-fi
-
-local_hash=$(git -C "$repo" rev-parse HEAD)
-if ! git -C "$repo" merge-base --is-ancestor "$upstream_hash" "$local_hash"; then
-    counts=$(git -C "$repo" rev-list --left-right --count "$local_hash...$upstream_hash" 2>/dev/null || true)
-    fail_after_commit "本地落后或已与 upstream 分叉（HEAD...upstream ahead/behind: ${counts:-unknown}）"
-fi
-printf 'upstream: %s\n' "$upstream_name"
-printf 'fast-forward check: passed\n'
 
 printf '\n== Push ==\n'
-if ! run_git_mutation 'git push' git -C "$repo" push; then
+if ! run_git_remote_command 'git push <upstream remote> HEAD:<upstream branch>' \
+    git -C "$repo" push "$upstream_remote" "HEAD:$upstream_branch_ref"; then
     fail_after_commit 'git push 失败'
 fi
 
@@ -592,14 +795,28 @@ printf '$ git rev-parse HEAD\n'
 final_head=$(git -C "$repo" rev-parse HEAD)
 printf '%s\n' "$final_head"
 printf '$ git rev-parse @{upstream}\n'
-final_upstream=$(git -C "$repo" rev-parse '@{upstream}') ||
+final_upstream=$(git -C "$repo" rev-parse '@{upstream}^{commit}') ||
     fail_after_commit 'push 后无法解析 upstream'
 printf '%s\n' "$final_upstream"
+if ! query_remote_branch; then
+    fail_after_commit "push 后 $remote_query_error"
+fi
+printf 'remote branch OID: %s\n' "$remote_branch_oid"
+if ! final_counts=$(
+    git -C "$repo" rev-list --left-right --count "$final_head...$final_upstream" 2>/dev/null
+); then
+    fail_after_commit 'push 后无法计算 HEAD 与 upstream 的 ahead/behind'
+fi
+printf 'ahead/behind: %s\n' "$final_counts"
 printf '$ git status --short\n'
 final_status=$(git -C "$repo" status --short)
 print_value_or "$final_status" '(clean)'
 
 [[ "$final_head" == "$final_upstream" ]] ||
     fail_after_commit 'push 后本地 HEAD 与 upstream 不一致'
+[[ "$final_head" == "$remote_branch_oid" ]] ||
+    fail_after_commit 'push 后本地 HEAD 与远端 branch 不一致'
+[[ "$final_counts" == $'0\t0' ]] ||
+    fail_after_commit 'push 后本地 HEAD 与 upstream ahead/behind 不是 0/0'
 
 printf '\nGit Finalizer 完成：commit 与 push 已验证。\n'
