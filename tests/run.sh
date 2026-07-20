@@ -1084,3 +1084,5 @@ run_case 'initial dry-run performs no remote or Git mutation' test_initial_dry_r
 run_case 'initial CLI combinations are explicit' test_initial_cli_validation
 
 printf 'all %s integration tests passed\n' "$passed"
+
+bash "$project_root/tests/test_resume_initial_publish.sh"
