@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="0.1"
+readonly VERSION="0.2.0"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 
 usage() {
@@ -24,6 +24,7 @@ Options:
   --remote <name>                Required by initial and resume modes.
   --allow-test-fixture <path>    Ignore content secret signatures for this exact tests/ file.
   --dry-run                      Report scope and risks without add, commit, fetch, or push.
+  --version                      Show the version and exit.
   -h, --help                     Show this help.
 EOF
 }
@@ -1114,6 +1115,10 @@ while (($# > 0)); do
             ((dry_run == 0)) || fail '--dry-run 只能指定一次'
             dry_run=1
             shift
+            ;;
+        --version)
+            printf 'codex-git-finalize %s\n' "$VERSION"
+            exit 0
             ;;
         --allow-test-fixture)
             (($# >= 2)) || fail '--allow-test-fixture 缺少参数'

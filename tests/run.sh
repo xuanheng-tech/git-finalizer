@@ -1034,6 +1034,41 @@ test_initial_cli_validation() {
         'CLI validation changed worktree state'
 }
 
+test_release_contract() {
+    local case_dir=$tmp_root/release-contract
+    local fake_bin=$case_dir/bin
+    local git_probe=$case_dir/git-invoked
+    local version_output=$case_dir/version.out
+    local version_error=$case_dir/version.err
+    local version_expected=$case_dir/version.expected
+    local help_output=$case_dir/help.out
+
+    mkdir -p -- "$fake_bin"
+    printf '%s\n' '#!/usr/bin/env bash' ": >\"\$GIT_PROBE\"" 'exit 97' \
+        >"$fake_bin/git"
+    chmod 700 "$fake_bin/git"
+    printf 'codex-git-finalize 0.2.0\n' >"$version_expected"
+
+    GIT_PROBE="$git_probe" PATH="$fake_bin:$PATH" \
+        "$finalizer" --version >"$version_output" 2>"$version_error"
+    cmp -s -- "$version_expected" "$version_output" ||
+        fail_assertion '--version output is not byte-exact'
+    [[ ! -s "$version_error" ]] || fail_assertion '--version wrote to stderr'
+    [[ ! -e "$git_probe" ]] || fail_assertion '--version invoked Git'
+
+    expect_success "$help_output" "$finalizer" --help
+    assert_file_contains "$help_output" \
+        'codex-git-finalize --repo <absolute-repo>' 'normal mode missing from help'
+    assert_file_contains "$help_output" '--initial-publish' \
+        'initial-publish mode missing from help'
+    assert_file_contains "$help_output" '--resume-initial-publish' \
+        'resume-initial-publish mode missing from help'
+    assert_file_contains "$project_root/codex-git-finalize" \
+        'readonly VERSION="0.2.0"' 'script version constant drifted'
+    assert_file_contains "$project_root/README.md" "当前版本：\`0.2.0\`" \
+        'README version drifted'
+}
+
 run_case() {
     current_case=$1
     shift
@@ -1082,6 +1117,7 @@ run_case 'initial push failure and rerun retain one root commit' \
     test_initial_push_failure_and_rerun
 run_case 'initial dry-run performs no remote or Git mutation' test_initial_dry_run
 run_case 'initial CLI combinations are explicit' test_initial_cli_validation
+run_case 'release version and public modes remain aligned' test_release_contract
 
 printf 'all %s integration tests passed\n' "$passed"
 
