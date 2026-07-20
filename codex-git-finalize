@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="0.2.0"
+readonly VERSION="0.2.1"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 
 usage() {
@@ -303,12 +303,74 @@ print_snapshot() {
     print_value_or "$current_upstream" '(none)'
 }
 
+classify_branch_upstream() {
+    local branch_name=$1
+    local selected_remote=$2
+    local expected_merge_ref=$3
+    local remote_status=0
+    local merge_status=0
+    local resolved_upstream
+    local -a remote_values=()
+    local -a merge_values=()
+
+    branch_upstream_state=''
+    branch_upstream_oid=''
+    branch_upstream_error=''
+
+    git -C "$repo" config --get-all "branch.$branch_name.remote" \
+        >/dev/null 2>&1 || remote_status=$?
+    git -C "$repo" config --get-all "branch.$branch_name.merge" \
+        >/dev/null 2>&1 || merge_status=$?
+    if ((remote_status != 0 && remote_status != 1)) ||
+        ((merge_status != 0 && merge_status != 1)); then
+        branch_upstream_state='conflicting'
+        branch_upstream_error='upstream 配置无法安全读取'
+        return 0
+    fi
+    if ((remote_status == 0)); then
+        mapfile -d '' -t remote_values < <(
+            git -C "$repo" config --null --get-all "branch.$branch_name.remote"
+        )
+    fi
+    if ((merge_status == 0)); then
+        mapfile -d '' -t merge_values < <(
+            git -C "$repo" config --null --get-all "branch.$branch_name.merge"
+        )
+    fi
+
+    if ((${#remote_values[@]} == 0 && ${#merge_values[@]} == 0)); then
+        branch_upstream_state='none'
+        return 0
+    fi
+    if ((${#remote_values[@]} != 1 || ${#merge_values[@]} != 1)) ||
+        [[ -z "${remote_values[0]-}" || -z "${merge_values[0]-}" ]] ||
+        [[ "${remote_values[0]}" != "$selected_remote" ||
+            "${merge_values[0]}" != "$expected_merge_ref" ]]; then
+        branch_upstream_state='conflicting'
+        branch_upstream_error='upstream 配置与 selected remote/branch 冲突或含糊'
+        return 0
+    fi
+
+    if resolved_upstream=$(
+        git -C "$repo" rev-parse --verify '@{upstream}^{commit}' 2>/dev/null
+    ); then
+        if [[ ! "$resolved_upstream" =~ ^[0-9a-f]+$ ||
+            "$resolved_upstream" == *$'\n'* ]]; then
+            branch_upstream_state='conflicting'
+            branch_upstream_error='upstream commit 输出无法安全解析'
+            return 0
+        fi
+        branch_upstream_state='exact_resolved'
+        branch_upstream_oid=$resolved_upstream
+    else
+        branch_upstream_state='exact_unresolved'
+    fi
+}
+
 resolve_normal_target() {
     local head_ref
     local show_ref_status
     local upstream_details
-    local branch_remote_values
-    local branch_merge_values
     local branch_push_remote
     local default_push_remote
     local effective_push_remote
@@ -363,16 +425,9 @@ resolve_normal_target() {
         return 1
     fi
 
-    branch_remote_values=$(
-        git -C "$repo" config --get-all "branch.$current_branch.remote" 2>/dev/null || true
-    )
-    branch_merge_values=$(
-        git -C "$repo" config --get-all "branch.$current_branch.merge" 2>/dev/null || true
-    )
-    if [[ -z "$branch_remote_values" || "$branch_remote_values" == *$'\n'* ||
-        "$branch_remote_values" != "$upstream_remote" || -z "$branch_merge_values" ||
-        "$branch_merge_values" == *$'\n'* || "$branch_merge_values" != "$upstream_branch_ref" ]]; then
-        normal_target_error='upstream 配置缺失、含糊或与远端 branch 不一致'
+    classify_branch_upstream "$current_branch" "$upstream_remote" "$upstream_branch_ref"
+    if [[ "$branch_upstream_state" != 'exact_resolved' ]]; then
+        normal_target_error=${branch_upstream_error:-'正常模式要求精确且可解析的 upstream'}
         return 1
     fi
 
@@ -500,8 +555,6 @@ resolve_initial_target() {
     local symbolic_head
     local show_ref_status
     local existing_commit
-    local branch_remote_values
-    local branch_merge_values
     local configured_remotes
     local fetch_urls
     local push_urls
@@ -545,17 +598,6 @@ resolve_initial_target() {
         return 1
     fi
 
-    branch_remote_values=$(
-        git -C "$repo" config --get-all "branch.$initial_branch.remote" 2>/dev/null || true
-    )
-    branch_merge_values=$(
-        git -C "$repo" config --get-all "branch.$initial_branch.merge" 2>/dev/null || true
-    )
-    if [[ -n "$current_upstream" || -n "$branch_remote_values" || -n "$branch_merge_values" ]]; then
-        initial_target_error='initial-publish 要求当前 unborn branch 未配置 upstream'
-        return 1
-    fi
-
     if [[ -z "$remote_arg" || "$remote_arg" == -* ||
         "$remote_arg" == *$'\n'* || "$remote_arg" == *$'\r'* || "$remote_arg" == *$'\t'* ]]; then
         initial_target_error='--remote 必须是有效的已配置 remote 名'
@@ -570,6 +612,19 @@ resolve_initial_target() {
         return 1
     fi
     initial_remote=$remote_arg
+
+    classify_branch_upstream "$initial_branch" "$initial_remote" "$initial_branch_ref"
+    case "$branch_upstream_state" in
+        none|exact_unresolved) ;;
+        exact_resolved)
+            initial_target_error='initial-publish 不接受可解析 upstream'
+            return 1
+            ;;
+        conflicting)
+            initial_target_error=$branch_upstream_error
+            return 1
+            ;;
+    esac
 
     if ! fetch_urls=$(git -C "$repo" remote get-url --all "$initial_remote" 2>/dev/null) ||
         [[ -z "$fetch_urls" || "$fetch_urls" == *$'\n'* ]]; then
@@ -695,42 +750,26 @@ query_initial_published_remote() {
 }
 
 inspect_resume_upstream() {
-    local branch_remote_values
-    local branch_merge_values
-    local resolved_upstream
-
     resume_upstream_error=''
     resume_upstream_present=0
-    branch_remote_values=$(
-        git -C "$repo" config --get-all "branch.$resume_branch.remote" 2>/dev/null || true
-    )
-    branch_merge_values=$(
-        git -C "$repo" config --get-all "branch.$resume_branch.merge" 2>/dev/null || true
-    )
-    if [[ -z "$branch_remote_values" && -z "$branch_merge_values" ]]; then
-        return 0
-    fi
-    if [[ -z "$branch_remote_values" || -z "$branch_merge_values" ||
-        "$branch_remote_values" == *$'\n'* || "$branch_merge_values" == *$'\n'* ]]; then
-        resume_upstream_error='resume upstream 配置缺失或含糊'
-        return 1
-    fi
-    if [[ "$branch_remote_values" != "$resume_remote" ||
-        "$branch_merge_values" != "$resume_branch_ref" ]]; then
-        resume_upstream_error='resume upstream 与 selected remote/branch 不一致'
-        return 1
-    fi
-    if ! resolved_upstream=$(
-        git -C "$repo" rev-parse --verify '@{upstream}^{commit}' 2>/dev/null
-    ); then
-        resume_upstream_error='resume upstream 已配置但无法解析为 commit'
-        return 1
-    fi
-    if [[ "$resolved_upstream" != "$resume_expected_oid" ]]; then
-        resume_upstream_error='resume upstream commit 与 expected HEAD 不一致'
-        return 1
-    fi
-    resume_upstream_present=1
+    classify_branch_upstream "$resume_branch" "$resume_remote" "$resume_branch_ref"
+    resume_upstream_state=$branch_upstream_state
+    case "$resume_upstream_state" in
+        none|exact_unresolved)
+            return 0
+            ;;
+        exact_resolved)
+            if [[ "$branch_upstream_oid" != "$resume_expected_oid" ]]; then
+                resume_upstream_error='resume upstream commit 与 expected HEAD 不一致'
+                return 1
+            fi
+            resume_upstream_present=1
+            ;;
+        conflicting)
+            resume_upstream_error=$branch_upstream_error
+            return 1
+            ;;
+    esac
 }
 
 resolve_resume_target() {
@@ -1016,11 +1055,7 @@ resume_initial_publish() {
                     ;;
                 B)
                     if ! inspect_resume_upstream; then
-                        if [[ "$resume_upstream_error" != \
-                            'resume upstream 已配置但无法解析为 commit' ]]; then
-                            fail "$resume_upstream_error"
-                        fi
-                        resume_upstream_present=0
+                        fail "$resume_upstream_error"
                     fi
                     if ((resume_upstream_present == 0)); then
                         second_push=1

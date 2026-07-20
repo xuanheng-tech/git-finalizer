@@ -92,6 +92,21 @@ make_root_repo() {
     expected_head=$(git -C "$test_repo" rev-parse HEAD)
 }
 
+make_cloned_root_repo() {
+    local case_dir=$1
+
+    test_repo=$case_dir/repo
+    test_remote=$case_dir/remote.git
+    mkdir -p -- "$case_dir"
+    git init --quiet --bare --initial-branch=main "$test_remote"
+    git clone --quiet "$test_remote" "$test_repo" 2>/dev/null
+    configure_author "$test_repo"
+    printf 'root content\n' >"$test_repo/root.txt"
+    git -C "$test_repo" add -- root.txt
+    git -C "$test_repo" commit --quiet -m root
+    expected_head=$(git -C "$test_repo" rev-parse HEAD)
+}
+
 make_seed_repo() {
     local destination=$1
 
@@ -170,6 +185,40 @@ test_resume_expected_remote_without_upstream() {
         'state B recovery did not establish upstream'
     assert_equal "$expected_head"$'\trefs/heads/main' "$(remote_refs "$test_remote")" \
         'state B recovery changed remote refs'
+    assert_one_root_commit "$test_repo"
+}
+
+test_resume_clone_created_unresolved_upstream() {
+    local case_dir=$tmp_root/clone-unresolved
+    local output
+
+    make_cloned_root_repo "$case_dir/empty"
+    assert_equal 'origin' "$(git -C "$test_repo" config --get-all branch.main.remote)" \
+        'clone-created resume remote config mismatch'
+    assert_equal 'refs/heads/main' \
+        "$(git -C "$test_repo" config --get-all branch.main.merge)" \
+        'clone-created resume merge config mismatch'
+    if git -C "$test_repo" rev-parse --verify '@{upstream}^{commit}' >/dev/null 2>&1; then
+        fail_assertion 'empty-remote clone unexpectedly resolved its resume upstream'
+    fi
+    output=$case_dir/empty/output.log
+    expect_success "$output" resume_command
+    assert_equal "$expected_head" "$(git -C "$test_repo" rev-parse '@{upstream}')" \
+        'clone-created state A did not resolve upstream'
+    assert_one_root_commit "$test_repo"
+
+    make_cloned_root_repo "$case_dir/expected"
+    git --git-dir="$test_remote" fetch --quiet "$test_repo" \
+        HEAD:refs/heads/main
+    if git -C "$test_repo" rev-parse --verify '@{upstream}^{commit}' >/dev/null 2>&1; then
+        fail_assertion 'state B setup unexpectedly resolved the local upstream'
+    fi
+    output=$case_dir/expected/output.log
+    expect_success "$output" resume_command
+    assert_equal "$expected_head" "$(git -C "$test_repo" rev-parse '@{upstream}')" \
+        'clone-created state B did not resolve upstream'
+    assert_equal "$expected_head"$'\trefs/heads/main' "$(remote_refs "$test_remote")" \
+        'clone-created state B changed remote refs'
     assert_one_root_commit "$test_repo"
 }
 
@@ -367,7 +416,7 @@ test_resume_rejects_mismatched_upstream() {
     git -C "$test_repo" config branch.main.merge refs/heads/main
     output=$case_dir/other-remote.log
     expect_failure "$output" resume_command
-    assert_file_contains "$output" 'selected remote/branch 不一致' \
+    assert_file_contains "$output" 'selected remote/branch 冲突' \
         'upstream on another remote was accepted'
 
     make_root_repo "$case_dir/branch"
@@ -376,8 +425,72 @@ test_resume_rejects_mismatched_upstream() {
     git -C "$test_repo" config branch.main.merge refs/heads/other
     output=$case_dir/other-branch.log
     expect_failure "$output" resume_command
-    assert_file_contains "$output" 'selected remote/branch 不一致' \
+    assert_file_contains "$output" 'selected remote/branch 冲突' \
         'upstream on another branch was accepted'
+}
+
+assert_resume_upstream_conflict() {
+    local case_dir=$1
+    local output=$case_dir/output.log
+    local head_before=$expected_head
+    local status_before
+
+    status_before=$(status_snapshot "$test_repo")
+    expect_failure "$output" resume_command
+    assert_file_contains "$output" 'upstream 配置' \
+        'conflicting resume upstream diagnostic absent'
+    assert_equal "$head_before" "$(git -C "$test_repo" rev-parse HEAD)" \
+        'conflicting resume upstream changed HEAD'
+    assert_equal "$status_before" "$(status_snapshot "$test_repo")" \
+        'conflicting resume upstream changed the worktree'
+    assert_equal '' "$(git -C "$test_repo" diff --cached --name-only)" \
+        'conflicting resume upstream changed the index'
+}
+
+test_resume_rejects_upstream_conflicts() {
+    local case_dir=$tmp_root/resume-upstream-conflicts
+    local output refs_before
+
+    make_root_repo "$case_dir/missing-merge"
+    git -C "$test_repo" config branch.main.remote origin
+    assert_resume_upstream_conflict "$case_dir/missing-merge"
+
+    make_root_repo "$case_dir/missing-remote"
+    git -C "$test_repo" config branch.main.merge refs/heads/main
+    assert_resume_upstream_conflict "$case_dir/missing-remote"
+
+    make_root_repo "$case_dir/multiple-remote"
+    git -C "$test_repo" config --add branch.main.remote origin
+    git -C "$test_repo" config --add branch.main.remote origin
+    git -C "$test_repo" config branch.main.merge refs/heads/main
+    assert_resume_upstream_conflict "$case_dir/multiple-remote"
+
+    make_root_repo "$case_dir/multiple-merge"
+    git -C "$test_repo" config branch.main.remote origin
+    git -C "$test_repo" config --add branch.main.merge refs/heads/main
+    git -C "$test_repo" config --add branch.main.merge refs/heads/main
+    assert_resume_upstream_conflict "$case_dir/multiple-merge"
+
+    make_root_repo "$case_dir/empty-values"
+    git -C "$test_repo" config branch.main.remote ''
+    git -C "$test_repo" config branch.main.merge ''
+    assert_resume_upstream_conflict "$case_dir/empty-values"
+
+    make_root_repo "$case_dir/resolved-other-oid"
+    push_seed_ref "$case_dir/resolved-other-oid-seed" "$test_remote" refs/heads/main
+    git -C "$test_repo" config branch.main.remote origin
+    git -C "$test_repo" config branch.main.merge refs/heads/main
+    git -C "$test_repo" fetch --quiet origin \
+        refs/heads/main:refs/remotes/origin/main
+    refs_before=$(remote_refs "$test_remote")
+    output=$case_dir/resolved-other-oid/output.log
+    expect_failure "$output" resume_command
+    assert_file_contains "$output" 'upstream commit 与 expected HEAD 不一致' \
+        'resolved upstream at another OID was accepted'
+    assert_equal "$expected_head" "$(git -C "$test_repo" rev-parse HEAD)" \
+        'resolved upstream mismatch changed HEAD'
+    assert_equal "$refs_before" "$(remote_refs "$test_remote")" \
+        'resolved upstream mismatch changed remote refs'
 }
 
 test_resume_rejects_remote_state_c() {
@@ -523,6 +636,8 @@ run_case() {
 
 run_case 'resume publishes one root commit to an empty remote' test_resume_empty_remote
 run_case 'resume closes state B without an upstream' test_resume_expected_remote_without_upstream
+run_case 'resume accepts clone-created unresolved upstream states' \
+    test_resume_clone_created_unresolved_upstream
 run_case 'resume is idempotent when state B and upstream are aligned' test_resume_is_idempotent
 run_case 'resume validates a full object-format OID' test_resume_oid_validation
 run_case 'resume rejects non-root history' test_resume_rejects_non_root_history
@@ -532,6 +647,8 @@ run_case 'resume rejects detached unborn bare and non-Git states' \
 run_case 'resume validates remote endpoints without disclosure' \
     test_resume_remote_configuration_validation
 run_case 'resume rejects a mismatched upstream' test_resume_rejects_mismatched_upstream
+run_case 'resume rejects conflicting upstream configurations' \
+    test_resume_rejects_upstream_conflicts
 run_case 'resume rejects all state-C remote shapes' test_resume_rejects_remote_state_c
 run_case 'resume keeps an empty-remote push failure retryable' \
     test_resume_push_failure_stays_retryable

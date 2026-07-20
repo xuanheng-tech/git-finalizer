@@ -114,6 +114,17 @@ make_unborn_repo() {
     git -C "$test_repo" remote add origin "$test_remote"
 }
 
+make_cloned_unborn_repo() {
+    local case_dir=$1
+
+    test_repo=$case_dir/repo
+    test_remote=$case_dir/remote.git
+    mkdir -p -- "$case_dir"
+    git init --quiet --bare --initial-branch=main "$test_remote"
+    git clone --quiet "$test_remote" "$test_repo" 2>/dev/null
+    configure_author "$test_repo"
+}
+
 make_seed_repo() {
     local destination=$1
 
@@ -605,6 +616,134 @@ test_initial_publish_success() {
         'initial success left staged changes'
 }
 
+test_initial_clone_created_upstream() {
+    local case_dir=$tmp_root/initial-clone-upstream
+    local dry_output=$case_dir/dry-run.log
+    local output=$case_dir/output.log
+    local status_before head counts
+
+    make_cloned_unborn_repo "$case_dir"
+    assert_equal 'origin' "$(git -C "$test_repo" config --get-all branch.main.remote)" \
+        'clone did not configure the expected branch remote'
+    assert_equal 'refs/heads/main' \
+        "$(git -C "$test_repo" config --get-all branch.main.merge)" \
+        'clone did not configure the expected merge ref'
+    if git -C "$test_repo" rev-parse --verify '@{upstream}^{commit}' >/dev/null 2>&1; then
+        fail_assertion 'empty-remote clone unexpectedly resolved its upstream commit'
+    fi
+    printf 'first file\n' >"$test_repo/first.txt"
+    status_before=$(status_snapshot "$test_repo")
+
+    expect_success "$dry_output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message 'initial clone' --dry-run -- first.txt
+    assert_file_contains "$dry_output" '未执行 ls-remote' \
+        'clone-created dry-run did not preserve the local-only contract'
+    assert_unborn "$test_repo"
+    assert_equal '' "$(index_snapshot "$test_repo")" \
+        'clone-created dry-run changed the index'
+    assert_equal "$status_before" "$(status_snapshot "$test_repo")" \
+        'clone-created dry-run changed the worktree'
+
+    expect_success "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message 'initial clone' -- first.txt
+    head=$(git -C "$test_repo" rev-parse HEAD)
+    assert_root_commit "$test_repo"
+    assert_equal '1' "$(git -C "$test_repo" rev-list --count HEAD)" \
+        'clone-created initial publish created extra commits'
+    assert_equal 'first.txt' \
+        "$(git -C "$test_repo" diff-tree --root --no-commit-id --name-only -r HEAD)" \
+        'clone-created root commit contained an unexpected path'
+    assert_equal "$head" "$(git -C "$test_repo" rev-parse '@{upstream}')" \
+        'clone-created upstream did not become resolved'
+    assert_equal "$head" "$(remote_main "$test_remote")" \
+        'clone-created remote OID mismatch'
+    counts=$(git -C "$test_repo" rev-list --left-right --count 'HEAD...@{upstream}')
+    assert_equal $'0\t0' "$counts" 'clone-created ahead/behind is not 0/0'
+    assert_equal '' "$(status_snapshot "$test_repo")" \
+        'clone-created initial publish left the worktree dirty'
+}
+
+assert_initial_upstream_conflict() {
+    local case_dir=$1
+    local output=$case_dir/output.log
+    local status_before
+
+    printf 'first file\n' >"$test_repo/first.txt"
+    status_before=$(status_snapshot "$test_repo")
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message test -- first.txt
+    assert_file_contains "$output" 'upstream 配置' \
+        'conflicting initial upstream diagnostic absent'
+    assert_unborn "$test_repo"
+    assert_equal '' "$(index_snapshot "$test_repo")" \
+        'conflicting initial upstream changed the index'
+    assert_equal "$status_before" "$(status_snapshot "$test_repo")" \
+        'conflicting initial upstream changed the worktree'
+}
+
+test_initial_rejects_upstream_conflicts() {
+    local case_dir=$tmp_root/initial-upstream-conflicts
+    local backup output status_before
+
+    make_unborn_repo "$case_dir/missing-merge"
+    git -C "$test_repo" config branch.main.remote origin
+    assert_initial_upstream_conflict "$case_dir/missing-merge"
+
+    make_unborn_repo "$case_dir/missing-remote"
+    git -C "$test_repo" config branch.main.merge refs/heads/main
+    assert_initial_upstream_conflict "$case_dir/missing-remote"
+
+    make_unborn_repo "$case_dir/other-remote"
+    backup=$case_dir/other-remote/backup.git
+    git init --quiet --bare --initial-branch=main "$backup"
+    git -C "$test_repo" remote add backup "$backup"
+    git -C "$test_repo" config branch.main.remote backup
+    git -C "$test_repo" config branch.main.merge refs/heads/main
+    assert_initial_upstream_conflict "$case_dir/other-remote"
+
+    make_unborn_repo "$case_dir/other-branch"
+    git -C "$test_repo" config branch.main.remote origin
+    git -C "$test_repo" config branch.main.merge refs/heads/other
+    assert_initial_upstream_conflict "$case_dir/other-branch"
+
+    make_unborn_repo "$case_dir/multiple-remote"
+    git -C "$test_repo" config --add branch.main.remote origin
+    git -C "$test_repo" config --add branch.main.remote origin
+    git -C "$test_repo" config branch.main.merge refs/heads/main
+    assert_initial_upstream_conflict "$case_dir/multiple-remote"
+
+    make_unborn_repo "$case_dir/multiple-merge"
+    git -C "$test_repo" config branch.main.remote origin
+    git -C "$test_repo" config --add branch.main.merge refs/heads/main
+    git -C "$test_repo" config --add branch.main.merge refs/heads/main
+    assert_initial_upstream_conflict "$case_dir/multiple-merge"
+
+    make_unborn_repo "$case_dir/empty-values"
+    git -C "$test_repo" config branch.main.remote ''
+    git -C "$test_repo" config branch.main.merge ''
+    assert_initial_upstream_conflict "$case_dir/empty-values"
+
+    make_unborn_repo "$case_dir/resolved"
+    push_seed_ref "$case_dir/resolved-seed" "$test_remote" refs/heads/main
+    git -C "$test_repo" config branch.main.remote origin
+    git -C "$test_repo" config branch.main.merge refs/heads/main
+    git -C "$test_repo" fetch --quiet origin \
+        refs/heads/main:refs/remotes/origin/main
+    git -C "$test_repo" rev-parse --verify '@{upstream}^{commit}' >/dev/null
+    printf 'first file\n' >"$test_repo/first.txt"
+    status_before=$(status_snapshot "$test_repo")
+    output=$case_dir/resolved/output.log
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message test -- first.txt
+    assert_file_contains "$output" '已有可解析 commit' \
+        'resolved initial upstream was not rejected'
+    assert_unborn "$test_repo"
+    assert_equal '' "$(index_snapshot "$test_repo")" \
+        'resolved initial upstream changed the index'
+    assert_equal "$status_before" "$(status_snapshot "$test_repo")" \
+        'resolved initial upstream changed the worktree'
+}
+
 test_initial_rejects_same_branch_remote() {
     local case_dir=$tmp_root/initial-remote-main
     local output=$case_dir/output.log
@@ -721,16 +860,6 @@ test_initial_remote_configuration_validation() {
         'endpoint-mismatch diagnostic disclosed endpoint'
     assert_unborn "$test_repo"
 
-    make_unborn_repo "$case_dir/upstream"
-    git -C "$test_repo" config branch.main.remote origin
-    git -C "$test_repo" config branch.main.merge refs/heads/main
-    printf 'first file\n' >"$test_repo/first.txt"
-    output=$case_dir/upstream.log
-    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
-        --repo "$test_repo" --message test -- first.txt
-    assert_file_contains "$output" '未配置 upstream' \
-        'abnormal unborn upstream configuration was not rejected'
-    assert_unborn "$test_repo"
 }
 
 test_initial_rejects_non_unborn_repositories() {
@@ -1047,7 +1176,7 @@ test_release_contract() {
     printf '%s\n' '#!/usr/bin/env bash' ": >\"\$GIT_PROBE\"" 'exit 97' \
         >"$fake_bin/git"
     chmod 700 "$fake_bin/git"
-    printf 'codex-git-finalize 0.2.0\n' >"$version_expected"
+    printf 'codex-git-finalize 0.2.1\n' >"$version_expected"
 
     GIT_PROBE="$git_probe" PATH="$fake_bin:$PATH" \
         "$finalizer" --version >"$version_output" 2>"$version_error"
@@ -1064,8 +1193,8 @@ test_release_contract() {
     assert_file_contains "$help_output" '--resume-initial-publish' \
         'resume-initial-publish mode missing from help'
     assert_file_contains "$project_root/codex-git-finalize" \
-        'readonly VERSION="0.2.0"' 'script version constant drifted'
-    assert_file_contains "$project_root/README.md" "当前版本：\`0.2.0\`" \
+        'readonly VERSION="0.2.1"' 'script version constant drifted'
+    assert_file_contains "$project_root/README.md" "当前版本：\`0.2.1\`" \
         'README version drifted'
 }
 
@@ -1094,6 +1223,10 @@ run_case 'dry-run performs no remote or Git mutation' test_dry_run
 run_case 'fixture override remains exact' test_fixture_scope
 run_case 'push target mismatch is rejected' test_push_target_mismatch
 run_case 'initial publish creates and verifies one root commit' test_initial_publish_success
+run_case 'initial publish accepts a clone-created unresolved upstream' \
+    test_initial_clone_created_upstream
+run_case 'initial publish rejects conflicting upstream configurations' \
+    test_initial_rejects_upstream_conflicts
 run_case 'initial publish rejects an existing target branch' \
     test_initial_rejects_same_branch_remote
 run_case 'initial publish rejects an existing other branch' \

@@ -2,7 +2,7 @@
 
 Codex Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`0.2.0`
+当前版本：`0.2.1`
 
 ## 使用方式
 
@@ -38,6 +38,8 @@ codex-git-finalize \
 ## 工作流边界
 
 正常开发流程是先完成修改、测试和审查，再调用正常模式提交推送。首次发布仅适用于 unborn 本地仓库和完全空远端；恢复模式仅适用于干净、非空的单 root HEAD，不会再次创建提交。
+
+空远端经 `git clone` 创建的 unborn 分支可能已有精确匹配但尚不可解析的 tracking target；initial 与 resume 模式接受该状态并由成功 push 自然完成 upstream。正常模式仍要求 upstream commit 已可解析。Upstream target 配置与 resolved upstream commit 是不同事实。
 
 文件范围必须在 `--` 后逐项显式给出；脚本不会使用 `git add .` 或 `git add -A`。测试夹具豁免只能通过 `--allow-test-fixture <exact-path>` 精确指定。
 
