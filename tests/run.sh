@@ -163,6 +163,13 @@ file_snapshot() {
     git -C "$1" hash-object --no-filters -- "$2"
 }
 
+make_binary_file() {
+    local path=$1
+    local size_mib=$2
+
+    dd if=/dev/zero of="$path" bs=1048576 count="$size_mib" status=none
+}
+
 remote_main() {
     git --git-dir="$1" rev-parse refs/heads/main
 }
@@ -560,6 +567,54 @@ test_fixture_scope() {
     assert_equal '?? tests/blocked.txt' \
         "$(git -C "$test_repo" status --short -- tests/blocked.txt)" \
         'blocked fixture did not remain untracked'
+}
+
+test_large_binary_scope() {
+    local case_dir=$tmp_root/large-binary
+    local default_output=$case_dir/default.log
+    local mismatch_output=$case_dir/mismatch.log
+    local oversized_output=$case_dir/oversized.log
+    local success_output=$case_dir/success.log
+    local head_before index_before
+
+    make_synced_repo "$case_dir"
+    make_binary_file "$test_repo/allowed.bin" 6
+    make_binary_file "$test_repo/blocked.bin" 6
+    make_binary_file "$test_repo/oversized.bin" 26
+    head_before=$(git -C "$test_repo" rev-parse HEAD)
+    index_before=$(index_snapshot "$test_repo")
+
+    expect_failure "$default_output" "$finalizer" \
+        --repo "$test_repo" --message test -- allowed.bin
+    assert_file_contains "$default_output" '大于 5 MiB' \
+        'large binary was not rejected by default'
+    expect_failure "$mismatch_output" "$finalizer" \
+        --repo "$test_repo" --message test \
+        --allow-large-binary allowed.bin -- blocked.bin
+    assert_file_contains "$mismatch_output" '不在本次显式文件范围内' \
+        'large binary override was not exact'
+    expect_failure "$oversized_output" "$finalizer" \
+        --repo "$test_repo" --message test \
+        --allow-large-binary oversized.bin -- oversized.bin
+    assert_file_contains "$oversized_output" '超过 25 MiB 硬上限' \
+        'large binary hard cap was not enforced'
+    assert_equal "$head_before" "$(git -C "$test_repo" rev-parse HEAD)" \
+        'large binary rejection created a commit'
+    assert_equal "$index_before" "$(index_snapshot "$test_repo")" \
+        'large binary rejection changed index'
+
+    expect_success "$success_output" "$finalizer" \
+        --repo "$test_repo" --message 'allowed large binary' \
+        --allow-large-binary allowed.bin -- allowed.bin
+    assert_equal 'allowed.bin' \
+        "$(git -C "$test_repo" diff-tree --no-commit-id --name-only -r HEAD)" \
+        'exact large binary commit contained another file'
+    assert_equal '?? blocked.bin' \
+        "$(git -C "$test_repo" status --short -- blocked.bin)" \
+        'blocked large binary did not remain untracked'
+    assert_equal '?? oversized.bin' \
+        "$(git -C "$test_repo" status --short -- oversized.bin)" \
+        'oversized binary did not remain untracked'
 }
 
 test_push_target_mismatch() {
@@ -992,6 +1047,24 @@ test_initial_fixture_override() {
         'initial fixture success left worktree dirty'
 }
 
+test_initial_large_binary_override() {
+    local case_dir=$tmp_root/initial-large-binary
+    local output=$case_dir/output.log
+
+    make_unborn_repo "$case_dir"
+    make_binary_file "$test_repo/original.bin" 6
+
+    expect_success "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message 'initial large binary' \
+        --allow-large-binary original.bin -- original.bin
+    assert_root_commit "$test_repo"
+    assert_equal 'original.bin' \
+        "$(git -C "$test_repo" diff-tree --root --no-commit-id --name-only -r HEAD)" \
+        'initial large binary commit contained another file'
+    assert_equal '' "$(status_snapshot "$test_repo")" \
+        'initial large binary success left worktree dirty'
+}
+
 test_initial_second_empty_check() {
     local case_dir=$tmp_root/initial-second-check
     local seed=$case_dir/seed
@@ -1176,7 +1249,7 @@ test_release_contract() {
     printf '%s\n' '#!/usr/bin/env bash' ": >\"\$GIT_PROBE\"" 'exit 97' \
         >"$fake_bin/git"
     chmod 700 "$fake_bin/git"
-    printf 'codex-git-finalize 0.2.1\n' >"$version_expected"
+    printf 'codex-git-finalize 0.2.2\n' >"$version_expected"
 
     GIT_PROBE="$git_probe" PATH="$fake_bin:$PATH" \
         "$finalizer" --version >"$version_output" 2>"$version_error"
@@ -1192,9 +1265,11 @@ test_release_contract() {
         'initial-publish mode missing from help'
     assert_file_contains "$help_output" '--resume-initial-publish' \
         'resume-initial-publish mode missing from help'
+    assert_file_contains "$help_output" '--allow-large-binary' \
+        'large binary override missing from help'
     assert_file_contains "$project_root/codex-git-finalize" \
-        'readonly VERSION="0.2.1"' 'script version constant drifted'
-    assert_file_contains "$project_root/README.md" "当前版本：\`0.2.1\`" \
+        'readonly VERSION="0.2.2"' 'script version constant drifted'
+    assert_file_contains "$project_root/README.md" "当前版本：\`0.2.2\`" \
         'README version drifted'
 }
 
@@ -1221,6 +1296,7 @@ run_case 'unborn normal mode is rejected' test_unborn
 run_case 'bare and non-Git repositories are rejected' test_invalid_repositories
 run_case 'dry-run performs no remote or Git mutation' test_dry_run
 run_case 'fixture override remains exact' test_fixture_scope
+run_case 'large binary override remains exact and bounded' test_large_binary_scope
 run_case 'push target mismatch is rejected' test_push_target_mismatch
 run_case 'initial publish creates and verifies one root commit' test_initial_publish_success
 run_case 'initial publish accepts a clone-created unresolved upstream' \
@@ -1240,6 +1316,8 @@ run_case 'initial publish rejects a pre-existing index' test_initial_rejects_exi
 run_case 'initial publish rejects out-of-scope changes' \
     test_initial_rejects_out_of_scope_changes
 run_case 'initial fixture override remains exact' test_initial_fixture_override
+run_case 'initial large binary override remains exact and bounded' \
+    test_initial_large_binary_override
 run_case 'initial second empty check retains the root commit' \
     test_initial_second_empty_check
 run_case 'initial non-force push rejects a same-branch race' \

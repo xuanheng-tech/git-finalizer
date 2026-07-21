@@ -593,6 +593,11 @@ test_resume_rejects_cli_conflicts() {
         --remote origin --repo "$test_repo" --allow-test-fixture tests/fake
     assert_file_contains "$output" '不接受 --allow-test-fixture' \
         'resume accepted fixture override'
+    output=$case_dir/large-binary.log
+    expect_failure "$output" "$finalizer" --resume-initial-publish "$expected_head" \
+        --remote origin --repo "$test_repo" --allow-large-binary original.bin
+    assert_file_contains "$output" '不接受 --allow-large-binary' \
+        'resume accepted large binary override'
     output=$case_dir/initial.log
     expect_failure "$output" "$finalizer" --resume-initial-publish "$expected_head" \
         --initial-publish --remote origin --repo "$test_repo"

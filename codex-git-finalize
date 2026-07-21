@@ -2,17 +2,20 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="0.2.1"
+readonly VERSION="0.2.2"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
+readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 
 usage() {
     cat <<'EOF'
 Usage:
   codex-git-finalize --repo <absolute-repo> --message <commit-message> [--dry-run]
-    [--allow-test-fixture <repo-relative-path>]... -- <file>...
+    [--allow-test-fixture <repo-relative-path>]...
+    [--allow-large-binary <repo-relative-path>]... -- <file>...
   codex-git-finalize --initial-publish --remote <remote-name>
     --repo <absolute-repo> --message <commit-message> [--dry-run]
-    [--allow-test-fixture <repo-relative-path>]... -- <file>...
+    [--allow-test-fixture <repo-relative-path>]...
+    [--allow-large-binary <repo-relative-path>]... -- <file>...
   codex-git-finalize --resume-initial-publish <full-head-oid>
     --remote <remote-name> --repo <absolute-repo>
 
@@ -23,6 +26,7 @@ Options:
   --resume-initial-publish <oid> Resume publication of one exact root commit.
   --remote <name>                Required by initial and resume modes.
   --allow-test-fixture <path>    Ignore content secret signatures for this exact tests/ file.
+  --allow-large-binary <path>    Allow this exact binary file above 5 MiB, up to 25 MiB.
   --dry-run                      Report scope and risks without add, commit, fetch, or push.
   --version                      Show the version and exit.
   -h, --help                     Show this help.
@@ -267,6 +271,31 @@ check_test_fixture_staged_scope() {
             fail "test fixture 必须作为普通文件出现在 staged 范围: $(printf '%q' "$path")"
         [[ "$index_mode" == '100644' || "$index_mode" == '100755' ]] ||
             fail "test fixture staged 条目必须是普通文件: $(printf '%q' "$path")"
+    done
+}
+
+check_large_binary_staged_scope() {
+    local path
+    local staged_size
+    declare -A current_staged_paths=()
+
+    ((${#large_binary_paths[@]} > 0)) || return 0
+    for path in "${staged_paths[@]}"; do
+        current_staged_paths["$path"]=1
+    done
+    for path in "${large_binary_paths[@]}"; do
+        [[ -n ${current_staged_paths[$path]+present} ]] ||
+            fail "大二进制例外目标未进入 staged 范围: $(printf '%q' "$path")"
+        get_index_entry "$path" ||
+            fail "大二进制例外目标必须作为普通文件进入 staged 范围: $(printf '%q' "$path")"
+        [[ "$index_mode" == '100644' || "$index_mode" == '100755' ]] ||
+            fail "大二进制例外目标的 staged 条目必须是普通文件: $(printf '%q' "$path")"
+        is_staged_large_binary "$path" ||
+            fail "大二进制例外目标的 staged blob 必须大于 5 MiB: $(printf '%q' "$path")"
+        staged_size=$(git -C "$repo" cat-file -s "$index_oid") ||
+            fail "无法读取大二进制 staged blob 大小: $(printf '%q' "$path")"
+        ((staged_size <= MAX_ALLOWED_LARGE_BINARY_BYTES)) ||
+            fail "大二进制例外目标超过 25 MiB 硬上限: $(printf '%q' "$path")"
     done
 }
 
@@ -1109,6 +1138,7 @@ remote_seen=0
 resume_seen=0
 separator_seen=0
 declare -a allow_test_fixture_args=()
+declare -a allow_large_binary_args=()
 
 while (($# > 0)); do
     case "$1" in
@@ -1160,6 +1190,11 @@ while (($# > 0)); do
             allow_test_fixture_args+=("$2")
             shift 2
             ;;
+        --allow-large-binary)
+            (($# >= 2)) || fail '--allow-large-binary 缺少参数'
+            allow_large_binary_args+=("$2")
+            shift 2
+            ;;
         --)
             separator_seen=1
             shift
@@ -1184,6 +1219,8 @@ if ((resume_initial == 1)); then
     ((dry_run == 0)) || fail 'resume 模式不支持 --dry-run'
     ((${#allow_test_fixture_args[@]} == 0)) ||
         fail 'resume 模式不接受 --allow-test-fixture'
+    ((${#allow_large_binary_args[@]} == 0)) ||
+        fail 'resume 模式不接受 --allow-large-binary'
     ((separator_seen == 0 && ${#input_paths[@]} == 0)) ||
         fail 'resume 模式不接受文件列表或 -- 分隔符'
     ((remote_seen == 1)) || fail 'resume 模式必须指定 --remote'
@@ -1230,6 +1267,8 @@ declare -a staged_paths=()
 declare -A allowed_paths=()
 declare -a test_fixture_paths=()
 declare -A test_fixture_content_overrides=()
+declare -a large_binary_paths=()
+declare -A large_binary_overrides=()
 
 for input_path in "${input_paths[@]}"; do
     [[ -n "$input_path" ]] || fail '文件路径不能为空'
@@ -1301,6 +1340,44 @@ for fixture_arg in "${allow_test_fixture_args[@]}"; do
     test_fixture_paths+=("$fixture_relative")
 done
 
+for large_binary_arg in "${allow_large_binary_args[@]}"; do
+    [[ -n "$large_binary_arg" ]] || fail '--allow-large-binary 路径不能为空'
+    [[ "$large_binary_arg" != /* ]] ||
+        fail '--allow-large-binary 必须是 repo-relative path'
+    [[ "$large_binary_arg" != *$'\n'* && "$large_binary_arg" != *$'\r'* &&
+        "$large_binary_arg" != *$'\t'* ]] ||
+        fail '--allow-large-binary 路径不能包含换行符、回车符或制表符'
+
+    large_binary_lexical=$(realpath -m -s -- "$repo/$large_binary_arg") ||
+        fail "无法解析大二进制例外路径: $large_binary_arg"
+    [[ "$large_binary_lexical" == "$repo/"* && "$large_binary_lexical" != "$repo" ]] ||
+        fail "大二进制例外路径不在 repo 内: $large_binary_arg"
+    large_binary_relative=${large_binary_lexical#"$repo/"}
+    [[ "$large_binary_arg" == "$large_binary_relative" ]] ||
+        fail "--allow-large-binary 必须是规范的 repo-relative path: $large_binary_arg"
+    [[ -n ${allowed_paths[$large_binary_relative]+present} ]] ||
+        fail "大二进制例外路径不在本次显式文件范围内: $large_binary_arg"
+    [[ -f "$large_binary_lexical" && ! -L "$large_binary_lexical" ]] ||
+        fail "大二进制例外目标必须是仓库内普通文件: $large_binary_arg"
+    large_binary_resolved=$(realpath -e -- "$large_binary_lexical") ||
+        fail "无法解析大二进制例外文件: $large_binary_arg"
+    [[ "$large_binary_resolved" == "$repo/"* ]] ||
+        fail "大二进制例外文件经符号链接解析后不在 repo 内: $large_binary_arg"
+    [[ "$large_binary_resolved" == "$large_binary_lexical" ]] ||
+        fail "大二进制例外路径不能包含符号链接: $large_binary_arg"
+    [[ -z ${large_binary_overrides[$large_binary_relative]+present} ]] ||
+        fail "重复大二进制例外路径: $(printf '%q' "$large_binary_relative")"
+    is_working_large_binary "$large_binary_lexical" ||
+        fail "大二进制例外目标必须是大于 5 MiB 的明显二进制文件: $large_binary_arg"
+    large_binary_size=$(stat -c '%s' -- "$large_binary_lexical") ||
+        fail "无法读取大二进制例外文件大小: $large_binary_arg"
+    ((large_binary_size <= MAX_ALLOWED_LARGE_BINARY_BYTES)) ||
+        fail "大二进制例外目标超过 25 MiB 硬上限: $large_binary_arg"
+
+    large_binary_overrides["$large_binary_relative"]=1
+    large_binary_paths+=("$large_binary_relative")
+done
+
 print_snapshot
 
 printf '\n== 显式范围 ==\n'
@@ -1317,6 +1394,9 @@ for path in "${paths[@]}"; do
 done
 for path in "${test_fixture_paths[@]}"; do
     printf 'test fixture content override: %q\n' "$path"
+done
+for path in "${large_binary_paths[@]}"; do
+    printf 'large binary size override (max 25 MiB): %q\n' "$path"
 done
 
 collect_staged_paths
@@ -1352,7 +1432,8 @@ if ((dry_run == 1)); then
             add_risk "真实运行会拒绝 $(printf '%q' "$path"): $reason"
             continue
         fi
-        if is_working_large_binary "$absolute_path"; then
+        if is_working_large_binary "$absolute_path" &&
+            [[ -z ${large_binary_overrides[$path]+present} ]]; then
             add_risk "真实运行会拒绝大于 5 MiB 的明显二进制文件: $(printf '%q' "$path")"
         fi
         if [[ -f "$absolute_path" && ! -L "$absolute_path" ]]; then
@@ -1404,7 +1485,8 @@ for index in "${!paths[@]}"; do
     if reason=$(sensitive_path_reason "$path"); then
         fail "拒绝敏感文件 $(printf '%q' "$path"): $reason"
     fi
-    if is_working_large_binary "$absolute_path"; then
+    if is_working_large_binary "$absolute_path" &&
+        [[ -z ${large_binary_overrides[$path]+present} ]]; then
         fail "拒绝大于 5 MiB 的明显二进制文件: $(printf '%q' "$path")"
     fi
     if [[ -f "$absolute_path" && ! -L "$absolute_path" ]]; then
@@ -1436,6 +1518,7 @@ fi
 
 check_staged_scope
 check_test_fixture_staged_scope
+check_large_binary_staged_scope
 ((${#staged_paths[@]} > 0)) || fail 'staged diff 为空；未执行 commit 或 push'
 
 if [[ -n $(git -C "$repo" ls-files -u) ]]; then
@@ -1454,7 +1537,8 @@ for path in "${staged_paths[@]}"; do
     if reason=$(sensitive_path_reason "$path"); then
         fail "拒绝敏感 staged 文件 $(printf '%q' "$path"): $reason"
     fi
-    if is_staged_large_binary "$path"; then
+    if is_staged_large_binary "$path" &&
+        [[ -z ${large_binary_overrides[$path]+present} ]]; then
         fail "拒绝大于 5 MiB 的明显 staged 二进制文件: $(printf '%q' "$path")"
     fi
     if get_index_entry "$path" &&

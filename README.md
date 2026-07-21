@@ -2,7 +2,7 @@
 
 Codex Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`0.2.1`
+当前版本：`0.2.2`
 
 ## 使用方式
 
@@ -42,6 +42,18 @@ codex-git-finalize \
 空远端经 `git clone` 创建的 unborn 分支可能已有精确匹配但尚不可解析的 tracking target；initial 与 resume 模式接受该状态并由成功 push 自然完成 upstream。正常模式仍要求 upstream commit 已可解析。Upstream target 配置与 resolved upstream commit 是不同事实。
 
 文件范围必须在 `--` 后逐项显式给出；脚本不会使用 `git add .` 或 `git add -A`。测试夹具豁免只能通过 `--allow-test-fixture <exact-path>` 精确指定。
+
+默认拒绝超过 5 MiB 的明显二进制文件。确需保留原始图片等文件时，可重复使用 `--allow-large-binary <exact-path>`，但该路径必须同时出现在 `--` 后的显式文件范围内，必须是普通文件，工作树与 staged blob 都必须大于 5 MiB 且不超过 25 MiB。该参数只放行精确文件的大小检查，不放行敏感路径、credential / secret 内容检查、staged scope、远端状态或快进检查；超过 25 MiB 仍会拒绝。
+
+例如：
+
+```bash
+codex-git-finalize \
+  --repo /home/user/projects/example \
+  --message "docs: archive original photo" \
+  --allow-large-binary Attachments/photo.jpg \
+  -- Attachments/photo.jpg
+```
 
 工具不会自动 pull、merge 或 rebase，不会 amend，不会 force push，也不会创建远端仓库。
 
