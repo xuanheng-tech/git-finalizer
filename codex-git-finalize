@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="0.2.2"
+readonly VERSION="0.2.4"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 
@@ -241,6 +241,22 @@ collect_staged_paths() {
     mapfile -d '' -t staged_paths < <(
         git -C "$repo" --literal-pathspecs diff --cached --name-only --no-renames -z
     )
+}
+
+is_staged_deletion_with_ignored_worktree_copy() {
+    local path=$1
+    local absolute_path=$repo/$path
+    local diff_status
+
+    [[ -e "$absolute_path" || -L "$absolute_path" ]] || return 1
+    if git -C "$repo" --literal-pathspecs \
+        diff --cached --quiet --diff-filter=D -- "$path"; then
+        return 1
+    else
+        diff_status=$?
+    fi
+    ((diff_status == 1)) || return 1
+    git -C "$repo" check-ignore --quiet --no-index -- "$path"
 }
 
 check_staged_scope() {
@@ -1264,7 +1280,9 @@ fi
 declare -a paths=()
 declare -a absolute_paths=()
 declare -a staged_paths=()
+declare -a paths_to_add=()
 declare -A allowed_paths=()
+declare -A retained_ignored_deletions=()
 declare -a test_fixture_paths=()
 declare -A test_fixture_content_overrides=()
 declare -a large_binary_paths=()
@@ -1400,6 +1418,17 @@ for path in "${large_binary_paths[@]}"; do
 done
 
 collect_staged_paths
+if ((initial_publish == 0)); then
+    for path in "${paths[@]}"; do
+        if is_staged_deletion_with_ignored_worktree_copy "$path"; then
+            retained_ignored_deletions["$path"]=1
+        else
+            paths_to_add+=("$path")
+        fi
+    done
+else
+    paths_to_add=("${paths[@]}")
+fi
 if ((dry_run == 1)); then
     printf '\n== DRY-RUN 风险 ==\n'
     if ((initial_publish == 1)); then
@@ -1430,6 +1459,9 @@ if ((dry_run == 1)); then
         absolute_path=${absolute_paths[$index]}
         if reason=$(sensitive_path_reason "$path"); then
             add_risk "真实运行会拒绝 $(printf '%q' "$path"): $reason"
+            continue
+        fi
+        if [[ -n ${retained_ignored_deletions[$path]+present} ]]; then
             continue
         fi
         if is_working_large_binary "$absolute_path" &&
@@ -1485,6 +1517,9 @@ for index in "${!paths[@]}"; do
     if reason=$(sensitive_path_reason "$path"); then
         fail "拒绝敏感文件 $(printf '%q' "$path"): $reason"
     fi
+    if [[ -n ${retained_ignored_deletions[$path]+present} ]]; then
+        continue
+    fi
     if is_working_large_binary "$absolute_path" &&
         [[ -z ${large_binary_overrides[$path]+present} ]]; then
         fail "拒绝大于 5 MiB 的明显二进制文件: $(printf '%q' "$path")"
@@ -1511,9 +1546,18 @@ else
 fi
 
 printf '\n== 显式暂存 ==\n'
-if ! run_git_mutation 'git add -- <explicit paths>' \
-    git -C "$repo" --literal-pathspecs add -- "${paths[@]}"; then
-    fail 'git add 失败；未执行 commit 或 push'
+for path in "${paths[@]}"; do
+    if [[ -n ${retained_ignored_deletions[$path]+present} ]]; then
+        printf '保留已暂存删除及本地忽略副本: %q\n' "$path"
+    fi
+done
+if ((${#paths_to_add[@]} > 0)); then
+    if ! run_git_mutation 'git add -- <explicit paths>' \
+        git -C "$repo" --literal-pathspecs add -- "${paths_to_add[@]}"; then
+        fail 'git add 失败；未执行 commit 或 push'
+    fi
+else
+    printf '(所有显式路径均已作为删除暂存，无需 git add)\n'
 fi
 
 check_staged_scope

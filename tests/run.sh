@@ -379,6 +379,49 @@ test_synced_success_scope() {
         'synced success left staged content'
 }
 
+test_staged_deletion_preserves_ignored_worktree_copy() {
+    local case_dir=$tmp_root/staged-ignored-deletion
+    local output=$case_dir/output.log
+    local copy_hash final_head committed_status
+
+    make_synced_repo "$case_dir"
+    mkdir -p -- "$test_repo/scratch"
+    printf '# tracked ignore rules\n' >"$test_repo/.gitignore"
+    printf 'tracked scratch\n' >"$test_repo/scratch/草稿箱.md"
+    git -C "$test_repo" add -- .gitignore scratch/草稿箱.md
+    git -C "$test_repo" commit --quiet -m 'track scratch file'
+    git -C "$test_repo" push --quiet
+
+    printf 'scratch/\n' >"$test_repo/.gitignore"
+    git -C "$test_repo" rm --cached --quiet -- scratch/草稿箱.md
+    printf 'github_%s%s\n' 'pat_' 'SYNTHETIC_ONLY_0123456789ABCDEF' \
+        >"$test_repo/scratch/草稿箱.md"
+    copy_hash=$(file_snapshot "$test_repo" scratch/草稿箱.md)
+
+    expect_success "$output" "$finalizer" --repo "$test_repo" \
+        --message 'stop tracking local scratch' -- .gitignore scratch/草稿箱.md
+    final_head=$(git -C "$test_repo" rev-parse HEAD)
+    assert_equal "$final_head" "$(remote_main "$test_remote")" \
+        'ignored-copy deletion push mismatch'
+    committed_status=$(
+        git -C "$test_repo" -c core.quotePath=false \
+            diff-tree --no-commit-id --name-status -r --no-renames HEAD
+    )
+    assert_equal $'M\t.gitignore\nD\tscratch/草稿箱.md' "$committed_status" \
+        'ignored-copy deletion commit has the wrong scope'
+    assert_file_contains "$output" '保留已暂存删除及本地忽略副本' \
+        'ignored-copy preservation was not reported'
+    assert_equal "$copy_hash" "$(file_snapshot "$test_repo" scratch/草稿箱.md)" \
+        'ignored worktree copy changed'
+    if git -C "$test_repo" ls-files --error-unmatch -- scratch/草稿箱.md >/dev/null 2>&1; then
+        fail_assertion 'ignored worktree copy remains tracked'
+    fi
+    git -C "$test_repo" check-ignore --quiet --no-index -- scratch/草稿箱.md ||
+        fail_assertion 'retained worktree copy is not ignored'
+    assert_equal '' "$(status_snapshot "$test_repo")" \
+        'ignored worktree copy left visible repository changes'
+}
+
 test_post_commit_remote_change() {
     local case_dir=$tmp_root/post-commit-race
     local competitor=$case_dir/competitor
@@ -1249,7 +1292,7 @@ test_release_contract() {
     printf '%s\n' '#!/usr/bin/env bash' ": >\"\$GIT_PROBE\"" 'exit 97' \
         >"$fake_bin/git"
     chmod 700 "$fake_bin/git"
-    printf 'codex-git-finalize 0.2.2\n' >"$version_expected"
+    printf 'codex-git-finalize 0.2.4\n' >"$version_expected"
 
     GIT_PROBE="$git_probe" PATH="$fake_bin:$PATH" \
         "$finalizer" --version >"$version_output" 2>"$version_error"
@@ -1268,8 +1311,8 @@ test_release_contract() {
     assert_file_contains "$help_output" '--allow-large-binary' \
         'large binary override missing from help'
     assert_file_contains "$project_root/codex-git-finalize" \
-        'readonly VERSION="0.2.2"' 'script version constant drifted'
-    assert_file_contains "$project_root/README.md" "当前版本：\`0.2.2\`" \
+        'readonly VERSION="0.2.4"' 'script version constant drifted'
+    assert_file_contains "$project_root/README.md" "当前版本：\`0.2.4\`" \
         'README version drifted'
 }
 
@@ -1288,6 +1331,8 @@ run_case 'behind blocks before add' test_behind
 run_case 'diverged blocks before add' test_diverged
 run_case 'local ahead remains supported' test_local_ahead
 run_case 'synced success preserves out-of-scope changes' test_synced_success_scope
+run_case 'staged deletion preserves an ignored worktree copy' \
+    test_staged_deletion_preserves_ignored_worktree_copy
 run_case 'post-commit remote change is caught before push' test_post_commit_remote_change
 run_case 'push failure keeps commit without remote output' \
     test_push_failure_keeps_commit_without_remote_output
