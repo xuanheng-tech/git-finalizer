@@ -35,6 +35,11 @@ codex-git-finalize \
   --repo /home/user/projects/example
 ```
 
+## Codex PreToolUse bridge
+
+Git Finalizer Hook 的版本化源、测试、只读漂移检查和显式恢复入口见
+[`hooks/README.md`](hooks/README.md)。
+
 ## 工作流边界
 
 正常开发流程是先完成修改、测试和审查，再调用正常模式提交推送。首次发布仅适用于 unborn 本地仓库和完全空远端；恢复模式仅适用于干净、非空的单 root HEAD，不会再次创建提交。
@@ -59,8 +64,8 @@ codex-git-finalize \
 
 工具不会自动 pull、merge 或 rebase，不会 amend，不会 force push，也不会创建远端仓库。
 
-运行完整集成测试：
+运行完整检查：
 
 ```bash
-bash tests/run.sh
+just check
 ```
