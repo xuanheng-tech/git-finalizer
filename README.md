@@ -85,3 +85,10 @@ just check
 仓库内 Python 入口均使用进程级 `-B`，避免工具执行或 Hook 检查向源码树写入
 `__pycache__`。语法与行为验证使用 `just check`；不要以 `python -m py_compile` 作为本仓库的
 常规检查，因为 `py_compile` 会显式生成 `.pyc`，即使解释器同时传入 `-B`。
+
+## 版本维护
+
+主脚本的 `VERSION`、README 当前版本、对应的 `CHANGELOG.md` 条目和必要测试必须在同一发布
+准备批次中完成。`CHANGELOG.md` 是版本变化的权威记录，Gitea Release 说明从对应章节生成。
+合入 `main` 不等于发布；正式发布仍需独立创建并推送 tag，Git Finalizer 本身不会创建或推送
+tag。
