@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="0.3.0"
+readonly VERSION="0.3.1"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 
@@ -70,7 +70,7 @@ require_command() {
 verify_initial_snapshot() {
     local source=$1
 
-    /usr/bin/python3 "$snapshot_verifier" "$snapshot_id" "$repo" "$source" "${paths[@]}"
+    /usr/bin/python3 -B "$snapshot_verifier" "$snapshot_id" "$repo" "$source" "${paths[@]}"
 }
 
 print_value_or() {

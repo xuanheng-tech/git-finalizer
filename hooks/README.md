@@ -56,7 +56,7 @@ Codex 每次 Hook 调用都会启动新的 Python 进程；安装后的下一次
   "hooks": [
     {
       "type": "command",
-      "command": "/usr/bin/python3 /home/hsd/.codex/hooks/codex_git_finalize_bridge.py",
+      "command": "/usr/bin/python3 -B /home/hsd/.codex/hooks/codex_git_finalize_bridge.py",
       "timeout": 330,
       "statusMessage": "Validating Git Finalizer escalation"
     }

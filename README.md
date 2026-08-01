@@ -2,7 +2,7 @@
 
 Codex Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`0.3.0`
+当前版本：`0.3.1`
 
 ## 使用方式
 
@@ -81,3 +81,7 @@ codex-git-finalize \
 ```bash
 just check
 ```
+
+仓库内 Python 入口均使用进程级 `-B`，避免工具执行或 Hook 检查向源码树写入
+`__pycache__`。语法与行为验证使用 `just check`；不要以 `python -m py_compile` 作为本仓库的
+常规检查，因为 `py_compile` 会显式生成 `.pyc`，即使解释器同时传入 `-B`。

@@ -118,7 +118,7 @@ make_generated_snapshot() {
     local repo=$1
     local state=$2
 
-    /usr/bin/python3 - "$repo" "$state" <<'PY'
+    /usr/bin/python3 -B - "$repo" "$state" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -893,6 +893,27 @@ test_initial_snapshot_generated_coverage_success() {
         'snapshot-bound initial publish left the worktree dirty'
 }
 
+test_snapshot_verifier_disables_bytecode() {
+    local case_dir=$tmp_root/snapshot-no-bytecode
+    local state=$case_dir/state
+    local bytecode_prefix=$case_dir/python-bytecode
+    local output=$case_dir/output.log
+    local snapshot
+
+    make_unborn_repo "$case_dir"
+    write_generated_snapshot_scope "$test_repo"
+    snapshot=$(make_generated_snapshot "$test_repo" "$state")
+
+    expect_success "$output" env -u PYTHONDONTWRITEBYTECODE \
+        XDG_STATE_HOME="$state" PYTHONPYCACHEPREFIX="$bytecode_prefix" "$finalizer" \
+        --initial-publish --remote origin --repo "$test_repo" \
+        --message 'snapshot bytecode check' --snapshot "$snapshot" -- \
+        README.md generated/manifest.json generated/schema.json
+
+    [[ ! -e "$bytecode_prefix" ]] ||
+        fail_assertion 'snapshot verifier wrote bytecode despite its process-local -B flag'
+}
+
 test_initial_snapshot_rejects_workspace_drift() {
     local case_dir=$tmp_root/initial-snapshot-drift
     local state=$case_dir/state
@@ -1532,7 +1553,7 @@ test_release_contract() {
     printf '%s\n' '#!/usr/bin/env bash' ": >\"\$GIT_PROBE\"" 'exit 97' \
         >"$fake_bin/git"
     chmod 700 "$fake_bin/git"
-    printf 'codex-git-finalize 0.3.0\n' >"$version_expected"
+    printf 'codex-git-finalize 0.3.1\n' >"$version_expected"
 
     GIT_PROBE="$git_probe" PATH="$fake_bin:$PATH" \
         "$finalizer" --version >"$version_output" 2>"$version_error"
@@ -1553,11 +1574,14 @@ test_release_contract() {
     assert_file_contains "$help_output" '--snapshot' \
         'snapshot evidence option missing from help'
     assert_file_contains "$project_root/codex-git-finalize" \
-        'readonly VERSION="0.3.0"' 'script version constant drifted'
-    assert_file_contains "$project_root/README.md" "当前版本：\`0.3.0\`" \
+        'readonly VERSION="0.3.1"' 'script version constant drifted'
+    assert_file_contains "$project_root/README.md" "当前版本：\`0.3.1\`" \
         'README version drifted'
     [[ -f "$project_root/codex-git-finalize-snapshot-verify.py" ]] ||
         fail_assertion 'snapshot verifier companion is missing'
+    assert_file_contains "$project_root/codex-git-finalize" \
+        '/usr/bin/python3 -B "$snapshot_verifier"' \
+        'snapshot verifier invocation does not disable bytecode writes'
 }
 
 run_case() {
@@ -1590,6 +1614,8 @@ run_case 'push target mismatch is rejected' test_push_target_mismatch
 run_case 'initial publish creates and verifies one root commit' test_initial_publish_success
 run_case 'initial snapshot accepts generated-manifest coverage' \
     test_initial_snapshot_generated_coverage_success
+run_case 'snapshot verifier leaves no Python bytecode cache' \
+    test_snapshot_verifier_disables_bytecode
 run_case 'initial snapshot rejects workspace drift before staging' \
     test_initial_snapshot_rejects_workspace_drift
 run_case 'initial snapshot rejects every uncovered explicit path' \
