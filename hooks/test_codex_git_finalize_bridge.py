@@ -56,6 +56,9 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 "tests/test_runner.py",
             )
         )
+        self.snapshot_command = self.initial_command.replace(
+            " --repo ", " --snapshot " + "a" * 64 + " --repo ", 1
+        )
 
     def event(self, command: object | None = None) -> dict[str, object]:
         return {
@@ -123,6 +126,13 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0], shlex.split(self.initial_command))
+
+    def test_initial_publish_snapshot_is_accepted_and_forwarded(self) -> None:
+        output, run = self.invoke_main(self.event(self.snapshot_command))
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], shlex.split(self.snapshot_command))
 
     def test_missing_current_transcript_call_still_allows_valid_finalizer(self) -> None:
         output, run = self.invoke_main(self.event())
@@ -207,13 +217,50 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         with self.assertRaises(bridge.BridgeError):
             bridge.validate_hook_event(self.event(command))
 
-    def test_repo_must_match_hook_cwd(self) -> None:
+    def test_explicit_repo_controls_bridge_cwd_when_event_cwd_differs(self) -> None:
         other_repo = self.root / "other"
         other_repo.mkdir()
         command = self.command.replace(str(self.repo), str(other_repo), 1)
 
-        with self.assertRaises(bridge.BridgeError):
-            bridge.validate_hook_event(self.event(command))
+        output, run = self.invoke_main(self.event(command))
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[1], other_repo)
+
+    def test_transcript_workdir_can_authorize_a_different_event_cwd(self) -> None:
+        other = self.root / "session-cwd"
+        other.mkdir()
+        event = self.event()
+        event["cwd"] = str(other)
+        self.write_transcript_call(
+            {
+                "cmd": self.command,
+                "sandbox_permissions": "require_escalated",
+                "workdir": str(self.repo),
+            }
+        )
+
+        output, run = self.invoke_main(event)
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+
+    def test_transcript_workdir_mismatch_is_denied(self) -> None:
+        other = self.root / "other-workdir"
+        other.mkdir()
+        self.write_transcript_call(
+            {
+                "cmd": self.command,
+                "sandbox_permissions": "require_escalated",
+                "workdir": str(other),
+            }
+        )
+
+        output, run = self.invoke_main(self.event())
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
+        run.assert_not_called()
 
     def test_explicit_paths_must_stay_in_repo_scope(self) -> None:
         prefix = self.command.rsplit(" -- ", 1)[0]
@@ -242,6 +289,17 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         normal_with_remote = self.command.replace(" --repo ", " --remote origin --repo ", 1)
 
         for command in (initial_without_remote, normal_with_remote):
+            with self.subTest(command=command):
+                with self.assertRaises(bridge.BridgeError):
+                    bridge.validate_hook_event(self.event(command))
+
+    def test_snapshot_requires_initial_mode_and_exact_id(self) -> None:
+        normal_with_snapshot = self.command.replace(
+            " --repo ", " --snapshot " + "a" * 64 + " --repo ", 1
+        )
+        invalid_snapshot = self.snapshot_command.replace("a" * 64, "ABC123", 1)
+
+        for command in (normal_with_snapshot, invalid_snapshot):
             with self.subTest(command=command):
                 with self.assertRaises(bridge.BridgeError):
                     bridge.validate_hook_event(self.event(command))

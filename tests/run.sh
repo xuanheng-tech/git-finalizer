@@ -114,6 +114,142 @@ make_unborn_repo() {
     git -C "$test_repo" remote add origin "$test_remote"
 }
 
+make_generated_snapshot() {
+    local repo=$1
+    local state=$2
+
+    /usr/bin/python3 - "$repo" "$state" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
+
+
+repo = Path(sys.argv[1])
+state = Path(sys.argv[2])
+paths = ("README.md", "generated/manifest.json", "generated/schema.json")
+
+
+def digest(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+records: list[dict[str, object]] = []
+contexts: list[dict[str, str]] = []
+for relative in paths:
+    target = repo / relative
+    content = target.read_bytes()
+    record: dict[str, object] = {
+        "path": relative,
+        "bytes": len(content),
+        "sha256": digest(content),
+        "executable": bool(target.stat().st_mode & 0o111),
+        "coverage": "content",
+    }
+    if relative == "generated/schema.json":
+        record["coverage"] = "generated_manifest"
+        record["manifest_path"] = "generated/manifest.json"
+    else:
+        contexts.append({"path": relative, "content": content.decode("utf-8")})
+    records.append(record)
+
+workspace = hashlib.sha256()
+for record in records:
+    workspace.update(str(record["path"]).encode())
+    workspace.update(b"\0")
+    workspace.update(str(record["bytes"]).encode("ascii"))
+    workspace.update(b"\0")
+    workspace.update(str(record["sha256"]).encode("ascii"))
+    workspace.update(b"\0")
+    workspace.update(b"1" if record["executable"] is True else b"0")
+    workspace.update(b"\n")
+
+empty_tree = subprocess.run(
+    ["/usr/bin/git", "-C", os.fspath(repo), "hash-object", "-t", "tree", "--stdin"],
+    input=b"",
+    capture_output=True,
+    check=True,
+).stdout.decode().strip()
+manifest_record = records[1]
+schema_record = records[2]
+publication = {
+    "schema_version": 1,
+    "mode": "unborn",
+    "complete": True,
+    "sensitive_scan": "complete",
+    "changed_file_count": 3,
+    "covered_file_count": 3,
+    "content_file_count": 2,
+    "generated_file_count": 1,
+    "workspace_sha256": workspace.hexdigest(),
+    "files": records,
+    "generated_trees": [
+        {
+            "path": "generated",
+            "manifest_path": "generated/manifest.json",
+            "manifest_bytes": manifest_record["bytes"],
+            "manifest_sha256": manifest_record["sha256"],
+            "file_count": 1,
+            "total_bytes": schema_record["bytes"],
+        }
+    ],
+}
+status = "".join(f"?? {path}\n" for path in paths)
+envelope = {
+    "schema_version": 2,
+    "producer_security_epoch": 4,
+    "task": "diff-audit",
+    "repository": repo.name,
+    "data": {
+        "status_short": status,
+        "staged_diff": "",
+        "unstaged_diff": "",
+        "file_context": contexts,
+        "baseline_kind": "empty_tree",
+        "baseline_oid": empty_tree,
+        "initial_publication": publication,
+    },
+    "truncated": False,
+    "evidence_gaps": [],
+    "redactions": {},
+    "trust_boundary": "synthetic Finalizer integration fixture",
+    "security_notice": "synthetic Finalizer integration fixture",
+}
+snapshot_bytes = json.dumps(envelope, ensure_ascii=False, separators=(",", ":")).encode() + b"\n"
+snapshot_id = digest(snapshot_bytes)
+preview_bytes = b"synthetic preview\n"
+meta = {
+    "schema_version": 2,
+    "producer_security_epoch": 4,
+    "snapshot_id": snapshot_id,
+    "task": "diff-audit",
+    "repository": repo.name,
+    "snapshot_sha256": snapshot_id,
+    "snapshot_bytes": len(snapshot_bytes),
+    "preview_sha256": digest(preview_bytes),
+    "preview_bytes": len(preview_bytes),
+}
+directory = state / "codex-exec" / "snapshots" / snapshot_id
+directory.mkdir(parents=True, mode=0o700)
+for parent in (state, state / "codex-exec", state / "codex-exec" / "snapshots", directory):
+    parent.chmod(0o700)
+for name, content in (
+    ("snapshot.json", snapshot_bytes),
+    ("preview.txt", preview_bytes),
+    ("meta.json", json.dumps(meta, sort_keys=True).encode() + b"\n"),
+):
+    target = directory / name
+    target.write_bytes(content)
+    target.chmod(0o600)
+print(snapshot_id)
+PY
+}
+
 make_cloned_unborn_repo() {
     local case_dir=$1
 
@@ -714,6 +850,99 @@ test_initial_publish_success() {
         'initial success left staged changes'
 }
 
+write_generated_snapshot_scope() {
+    local repo=$1
+    local schema_hash
+    local schema_size
+
+    mkdir -p -- "$repo/generated"
+    printf 'initial readme\n' >"$repo/README.md"
+    printf '{"type":"object"}\n' >"$repo/generated/schema.json"
+    schema_hash=$(sha256sum "$repo/generated/schema.json" | awk '{print $1}')
+    schema_size=$(stat -c '%s' "$repo/generated/schema.json")
+    printf '{"file_count":1,"total_bytes":%s,"files":[{"path":"schema.json","bytes":%s,"sha256":"%s"}]}\n' \
+        "$schema_size" "$schema_size" "$schema_hash" >"$repo/generated/manifest.json"
+}
+
+test_initial_snapshot_generated_coverage_success() {
+    local case_dir=$tmp_root/initial-snapshot-success
+    local state=$case_dir/state
+    local output=$case_dir/output.log
+    local snapshot head
+
+    make_unborn_repo "$case_dir"
+    write_generated_snapshot_scope "$test_repo"
+    snapshot=$(make_generated_snapshot "$test_repo" "$state")
+
+    expect_success "$output" env XDG_STATE_HOME="$state" "$finalizer" \
+        --initial-publish --remote origin --repo "$test_repo" \
+        --message 'snapshot initial' --snapshot "$snapshot" -- \
+        README.md generated/manifest.json generated/schema.json
+
+    assert_file_contains "$output" 'source=worktree covered=3/3' \
+        'snapshot worktree verification was absent'
+    assert_file_contains "$output" 'source=index covered=3/3' \
+        'snapshot index verification was absent'
+    assert_file_contains "$output" 'source=head covered=3/3' \
+        'snapshot HEAD verification was absent'
+    head=$(git -C "$test_repo" rev-parse HEAD)
+    assert_root_commit "$test_repo"
+    assert_equal "$head" "$(remote_main "$test_remote")" \
+        'snapshot-bound initial remote mismatch'
+    assert_equal '' "$(status_snapshot "$test_repo")" \
+        'snapshot-bound initial publish left the worktree dirty'
+}
+
+test_initial_snapshot_rejects_workspace_drift() {
+    local case_dir=$tmp_root/initial-snapshot-drift
+    local state=$case_dir/state
+    local output=$case_dir/output.log
+    local snapshot
+
+    make_unborn_repo "$case_dir"
+    write_generated_snapshot_scope "$test_repo"
+    snapshot=$(make_generated_snapshot "$test_repo" "$state")
+    printf 'drift\n' >>"$test_repo/README.md"
+
+    expect_failure "$output" env XDG_STATE_HOME="$state" "$finalizer" \
+        --initial-publish --remote origin --repo "$test_repo" \
+        --message 'snapshot drift' --snapshot "$snapshot" -- \
+        README.md generated/manifest.json generated/schema.json
+
+    assert_file_contains "$output" 'snapshot evidence rejected' \
+        'snapshot drift diagnostic absent'
+    assert_unborn "$test_repo"
+    assert_equal '' "$(index_snapshot "$test_repo")" \
+        'snapshot drift rejection changed the index'
+    assert_equal '' "$(remote_refs "$test_remote")" \
+        'snapshot drift rejection changed the remote'
+}
+
+test_initial_snapshot_rejects_uncovered_explicit_path() {
+    local case_dir=$tmp_root/initial-snapshot-uncovered
+    local state=$case_dir/state
+    local output=$case_dir/output.log
+    local snapshot
+
+    make_unborn_repo "$case_dir"
+    write_generated_snapshot_scope "$test_repo"
+    snapshot=$(make_generated_snapshot "$test_repo" "$state")
+    printf 'uncovered\n' >"$test_repo/extra.txt"
+
+    expect_failure "$output" env XDG_STATE_HOME="$state" "$finalizer" \
+        --initial-publish --remote origin --repo "$test_repo" \
+        --message 'snapshot uncovered' --snapshot "$snapshot" -- \
+        README.md extra.txt generated/manifest.json generated/schema.json
+
+    assert_file_contains "$output" 'snapshot evidence rejected' \
+        'uncovered publication path diagnostic absent'
+    assert_unborn "$test_repo"
+    assert_equal '' "$(index_snapshot "$test_repo")" \
+        'uncovered path rejection changed the index'
+    assert_equal '' "$(remote_refs "$test_remote")" \
+        'uncovered path rejection changed the remote'
+}
+
 test_initial_clone_created_upstream() {
     local case_dir=$tmp_root/initial-clone-upstream
     local dry_output=$case_dir/dry-run.log
@@ -1259,6 +1488,8 @@ test_initial_cli_validation() {
     local case_dir=$tmp_root/initial-cli
     local missing_output=$case_dir/missing.log
     local conflict_output=$case_dir/conflict.log
+    local snapshot_conflict_output=$case_dir/snapshot-conflict.log
+    local snapshot_invalid_output=$case_dir/snapshot-invalid.log
     local status_before
 
     make_unborn_repo "$case_dir"
@@ -1273,6 +1504,15 @@ test_initial_cli_validation() {
         --repo "$test_repo" --message test -- first.txt
     assert_file_contains "$conflict_output" '只允许与 --initial-publish' \
         'normal mode accepted --remote'
+    expect_failure "$snapshot_conflict_output" "$finalizer" \
+        --snapshot "$(printf 'a%.0s' {1..64})" \
+        --repo "$test_repo" --message test -- first.txt
+    assert_file_contains "$snapshot_conflict_output" '只允许与 --initial-publish' \
+        'normal mode accepted snapshot evidence'
+    expect_failure "$snapshot_invalid_output" "$finalizer" --initial-publish --remote origin \
+        --snapshot ABC123 --repo "$test_repo" --message test -- first.txt
+    assert_file_contains "$snapshot_invalid_output" '64 位小写十六进制' \
+        'initial mode accepted an invalid snapshot ID'
     assert_unborn "$test_repo"
     assert_equal '' "$(index_snapshot "$test_repo")" 'CLI validation changed index'
     assert_equal "$status_before" "$(status_snapshot "$test_repo")" \
@@ -1292,7 +1532,7 @@ test_release_contract() {
     printf '%s\n' '#!/usr/bin/env bash' ": >\"\$GIT_PROBE\"" 'exit 97' \
         >"$fake_bin/git"
     chmod 700 "$fake_bin/git"
-    printf 'codex-git-finalize 0.2.4\n' >"$version_expected"
+    printf 'codex-git-finalize 0.3.0\n' >"$version_expected"
 
     GIT_PROBE="$git_probe" PATH="$fake_bin:$PATH" \
         "$finalizer" --version >"$version_output" 2>"$version_error"
@@ -1310,10 +1550,14 @@ test_release_contract() {
         'resume-initial-publish mode missing from help'
     assert_file_contains "$help_output" '--allow-large-binary' \
         'large binary override missing from help'
+    assert_file_contains "$help_output" '--snapshot' \
+        'snapshot evidence option missing from help'
     assert_file_contains "$project_root/codex-git-finalize" \
-        'readonly VERSION="0.2.4"' 'script version constant drifted'
-    assert_file_contains "$project_root/README.md" "当前版本：\`0.2.4\`" \
+        'readonly VERSION="0.3.0"' 'script version constant drifted'
+    assert_file_contains "$project_root/README.md" "当前版本：\`0.3.0\`" \
         'README version drifted'
+    [[ -f "$project_root/codex-git-finalize-snapshot-verify.py" ]] ||
+        fail_assertion 'snapshot verifier companion is missing'
 }
 
 run_case() {
@@ -1344,6 +1588,12 @@ run_case 'fixture override remains exact' test_fixture_scope
 run_case 'large binary override remains exact and bounded' test_large_binary_scope
 run_case 'push target mismatch is rejected' test_push_target_mismatch
 run_case 'initial publish creates and verifies one root commit' test_initial_publish_success
+run_case 'initial snapshot accepts generated-manifest coverage' \
+    test_initial_snapshot_generated_coverage_success
+run_case 'initial snapshot rejects workspace drift before staging' \
+    test_initial_snapshot_rejects_workspace_drift
+run_case 'initial snapshot rejects every uncovered explicit path' \
+    test_initial_snapshot_rejects_uncovered_explicit_path
 run_case 'initial publish accepts a clone-created unresolved upstream' \
     test_initial_clone_created_upstream
 run_case 'initial publish rejects conflicting upstream configurations' \

@@ -182,7 +182,7 @@ def parse_direct_finalizer(
             initial_publish = True
             index += 1
             continue
-        if option not in ("--message", "--remote", "--repo") or index + 1 >= len(options):
+        if option not in ("--message", "--remote", "--repo", "--snapshot") or index + 1 >= len(options):
             raise BridgeError("Finalizer 包含未授权参数或缺少参数值")
         if option in parsed:
             raise BridgeError("Finalizer 参数不得重复")
@@ -201,31 +201,32 @@ def parse_direct_finalizer(
             or any(character in remote for character in ("\x00", "\n", "\r", "\t"))
         ):
             raise BridgeError("Finalizer --remote 不是有效的 remote 名")
+        snapshot = parsed.get("--snapshot")
+        if snapshot is not None and re.fullmatch(r"[0-9a-f]{64}", snapshot) is None:
+            raise BridgeError("Finalizer --snapshot 不是有效的 Snapshot Runner ID")
     elif "--remote" in parsed:
         raise BridgeError("Finalizer --remote 只允许与 --initial-publish 一起使用")
+    elif "--snapshot" in parsed:
+        raise BridgeError("Finalizer --snapshot 只允许与 --initial-publish 一起使用")
     message = parsed["--message"]
     if not message or any(character in message for character in ("\x00", "\n", "\r")):
         raise BridgeError("Finalizer --message 不得为空或包含换行")
     return argv, parsed["--repo"], paths, dry_run
 
 
-def resolve_repo(raw_repo: object, event_cwd: object) -> Path:
+def resolve_repo(raw_repo: object) -> Path:
     if not isinstance(raw_repo, str):
         raise BridgeError("Finalizer --repo 缺少路径")
     repo_arg = Path(raw_repo)
     if not repo_arg.is_absolute():
         raise BridgeError("Finalizer --repo 必须是绝对路径")
 
-    if not isinstance(event_cwd, str) or not Path(event_cwd).is_absolute():
-        raise BridgeError("PreToolUse cwd 必须是绝对路径")
-
     try:
         repo = repo_arg.resolve(strict=True)
-        workdir = Path(event_cwd).resolve(strict=True)
     except OSError as exc:
-        raise BridgeError("Finalizer repo 或 PreToolUse cwd 无法解析") from exc
-    if not repo.is_dir() or workdir != repo:
-        raise BridgeError("PreToolUse cwd 必须与 Finalizer --repo 指向同一目录")
+        raise BridgeError("Finalizer repo 无法解析") from exc
+    if not repo.is_dir():
+        raise BridgeError("Finalizer repo 不是目录")
     return repo
 
 
@@ -250,7 +251,7 @@ def validate_hook_event(event: object) -> tuple[str, list[str], Path, bool]:
         raise BridgeError("PreToolUse tool_input 必须只包含 command")
     public_command = tool_input.get("command")
     argv, raw_repo, _paths, dry_run = parse_direct_finalizer(public_command)
-    repo = resolve_repo(raw_repo, event.get("cwd"))
+    repo = resolve_repo(raw_repo)
     return public_command, argv, repo, dry_run
 
 
@@ -375,7 +376,6 @@ def main() -> None:
             public_command=public_command,
             repo=repo,
         )
-
         if dry_run:
             return
         require_existing_allow_rule()

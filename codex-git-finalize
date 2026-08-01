@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="0.2.4"
+readonly VERSION="0.3.0"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 
@@ -25,6 +25,7 @@ Options:
   --initial-publish              Publish one root commit from an unborn branch.
   --resume-initial-publish <oid> Resume publication of one exact root commit.
   --remote <name>                Required by initial and resume modes.
+  --snapshot <id>                Bind initial publish to a complete snapshot.
   --allow-test-fixture <path>    Ignore content secret signatures for this exact tests/ file.
   --allow-large-binary <path>    Allow this exact binary file above 5 MiB, up to 25 MiB.
   --dry-run                      Report scope and risks without add, commit, fetch, or push.
@@ -64,6 +65,12 @@ fail_resume_retryable() {
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || fail "缺少必需命令: $1"
+}
+
+verify_initial_snapshot() {
+    local source=$1
+
+    /usr/bin/python3 "$snapshot_verifier" "$snapshot_id" "$repo" "$source" "${paths[@]}"
 }
 
 print_value_or() {
@@ -1145,6 +1152,7 @@ repo_arg=''
 message=''
 remote_arg=''
 resume_expected_oid=''
+snapshot_id=''
 dry_run=0
 initial_publish=0
 resume_initial=0
@@ -1152,6 +1160,7 @@ repo_seen=0
 message_seen=0
 remote_seen=0
 resume_seen=0
+snapshot_seen=0
 separator_seen=0
 declare -a allow_test_fixture_args=()
 declare -a allow_large_binary_args=()
@@ -1190,6 +1199,13 @@ while (($# > 0)); do
             ((remote_seen == 0)) || fail '--remote 只能指定一次'
             remote_arg=$2
             remote_seen=1
+            shift 2
+            ;;
+        --snapshot)
+            (($# >= 2)) || fail '--snapshot 缺少 snapshot ID'
+            ((snapshot_seen == 0)) || fail '--snapshot 只能指定一次'
+            snapshot_id=$2
+            snapshot_seen=1
             shift 2
             ;;
         --dry-run)
@@ -1237,6 +1253,7 @@ if ((resume_initial == 1)); then
         fail 'resume 模式不接受 --allow-test-fixture'
     ((${#allow_large_binary_args[@]} == 0)) ||
         fail 'resume 模式不接受 --allow-large-binary'
+    ((snapshot_seen == 0)) || fail 'resume 模式不接受 --snapshot'
     ((separator_seen == 0 && ${#input_paths[@]} == 0)) ||
         fail 'resume 模式不接受文件列表或 -- 分隔符'
     ((remote_seen == 1)) || fail 'resume 模式必须指定 --remote'
@@ -1248,6 +1265,7 @@ else
     ((separator_seen == 1)) || fail '缺少文件列表分隔符 --'
     ((message_seen == 1)) || fail '必须指定 --message'
     ((remote_seen == 0)) || fail '--remote 只允许与 --initial-publish 一起使用'
+    ((snapshot_seen == 0)) || fail '--snapshot 只允许与 --initial-publish 一起使用'
 fi
 if ((initial_publish == 1 || resume_initial == 1)); then
     [[ -n "$remote_arg" && "$remote_arg" != -* &&
@@ -1258,12 +1276,24 @@ if ((resume_initial == 0)); then
     [[ -n ${message//[[:space:]]/} ]] || fail 'commit message 不能为空'
     ((${#input_paths[@]} > 0)) || fail '文件列表不能为空'
 fi
+if ((snapshot_seen == 1)); then
+    [[ "$snapshot_id" =~ ^[0-9a-f]{64}$ ]] ||
+        fail '--snapshot 要求 64 位小写十六进制 ID'
+fi
 [[ "$repo_arg" == /* ]] || fail '--repo 必须是绝对路径'
 [[ -d "$repo_arg" ]] || fail "repo 路径不存在或不是目录: $repo_arg"
 
 for command_name in git realpath stat grep sed; do
     require_command "$command_name"
 done
+if ((snapshot_seen == 1)); then
+    [[ -x /usr/bin/python3 ]] || fail 'snapshot 验证要求 /usr/bin/python3'
+    finalizer_executable=$(realpath -e -- "${BASH_SOURCE[0]}") ||
+        fail '无法解析 Finalizer 入口'
+    snapshot_verifier=${finalizer_executable%/*}/codex-git-finalize-snapshot-verify.py
+    [[ -f "$snapshot_verifier" && ! -L "$snapshot_verifier" ]] ||
+        fail '缺少 Finalizer snapshot verifier companion'
+fi
 
 repo=$(realpath -e -- "$repo_arg") || fail "无法解析 repo 路径: $repo_arg"
 [[ $(git -C "$repo" rev-parse --is-inside-work-tree 2>/dev/null) == 'true' ]] ||
@@ -1403,6 +1433,9 @@ printf 'repo: %s\n' "$repo"
 if ((initial_publish == 1)); then
     printf 'mode: initial-publish\n'
     printf 'remote: %s\n' "$remote_arg"
+    if ((snapshot_seen == 1)); then
+        printf 'snapshot: %s\n' "$snapshot_id"
+    fi
 fi
 printf 'branch: %s\n' "${current_branch:-'(detached)'}"
 printf 'commit message: %q\n' "$message"
@@ -1501,6 +1534,10 @@ if ((initial_publish == 1)); then
     if ! check_initial_worktree_scope; then
         fail "$initial_scope_error"
     fi
+    if ((snapshot_seen == 1)); then
+        verify_initial_snapshot worktree ||
+            fail 'snapshot 证据不完整或已漂移'
+    fi
 elif ! resolve_normal_target; then
     fail "$normal_target_error"
 fi
@@ -1594,6 +1631,11 @@ for path in "${staged_paths[@]}"; do
     fi
 done
 
+if ((initial_publish == 1 && snapshot_seen == 1)); then
+    verify_initial_snapshot index ||
+        fail 'index 与 snapshot 不一致；未执行 commit 或 push'
+fi
+
 printf '\n== Commit ==\n'
 if ! run_git_mutation 'git commit -m <message>' git -C "$repo" commit -m "$message"; then
     fail 'git commit 失败；未执行 fetch 或 push'
@@ -1617,6 +1659,10 @@ done
 
 if ((initial_publish == 1)) && ! verify_initial_root_commit; then
     fail_initial_after_commit "$initial_commit_error"
+fi
+if ((initial_publish == 1 && snapshot_seen == 1)); then
+    verify_initial_snapshot head ||
+        fail_initial_after_commit 'root commit 与 Snapshot Runner 证据不一致'
 fi
 
 printf 'commit hash: %s\n' "$commit_hash"

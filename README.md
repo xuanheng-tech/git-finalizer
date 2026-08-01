@@ -2,7 +2,7 @@
 
 Codex Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`0.2.4`
+当前版本：`0.3.0`
 
 ## 使用方式
 
@@ -23,8 +23,20 @@ codex-git-finalize \
   --remote origin \
   --repo /home/user/projects/example \
   --message "feat: initialize project" \
+  --snapshot <snapshot-runner-id> \
   -- README.md
 ```
+
+`--snapshot` 是 initial publish 的可选严格证据绑定。提供后，Finalizer 要求 Snapshot Runner
+schema 2 / security epoch 4 的 `diff-audit` artifact 为完整 unborn initial 证据：
+`truncated=false`、`evidence_gaps=[]`、`complete=true`、敏感扫描完整，并且 `--` 后每个显式
+路径恰好由正文或 `generated_manifest` 证据覆盖。Finalizer 在 `git add` 前核对 worktree，
+暂存后核对 index，创建 root commit 后再核对 HEAD tree；任一 size、SHA-256、executable、
+路径集合或 snapshot artifact 漂移都会停止。未提供 `--snapshot` 时，既有 normal、initial 和
+resume 工作流语义保持不变。
+
+`codex-git-finalize-snapshot-verify.py` 是主入口同目录下的标准库-only companion，由主入口
+固定定位和调用，不是独立发布命令；安装 Finalizer 时必须与主脚本一起部署。
 
 若首次发布已经创建 root commit、但 push 未确认完成，可用完整 HEAD OID 恢复同一次发布：
 
