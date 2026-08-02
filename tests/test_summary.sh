@@ -207,6 +207,8 @@ test_normal_success() {
     make_synced_repo "$case_dir/summary"
     summary_repo=$test_repo
     summary_remote=$test_remote
+    git -C "$summary_repo" config push.followTags true
+    git -C "$summary_repo" tag -a -m follow-tags-fixture summary-local-only HEAD
     run_capture 0 "$summary_output" "$finalizer" --summary --repo "$summary_repo" \
         --message SUMMARY_MESSAGE_SENTINEL -- wanted.txt
 
@@ -219,6 +221,8 @@ test_normal_success() {
     assert_json_value "$summary_output" mode '"normal"'
     assert_json_value "$summary_output" commit.created 'true'
     assert_json_value "$summary_output" push.result '"succeeded"'
+    assert_json_value "$summary_output" push.branch_refspec_only 'true'
+    assert_json_value "$summary_output" push.follow_tags_requested 'false'
     assert_json_value "$summary_output" mode_result.post_verify '"passed"'
     assert_file_excludes "$summary_output" 'SUMMARY_FILE_BODY_SENTINEL' \
         'summary disclosed file content'
@@ -240,6 +244,10 @@ test_normal_success() {
         'summary push did not publish its commit'
     assert_equal '1' "$(remote_refs "$summary_remote" | wc -l)" \
         'summary mode pushed an extra ref'
+    if git --git-dir="$summary_remote" show-ref --verify --quiet \
+        refs/tags/summary-local-only; then
+        fail_assertion 'normal summary followed an annotated tag'
+    fi
     record_metric normal_success "$default_output" "$summary_output"
 }
 
@@ -262,6 +270,8 @@ test_initial_success() {
     assert_summary_contract "$summary_output"
     assert_json_value "$summary_output" mode '"initial"'
     assert_json_value "$summary_output" status '"success"'
+    assert_json_value "$summary_output" push.branch_refspec_only 'true'
+    assert_json_value "$summary_output" push.follow_tags_requested 'false'
     assert_json_value "$summary_output" mode_result.initial_publish '"verified"'
     assert_json_value "$summary_output" mode_result.snapshot_verification '"not_requested"'
     assert_json_value "$summary_output" mode_result.remote_conclusion \
@@ -303,6 +313,8 @@ test_resume_success() {
     assert_json_value "$summary_output" mode_result.commit_reused 'true'
     assert_json_value "$summary_output" mode_result.recovery_start '"empty_remote"'
     assert_json_value "$summary_output" mode_result.resume_required 'false'
+    assert_json_value "$summary_output" push.branch_refspec_only 'true'
+    assert_json_value "$summary_output" push.follow_tags_requested 'false'
     assert_file_excludes "$summary_output" '"resume":' \
         'successful resume summary invented another resume reference'
     assert_equal "$summary_head" \
@@ -336,6 +348,8 @@ test_preflight_blocker() {
     assert_json_value "$summary_output" status '"blocked"'
     assert_json_value "$summary_output" commit.created 'false'
     assert_json_value "$summary_output" push.executed 'false'
+    assert_json_value "$summary_output" push.branch_refspec_only 'null'
+    assert_json_value "$summary_output" push.follow_tags_requested 'null'
     assert_equal "$head_before" "$(git -C "$test_repo" rev-parse HEAD)" \
         'summary blocker created a commit'
     record_metric simple_blocker "$default_output" "$summary_output"
@@ -372,6 +386,8 @@ test_recoverable_initial_push_failure() {
     assert_json_value "$summary_output" commit.created 'true'
     assert_json_value "$summary_output" push.executed 'true'
     assert_json_value "$summary_output" push.result '"uncertain"'
+    assert_json_value "$summary_output" push.branch_refspec_only 'true'
+    assert_json_value "$summary_output" push.follow_tags_requested 'false'
     assert_json_value "$summary_output" next_action '"resume_initial_publish"'
     assert_json_value "$summary_output" resume.head_oid "\"$retained_head\""
     assert_equal '' "$(remote_refs "$test_remote")" \
@@ -403,6 +419,8 @@ test_commit_failure_without_resume() {
     assert_json_value "$summary_output" final_phase '"commit"'
     assert_json_value "$summary_output" commit.created 'false'
     assert_json_value "$summary_output" push.executed 'false'
+    assert_json_value "$summary_output" push.branch_refspec_only 'null'
+    assert_json_value "$summary_output" push.follow_tags_requested 'null'
     assert_json_value "$summary_output" next_action '"inspect_failure"'
     assert_equal "$head_before" "$(git -C "$test_repo" rev-parse HEAD)" \
         'summary commit failure created a commit'
@@ -436,6 +454,8 @@ test_deterministic_and_bounded_output() {
     assert_summary_contract "$warnings"
     assert_json_value "$warnings" warnings_omitted '2'
     assert_json_value "$warnings" dry_run 'true'
+    assert_json_value "$warnings" push.branch_refspec_only 'null'
+    assert_json_value "$warnings" push.follow_tags_requested 'null'
 }
 
 report_metrics() {

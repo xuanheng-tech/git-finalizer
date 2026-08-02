@@ -2,7 +2,7 @@
 
 Codex Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`0.4.0`
+当前版本：`0.4.1`
 
 ## 使用方式
 
@@ -62,8 +62,9 @@ codex-git-finalize \
 未指定时，stdout、stderr 和退出码沿用原合同。摘要直接来自本次执行状态，不会为构造结果
 重跑 Git 命令；成功、阻断和失败仍分别保留真实 `status`、`final_phase` 与 `exit_code`。
 公共字段包括仓库、branch/upstream、请求路径数、commit、push、post-verify、warning、失败原因
-和 `next_action`。`push.branch_refspec_only=true` 与 `follow_tags_requested=false` 描述本次调用
-范围，不枚举远端已有 tag。
+和 `next_action`。只有实际执行使用显式 branch refspec 和 `--no-follow-tags` 的 push 时，
+`push.branch_refspec_only` 与 `follow_tags_requested` 才分别为 `true` 和 `false`；未执行 push
+时两者为 `null`。这些字段不枚举远端已有 tag。
 
 initial 的 `mode_result` 另含 initial publish、Snapshot artifact 校验和远端最终结论；resume
 另含恢复起点、原提交复用、已完成阶段和是否仍需恢复。只有确有恢复入口时才输出顶层

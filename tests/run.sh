@@ -515,6 +515,30 @@ test_synced_success_scope() {
         'synced success left staged content'
 }
 
+test_normal_disables_follow_tags_from_local_config() {
+    local case_dir=$tmp_root/normal-no-follow-tags
+    local output=$case_dir/output.log
+    local final_head
+    local tag=normal-local-only
+
+    make_synced_repo "$case_dir"
+    git -C "$test_repo" config push.followTags true
+    git -C "$test_repo" tag -a -m follow-tags-fixture "$tag" HEAD
+    printf 'safe branch-only push\n' >>"$test_repo/wanted.txt"
+
+    expect_success "$output" "$finalizer" --repo "$test_repo" \
+        --message 'disable configured follow-tags' -- wanted.txt
+
+    final_head=$(git -C "$test_repo" rev-parse HEAD)
+    assert_equal "$final_head"$'\trefs/heads/main' "$(remote_refs "$test_remote")" \
+        'normal push followed an annotated tag from local config'
+    git -C "$test_repo" show-ref --verify --quiet "refs/tags/$tag" ||
+        fail_assertion 'normal follow-tags fixture is missing locally'
+    if git --git-dir="$test_remote" show-ref --verify --quiet "refs/tags/$tag"; then
+        fail_assertion 'normal push created the local annotated tag remotely'
+    fi
+}
+
 test_staged_deletion_preserves_ignored_worktree_copy() {
     local case_dir=$tmp_root/staged-ignored-deletion
     local output=$case_dir/output.log
@@ -848,6 +872,34 @@ test_initial_publish_success() {
     assert_equal '' "$(status_snapshot "$test_repo")" 'initial success left worktree dirty'
     assert_equal '' "$(git -C "$test_repo" diff --cached --name-only)" \
         'initial success left staged changes'
+}
+
+test_initial_disables_follow_tags_from_global_config() {
+    local case_dir=$tmp_root/initial-no-follow-tags
+    local global_config=$case_dir/global.gitconfig
+    local output=$case_dir/output.log
+    local head
+    local tag=initial-global-only
+
+    make_unborn_repo "$case_dir"
+    git config --file "$global_config" push.followTags true
+    printf '#!/usr/bin/env bash\nset -euo pipefail\ngit -C %q tag -a -m follow-tags-fixture %q HEAD\n' \
+        "$test_repo" "$tag" >"$test_repo/.git/hooks/post-commit"
+    chmod 700 "$test_repo/.git/hooks/post-commit"
+    printf 'first file\n' >"$test_repo/first.txt"
+
+    expect_success "$output" env GIT_CONFIG_GLOBAL="$global_config" "$finalizer" \
+        --initial-publish --remote origin --repo "$test_repo" \
+        --message 'initial without followed tags' -- first.txt
+
+    head=$(git -C "$test_repo" rev-parse HEAD)
+    assert_equal "$head"$'\trefs/heads/main' "$(remote_refs "$test_remote")" \
+        'initial push followed an annotated tag from global config'
+    git -C "$test_repo" show-ref --verify --quiet "refs/tags/$tag" ||
+        fail_assertion 'initial follow-tags fixture is missing locally'
+    if git --git-dir="$test_remote" show-ref --verify --quiet "refs/tags/$tag"; then
+        fail_assertion 'initial push created the local annotated tag remotely'
+    fi
 }
 
 write_generated_snapshot_scope() {
@@ -1573,7 +1625,7 @@ test_release_contract() {
     printf '%s\n' '#!/usr/bin/env bash' ": >\"\$GIT_PROBE\"" 'exit 97' \
         >"$fake_bin/git"
     chmod 700 "$fake_bin/git"
-    printf 'codex-git-finalize 0.4.0\n' >"$version_expected"
+    printf 'codex-git-finalize 0.4.1\n' >"$version_expected"
 
     GIT_PROBE="$git_probe" PATH="$fake_bin:$PATH" \
         "$finalizer" --version >"$version_output" 2>"$version_error"
@@ -1594,8 +1646,8 @@ test_release_contract() {
     assert_file_contains "$help_output" '--snapshot' \
         'snapshot evidence option missing from help'
     assert_file_contains "$project_root/codex-git-finalize" \
-        'readonly VERSION="0.4.0"' 'script version constant drifted'
-    assert_file_contains "$project_root/README.md" "当前版本：\`0.4.0\`" \
+        'readonly VERSION="0.4.1"' 'script version constant drifted'
+    assert_file_contains "$project_root/README.md" "当前版本：\`0.4.1\`" \
         'README version drifted'
     [[ -f "$project_root/codex-git-finalize-snapshot-verify.py" ]] ||
         fail_assertion 'snapshot verifier companion is missing'
@@ -1619,6 +1671,8 @@ run_case 'behind blocks before add' test_behind
 run_case 'diverged blocks before add' test_diverged
 run_case 'local ahead remains supported' test_local_ahead
 run_case 'synced success preserves out-of-scope changes' test_synced_success_scope
+run_case 'normal push disables configured follow-tags' \
+    test_normal_disables_follow_tags_from_local_config
 run_case 'staged deletion preserves an ignored worktree copy' \
     test_staged_deletion_preserves_ignored_worktree_copy
 run_case 'post-commit remote change is caught before push' test_post_commit_remote_change
@@ -1632,6 +1686,8 @@ run_case 'fixture override remains exact' test_fixture_scope
 run_case 'large binary override remains exact and bounded' test_large_binary_scope
 run_case 'push target mismatch is rejected' test_push_target_mismatch
 run_case 'initial publish creates and verifies one root commit' test_initial_publish_success
+run_case 'initial push disables configured follow-tags' \
+    test_initial_disables_follow_tags_from_global_config
 run_case 'initial snapshot accepts generated-manifest coverage' \
     test_initial_snapshot_generated_coverage_success
 run_case 'snapshot verifier leaves no Python bytecode cache' \

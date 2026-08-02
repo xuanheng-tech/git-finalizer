@@ -170,6 +170,30 @@ test_resume_empty_remote() {
         'resume left staged changes'
 }
 
+test_resume_disables_follow_tags_from_command_config() {
+    local case_dir=$tmp_root/no-follow-tags
+    local output=$case_dir/output.log
+    local tag=resume-command-only
+
+    make_root_repo "$case_dir"
+    git -C "$test_repo" tag -a -m follow-tags-fixture "$tag" HEAD
+
+    expect_success "$output" env \
+        GIT_CONFIG_COUNT=1 \
+        GIT_CONFIG_KEY_0=push.followTags \
+        GIT_CONFIG_VALUE_0=true \
+        "$finalizer" --resume-initial-publish "$expected_head" \
+        --remote origin --repo "$test_repo"
+
+    assert_equal "$expected_head"$'\trefs/heads/main' "$(remote_refs "$test_remote")" \
+        'resume push followed an annotated tag from command config'
+    git -C "$test_repo" show-ref --verify --quiet "refs/tags/$tag" ||
+        fail_assertion 'resume follow-tags fixture is missing locally'
+    if git --git-dir="$test_remote" show-ref --verify --quiet "refs/tags/$tag"; then
+        fail_assertion 'resume push created the local annotated tag remotely'
+    fi
+}
+
 test_resume_expected_remote_without_upstream() {
     local case_dir=$tmp_root/expected-no-upstream
     local output=$case_dir/output.log
@@ -640,6 +664,8 @@ run_case() {
 }
 
 run_case 'resume publishes one root commit to an empty remote' test_resume_empty_remote
+run_case 'resume push disables configured follow-tags' \
+    test_resume_disables_follow_tags_from_command_config
 run_case 'resume closes state B without an upstream' test_resume_expected_remote_without_upstream
 run_case 'resume accepts clone-created unresolved upstream states' \
     test_resume_clone_created_unresolved_upstream

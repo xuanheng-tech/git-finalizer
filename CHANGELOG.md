@@ -13,6 +13,17 @@ section is invented for it.
 
 ## Unreleased
 
+## 0.4.1 - 2026-08-02
+
+- Fixed: Normal branch pushes now explicitly pass `--no-follow-tags`, matching the existing
+  initial and resume safety contract.
+- Added: Real bare-remote adversarial coverage for normal, initial, and resume pushes when local,
+  global, or command-environment `push.followTags=true` is active.
+- Changed: Summary branch-only and follow-tags fields are now derived from the actual safe push
+  plan and remain unset when no push was executed.
+- Security: `0.4.0` and earlier affected versions could unintentionally push reachable annotated
+  tags when `push.followTags=true` was enabled.
+
 ## 0.4.0 - 2026-08-02
 
 - Added: Optional `--summary` output emits one deterministic, bounded JSON result for normal,

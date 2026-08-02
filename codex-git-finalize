@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="0.4.0"
+readonly VERSION="0.4.1"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -30,6 +30,8 @@ summary_commit_created=false
 summary_commit_sha=''
 summary_push_executed=false
 summary_push_result='not_run'
+summary_push_branch_refspec_only=''
+summary_push_follow_tags_disabled=''
 summary_post_verify='not_run'
 summary_reason=''
 summary_next_action=''
@@ -71,6 +73,7 @@ render_summary() {
         "$summary_exit_code" "$summary_repo" "$summary_branch" "$summary_upstream" \
         "$summary_path_count" "$summary_dry_run" "$summary_commit_created" \
         "$summary_commit_sha" "$summary_push_executed" "$summary_push_result" \
+        "$summary_push_branch_refspec_only" "$summary_push_follow_tags_disabled" \
         "$summary_post_verify" "$summary_reason" "$summary_next_action" \
         "$summary_warnings_omitted" "$summary_mode_state" \
         "$summary_snapshot_verification" "$summary_remote_conclusion" \
@@ -110,6 +113,14 @@ commit_created = boolean(take(values))
 commit_sha = take(values)
 push_executed = boolean(take(values))
 push_result = take(values)
+push_branch_refspec_only_raw = take(values)
+push_follow_tags_disabled_raw = take(values)
+push_branch_refspec_only = (
+    boolean(push_branch_refspec_only_raw) if push_branch_refspec_only_raw else None
+)
+push_follow_tags_requested = (
+    False if boolean(push_follow_tags_disabled_raw) else None
+)
 post_verify = take(values)
 reason, reason_omitted = bounded(take(values), 512)
 next_action, next_action_omitted = bounded(take(values), 256)
@@ -147,8 +158,8 @@ result = {
     "push": {
         "executed": push_executed,
         "result": push_result,
-        "branch_refspec_only": True,
-        "follow_tags_requested": False,
+        "branch_refspec_only": push_branch_refspec_only,
+        "follow_tags_requested": push_follow_tags_requested,
     },
     "warnings": warnings,
     "warnings_omitted": warnings_omitted,
@@ -356,6 +367,24 @@ run_git_remote_command() {
         printf 'remote check failed (exit %s)\n' "$status" >&2
         return "$status"
     fi
+}
+
+run_branch_push() {
+    local set_upstream=$1
+    local remote=$2
+    local branch_refspec=$3
+    local display='git push --no-follow-tags <remote> HEAD:<branch>'
+    local -a command=(git -C "$repo" push --no-follow-tags)
+
+    if [[ "$set_upstream" == true ]]; then
+        display='git push --no-follow-tags --set-upstream <remote> HEAD:<branch>'
+        command+=(--set-upstream)
+    fi
+    command+=("$remote" "$branch_refspec")
+
+    summary_push_branch_refspec_only=true
+    summary_push_follow_tags_disabled=true
+    run_git_remote_command "$display" "${command[@]}"
 }
 
 sensitive_path_reason() {
@@ -1218,10 +1247,7 @@ classify_resume_remote() {
 }
 
 run_resume_push() {
-    run_git_remote_command \
-        'git push --set-upstream --no-follow-tags <remote> HEAD:<branch>' \
-        git -C "$repo" push --set-upstream --no-follow-tags \
-        "$resume_remote" "HEAD:$resume_branch_ref"
+    run_branch_push true "$resume_remote" "HEAD:$resume_branch_ref"
 }
 
 verify_resume_result() {
@@ -2012,10 +2038,7 @@ if ((initial_publish == 1)); then
     summary_phase='push'
     summary_push_executed=true
     printf '\n== Initial push ==\n'
-    if ! run_git_remote_command \
-        'git push --set-upstream --no-follow-tags <remote> HEAD:<branch>' \
-        git -C "$repo" push --set-upstream --no-follow-tags \
-        "$initial_remote" "HEAD:$initial_branch_ref"; then
+    if ! run_branch_push true "$initial_remote" "HEAD:$initial_branch_ref"; then
         summary_push_result='uncertain'
         fail_initial_after_commit 'initial push 失败或结果无法确认'
     fi
@@ -2071,8 +2094,7 @@ else
     summary_phase='push'
     summary_push_executed=true
     printf '\n== Push ==\n'
-    if ! run_git_remote_command 'git push <upstream remote> HEAD:<upstream branch>' \
-        git -C "$repo" push "$upstream_remote" "HEAD:$upstream_branch_ref"; then
+    if ! run_branch_push false "$upstream_remote" "HEAD:$upstream_branch_ref"; then
         summary_push_result='uncertain'
         fail_after_commit 'git push 失败'
     fi
