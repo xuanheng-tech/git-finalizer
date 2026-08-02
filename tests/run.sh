@@ -891,6 +891,26 @@ test_initial_snapshot_generated_coverage_success() {
         'snapshot-bound initial remote mismatch'
     assert_equal '' "$(status_snapshot "$test_repo")" \
         'snapshot-bound initial publish left the worktree dirty'
+
+    case_dir=$tmp_root/initial-snapshot-summary
+    state=$case_dir/state
+    output=$case_dir/output.json
+    make_unborn_repo "$case_dir"
+    write_generated_snapshot_scope "$test_repo"
+    snapshot=$(make_generated_snapshot "$test_repo" "$state")
+    expect_success "$output" env XDG_STATE_HOME="$state" "$finalizer" --summary \
+        --initial-publish --remote origin --repo "$test_repo" \
+        --message 'snapshot summary' --snapshot "$snapshot" -- \
+        README.md generated/manifest.json generated/schema.json
+    /usr/bin/python3 -B - "$output" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if summary["mode_result"]["snapshot_verification"] != "passed":
+    raise SystemExit("summary did not report completed snapshot verification")
+PY
 }
 
 test_snapshot_verifier_disables_bytecode() {
@@ -1654,3 +1674,4 @@ run_case 'release version and public modes remain aligned' test_release_contract
 printf 'all %s integration tests passed\n' "$passed"
 
 bash "$project_root/tests/test_resume_initial_publish.sh"
+bash "$project_root/tests/test_summary.sh"

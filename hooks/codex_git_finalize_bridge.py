@@ -166,6 +166,7 @@ def parse_direct_finalizer(
     options = argv[1:delimiter]
     parsed: dict[str, str] = {}
     dry_run = False
+    summary = False
     initial_publish = False
     index = 0
     while index < len(options):
@@ -174,6 +175,12 @@ def parse_direct_finalizer(
             if dry_run:
                 raise BridgeError("Finalizer --dry-run 不得重复")
             dry_run = True
+            index += 1
+            continue
+        if option == "--summary":
+            if summary:
+                raise BridgeError("Finalizer --summary 不得重复")
+            summary = True
             index += 1
             continue
         if option == "--initial-publish":

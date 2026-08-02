@@ -47,6 +47,33 @@ codex-git-finalize \
   --repo /home/user/projects/example
 ```
 
+### 有界结果摘要
+
+normal、initial 和 resume 均可显式加入 `--summary`，以单行确定性 JSON 代替原有阶段输出：
+
+```bash
+codex-git-finalize \
+  --summary \
+  --repo /home/user/projects/example \
+  --message "fix: describe the change" \
+  -- path/to/file
+```
+
+未指定时，stdout、stderr 和退出码沿用原合同。摘要直接来自本次执行状态，不会为构造结果
+重跑 Git 命令；成功、阻断和失败仍分别保留真实 `status`、`final_phase` 与 `exit_code`。
+公共字段包括仓库、branch/upstream、请求路径数、commit、push、post-verify、warning、失败原因
+和 `next_action`。`push.branch_refspec_only=true` 与 `follow_tags_requested=false` 描述本次调用
+范围，不枚举远端已有 tag。
+
+initial 的 `mode_result` 另含 initial publish、Snapshot artifact 校验和远端最终结论；resume
+另含恢复起点、原提交复用、已完成阶段和是否仍需恢复。只有确有恢复入口时才输出顶层
+`resume` 引用。warning 最多 5 条、每条最多 256 字符；失败原因最多 512 字符，省略数量通过
+对应 `*_omitted*` 字段显式报告。摘要不包含 diff、文件正文、commit message、凭据或完整命令
+日志。失败仍使用非零退出码；若序列化本身失败，fallback 会同时保留 Git 操作状态和原退出码。
+
+PreToolUse bridge 仅将 `--summary` 作为官方无值参数原样转发；其调用授权、路径校验、停止
+条件和输出上限不变。
+
 ## Codex PreToolUse bridge
 
 Git Finalizer Hook 的版本化源、测试、只读漂移检查和显式恢复入口见

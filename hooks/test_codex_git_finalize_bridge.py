@@ -59,6 +59,7 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         self.snapshot_command = self.initial_command.replace(
             " --repo ", " --snapshot " + "a" * 64 + " --repo ", 1
         )
+        self.summary_command = self.command.replace(" --repo ", " --summary --repo ", 1)
 
     def event(self, command: object | None = None) -> dict[str, object]:
         return {
@@ -133,6 +134,21 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0], shlex.split(self.snapshot_command))
+
+    def test_summary_is_accepted_and_forwarded_without_rewriting(self) -> None:
+        output, run = self.invoke_main(self.event(self.summary_command))
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], shlex.split(self.summary_command))
+
+    def test_duplicate_summary_is_rejected(self) -> None:
+        duplicate = self.summary_command.replace(
+            "--summary", "--summary --summary", 1
+        )
+
+        with self.assertRaises(bridge.BridgeError):
+            bridge.validate_hook_event(self.event(duplicate))
 
     def test_missing_current_transcript_call_still_allows_valid_finalizer(self) -> None:
         output, run = self.invoke_main(self.event())

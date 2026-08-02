@@ -5,19 +5,227 @@ set -Eeuo pipefail
 readonly VERSION="0.3.1"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
+readonly SUMMARY_SCHEMA_VERSION=1
+readonly MAX_SUMMARY_WARNINGS=5
+
+summary_requested=0
+for summary_argument in "$@"; do
+    [[ "$summary_argument" != '--' ]] || break
+    if [[ "$summary_argument" == '--summary' ]]; then
+        summary_requested=1
+    fi
+done
+
+summary_mode='normal'
+summary_status='blocked'
+summary_phase='cli'
+summary_exit_code=0
+summary_repo=''
+summary_branch=''
+summary_upstream=''
+summary_path_count=0
+summary_dry_run=false
+summary_default_failure_status='blocked'
+summary_commit_created=false
+summary_commit_sha=''
+summary_push_executed=false
+summary_push_result='not_run'
+summary_post_verify='not_run'
+summary_reason=''
+summary_next_action=''
+summary_warnings_omitted=0
+summary_mode_state='not_started'
+summary_snapshot_verification='not_requested'
+summary_remote_conclusion='not_checked'
+summary_recovery_start=''
+summary_commit_reused=false
+summary_completed_through='none'
+summary_resume_required=false
+summary_resume_oid=''
+summary_resume_remote=''
+declare -a summary_warnings=()
+
+record_summary_warning() {
+    if ((${#summary_warnings[@]} < MAX_SUMMARY_WARNINGS)); then
+        summary_warnings+=("$*")
+    else
+        summary_warnings_omitted=$((summary_warnings_omitted + 1))
+    fi
+}
+
+record_summary_failure() {
+    summary_status=$summary_default_failure_status
+    summary_reason=$*
+    if [[ -z "$summary_next_action" ]]; then
+        if [[ "$summary_status" == 'blocked' ]]; then
+            summary_next_action='resolve_blocker_and_retry'
+        else
+            summary_next_action='inspect_failure'
+        fi
+    fi
+}
+
+render_summary() {
+    /usr/bin/python3 -B - \
+        "$SUMMARY_SCHEMA_VERSION" "$VERSION" "$summary_mode" "$summary_status" "$summary_phase" \
+        "$summary_exit_code" "$summary_repo" "$summary_branch" "$summary_upstream" \
+        "$summary_path_count" "$summary_dry_run" "$summary_commit_created" \
+        "$summary_commit_sha" "$summary_push_executed" "$summary_push_result" \
+        "$summary_post_verify" "$summary_reason" "$summary_next_action" \
+        "$summary_warnings_omitted" "$summary_mode_state" \
+        "$summary_snapshot_verification" "$summary_remote_conclusion" \
+        "$summary_recovery_start" "$summary_commit_reused" \
+        "$summary_completed_through" "$summary_resume_required" \
+        "$summary_resume_oid" "$summary_resume_remote" "${summary_warnings[@]}" <<'PY'
+import json
+import sys
+
+
+def take(values):
+    return next(values)
+
+
+def boolean(value):
+    return value == "true"
+
+
+def bounded(value, limit):
+    omitted = max(0, len(value) - limit)
+    return value[:limit], omitted
+
+
+values = iter(sys.argv[1:])
+schema_version = int(take(values))
+version = take(values)
+mode = take(values)
+status = take(values)
+phase = take(values)
+exit_code = int(take(values))
+repository = take(values)
+branch = take(values)
+upstream = take(values)
+path_count = int(take(values))
+dry_run = boolean(take(values))
+commit_created = boolean(take(values))
+commit_sha = take(values)
+push_executed = boolean(take(values))
+push_result = take(values)
+post_verify = take(values)
+reason, reason_omitted = bounded(take(values), 512)
+next_action, next_action_omitted = bounded(take(values), 256)
+warnings_omitted = int(take(values))
+mode_state = take(values)
+snapshot_verification = take(values)
+remote_conclusion = take(values)
+recovery_start = take(values)
+commit_reused = boolean(take(values))
+completed_through = take(values)
+resume_required = boolean(take(values))
+resume_oid = take(values)
+resume_remote = take(values)
+
+warnings = []
+warning_characters_omitted = 0
+for raw_warning in values:
+    warning, omitted = bounded(raw_warning, 256)
+    warnings.append(warning)
+    warning_characters_omitted += omitted
+
+result = {
+    "summary_schema_version": schema_version,
+    "finalizer_version": version,
+    "mode": mode,
+    "status": status,
+    "final_phase": phase,
+    "exit_code": exit_code,
+    "repository": repository or None,
+    "branch": branch or None,
+    "upstream": upstream or None,
+    "requested_path_count": path_count,
+    "dry_run": dry_run,
+    "commit": {"created": commit_created, "sha": commit_sha or None},
+    "push": {
+        "executed": push_executed,
+        "result": push_result,
+        "branch_refspec_only": True,
+        "follow_tags_requested": False,
+    },
+    "warnings": warnings,
+    "warnings_omitted": warnings_omitted,
+    "warning_characters_omitted": warning_characters_omitted,
+    "reason": reason or None,
+    "reason_omitted_characters": reason_omitted,
+    "next_action": next_action,
+    "next_action_omitted_characters": next_action_omitted,
+}
+if mode == "initial":
+    result["mode_result"] = {
+        "initial_publish": mode_state,
+        "snapshot_verification": snapshot_verification,
+        "remote_conclusion": remote_conclusion,
+        "post_verify": post_verify,
+    }
+elif mode == "resume":
+    result["mode_result"] = {
+        "recovery_start": recovery_start or None,
+        "commit_reused": commit_reused,
+        "completed_through": completed_through,
+        "resume_required": resume_required,
+        "post_verify": post_verify,
+    }
+else:
+    result["mode_result"] = {"post_verify": post_verify}
+if resume_required:
+    result["resume"] = {
+        "head_oid": resume_oid,
+        "remote": resume_remote,
+    }
+
+print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
+PY
+}
+
+emit_summary() {
+    local operation_exit=$?
+
+    trap - EXIT
+    summary_exit_code=$operation_exit
+    if ((operation_exit == 0)); then
+        summary_status='success'
+        summary_phase='complete'
+        summary_reason=''
+        summary_next_action=${summary_next_action:-none}
+    elif [[ -z "$summary_reason" ]]; then
+        summary_status='failed'
+        summary_reason='operation exited without a classified failure reason'
+        summary_next_action='rerun_without_summary_for_diagnostics'
+    fi
+
+    if ! render_summary >&3; then
+        printf 'ERROR: Git Finalizer summary serialization failed; operation exit=%s\n' \
+            "$operation_exit" >&4
+        printf '{"summary_schema_version":%s,"finalizer_version":"%s",' \
+            "$SUMMARY_SCHEMA_VERSION" "$VERSION" >&3
+        printf '"summary_status":"serialization_failed","operation_status":"%s",' \
+            "$summary_status" >&3
+        printf '"operation_exit_code":%s}\n' "$operation_exit" >&3
+    fi
+    exec 3>&- 4>&-
+    exit "$operation_exit"
+}
 
 usage() {
     cat <<'EOF'
 Usage:
-  codex-git-finalize --repo <absolute-repo> --message <commit-message> [--dry-run]
+  codex-git-finalize --repo <absolute-repo> --message <commit-message> [--dry-run] [--summary]
     [--allow-test-fixture <repo-relative-path>]...
     [--allow-large-binary <repo-relative-path>]... -- <file>...
   codex-git-finalize --initial-publish --remote <remote-name>
-    --repo <absolute-repo> --message <commit-message> [--dry-run]
+    --repo <absolute-repo> --message <commit-message> [--dry-run] [--summary]
     [--allow-test-fixture <repo-relative-path>]...
     [--allow-large-binary <repo-relative-path>]... -- <file>...
   codex-git-finalize --resume-initial-publish <full-head-oid>
-    --remote <remote-name> --repo <absolute-repo>
+    --remote <remote-name> --repo <absolute-repo> [--summary]
 
 Options:
   --repo <path>                  Absolute path to the Git worktree root.
@@ -29,23 +237,35 @@ Options:
   --allow-test-fixture <path>    Ignore content secret signatures for this exact tests/ file.
   --allow-large-binary <path>    Allow this exact binary file above 5 MiB, up to 25 MiB.
   --dry-run                      Report scope and risks without add, commit, fetch, or push.
+  --summary                      Emit one bounded JSON result instead of phase output.
   --version                      Show the version and exit.
   -h, --help                     Show this help.
 EOF
 }
 
 fail() {
+    record_summary_failure "$*"
     printf 'ERROR: %s\n' "$*" >&2
     exit 1
 }
 
 fail_after_commit() {
+    summary_status='failed'
+    summary_reason=$*
+    summary_next_action='inspect_failure_with_local_commit_retained'
     printf 'ERROR: %s\n' "$*" >&2
     printf '本地提交 %s 已创建，但未完成 push；未执行 pull、rebase、merge 或 reset。\n' "$commit_hash" >&2
     exit 1
 }
 
 fail_initial_after_commit() {
+    summary_status='failed'
+    summary_reason=$*
+    summary_mode_state='commit_retained'
+    summary_next_action='resume_initial_publish'
+    summary_resume_required=true
+    summary_resume_oid=$commit_hash
+    summary_resume_remote=$initial_remote
     printf 'ERROR: %s\n' "$*" >&2
     printf '本地 root commit %s 已保留；不得重跑 --initial-publish。\n' "$commit_hash" >&2
     printf '恢复入口:\n' >&2
@@ -55,6 +275,12 @@ fail_initial_after_commit() {
 }
 
 fail_resume_retryable() {
+    summary_status='failed'
+    summary_reason=$*
+    summary_next_action='retry_same_resume'
+    summary_resume_required=true
+    summary_resume_oid=$resume_expected_oid
+    summary_resume_remote=$resume_remote
     printf 'ERROR: %s\n' "$*" >&2
     printf '本地 HEAD %s 保持不变；可安全再次运行同一恢复命令:\n' \
         "$resume_expected_oid" >&2
@@ -338,6 +564,8 @@ print_snapshot() {
     ); then
         current_upstream=''
     fi
+    summary_branch=$current_branch
+    summary_upstream=$current_upstream
 
     printf '\n== Git Finalizer v%s: 提交前状态 ==\n' "$VERSION"
     printf '$ git branch --show-current\n'
@@ -1068,11 +1296,18 @@ resume_initial_publish() {
     local need_push=0
     local second_push=0
 
+    summary_phase='preflight'
+    summary_mode_state='recovering'
     export GIT_OPTIONAL_LOCKS=0
     print_snapshot
     if ! resolve_resume_target; then
         fail "$resume_target_error"
     fi
+    summary_branch=$resume_branch
+    summary_upstream=$resume_remote/$resume_branch
+    summary_commit_sha=$resume_expected_oid
+    summary_commit_reused=true
+    summary_completed_through='preflight'
 
     printf '\n== Resume initial publish ==\n'
     printf 'expected HEAD: %s\n' "$resume_expected_oid"
@@ -1083,18 +1318,35 @@ resume_initial_publish() {
         fail "$resume_remote_error"
     fi
     case "$resume_remote_state" in
-        A) need_push=1 ;;
+        A)
+            summary_recovery_start='empty_remote'
+            summary_remote_conclusion='empty_remote'
+            need_push=1
+            ;;
         B)
             if ((resume_upstream_present == 0)); then
+                summary_recovery_start='published_without_upstream'
                 need_push=1
+            else
+                summary_recovery_start='already_published'
             fi
+            summary_remote_conclusion='expected_branch_present'
             ;;
-        C) fail "远端处于冲突或含糊状态；拒绝恢复: $resume_remote_error" ;;
+        C)
+            summary_recovery_start='conflicting_remote'
+            summary_remote_conclusion='conflicting_or_ambiguous'
+            fail "远端处于冲突或含糊状态；拒绝恢复: $resume_remote_error"
+            ;;
     esac
+    summary_completed_through='remote_classification'
 
     if ((need_push == 1)); then
+        summary_phase='push'
+        summary_default_failure_status='failed'
+        summary_push_executed=true
         printf '\n== Resume push ==\n'
         if ! run_resume_push; then
+            summary_push_result='uncertain'
             if ! classify_resume_remote; then
                 fail "$resume_remote_error"
             fi
@@ -1114,12 +1366,16 @@ resume_initial_publish() {
                     fi
                     ;;
             esac
+        else
+            summary_push_result='succeeded'
         fi
     fi
 
     if ((second_push == 1)); then
+        summary_push_executed=true
         printf '\n== Resume up-to-date push ==\n'
         if ! run_resume_push; then
+            summary_push_result='uncertain'
             if ! classify_resume_remote; then
                 fail "$resume_remote_error"
             fi
@@ -1132,19 +1388,41 @@ resume_initial_publish() {
                     fi
                     ;;
             esac
+        else
+            summary_push_result='succeeded'
         fi
     fi
+    summary_completed_through='push'
 
+    summary_phase='post_verify'
+    summary_post_verify='failed'
     printf '\n== Resume 最终验证 ==\n'
     if ! verify_resume_result; then
         fail "$resume_verify_error"
     fi
+    summary_post_verify='passed'
+    summary_remote_conclusion='published_and_upstream_aligned'
+    summary_completed_through='post_verify'
+    summary_mode_state='verified'
+    summary_status='success'
+    summary_next_action='none'
     printf '\nGit Finalizer 完成：initial publish 恢复已验证。\n'
 }
+
+if ((summary_requested == 1)); then
+    if [[ ! -x /usr/bin/python3 ]]; then
+        printf 'ERROR: --summary requires /usr/bin/python3\n' >&2
+        exit 1
+    fi
+    exec 3>&1 4>&2
+    trap emit_summary EXIT
+    exec >/dev/null 2>&1
+fi
 
 risk_count=0
 add_risk() {
     printf '  - %s\n' "$*"
+    record_summary_warning "$*"
     risk_count=$((risk_count + 1))
 }
 
@@ -1161,6 +1439,7 @@ message_seen=0
 remote_seen=0
 resume_seen=0
 snapshot_seen=0
+summary_seen=0
 separator_seen=0
 declare -a allow_test_fixture_args=()
 declare -a allow_large_binary_args=()
@@ -1213,6 +1492,11 @@ while (($# > 0)); do
             dry_run=1
             shift
             ;;
+        --summary)
+            ((summary_seen == 0)) || fail '--summary 只能指定一次'
+            summary_seen=1
+            shift
+            ;;
         --version)
             printf 'codex-git-finalize %s\n' "$VERSION"
             exit 0
@@ -1243,6 +1527,16 @@ while (($# > 0)); do
 done
 
 input_paths=("$@")
+summary_repo=$repo_arg
+summary_path_count=${#input_paths[@]}
+if ((dry_run == 1)); then
+    summary_dry_run=true
+fi
+if ((resume_initial == 1)); then
+    summary_mode='resume'
+elif ((initial_publish == 1)); then
+    summary_mode='initial'
+fi
 
 ((repo_seen == 1)) || fail '必须指定 --repo'
 if ((resume_initial == 1)); then
@@ -1296,6 +1590,7 @@ if ((snapshot_seen == 1)); then
 fi
 
 repo=$(realpath -e -- "$repo_arg") || fail "无法解析 repo 路径: $repo_arg"
+summary_repo=$repo
 [[ $(git -C "$repo" rev-parse --is-inside-work-tree 2>/dev/null) == 'true' ]] ||
     fail "不是 Git worktree: $repo"
 repo_root=$(git -C "$repo" rev-parse --show-toplevel)
@@ -1306,6 +1601,8 @@ if ((resume_initial == 1)); then
     resume_initial_publish
     exit 0
 fi
+
+summary_phase='preflight'
 
 declare -a paths=()
 declare -a absolute_paths=()
@@ -1474,10 +1771,12 @@ if ((dry_run == 1)); then
         if ! check_initial_worktree_scope; then
             add_risk "$initial_scope_error"
         fi
+        record_summary_warning 'dry-run did not query the remote empty-state'
         printf '  - dry-run 未执行 ls-remote；未实时核验远端是否完全为空。\n'
     elif ! resolve_normal_target; then
         add_risk "$normal_target_error；真实运行会在 git add 和 commit 前停止"
     else
+        record_summary_warning 'dry-run did not fetch or verify remote ahead/behind'
         printf '  - dry-run 未执行 fetch；未实时核验远端 branch 或 ahead/behind。\n'
     fi
 
@@ -1518,16 +1817,23 @@ if ((dry_run == 1)); then
     done
 
     if ((risk_count == 0)); then
+        record_summary_warning 'no static risk found; tests and review remain caller responsibilities'
         printf '  - 未发现上述静态风险；实际运行前仍需保证测试和审查已通过。\n'
     fi
+    summary_mode_state='dry_run_complete'
+    summary_completed_through='preflight'
+    summary_next_action='run_without_dry_run_after_review'
     printf '\nDRY-RUN 完成：未执行 git add、git commit、git fetch 或 git push。\n'
     exit 0
 fi
 
 if ((initial_publish == 1)); then
+    summary_mode_state='preflight'
     if ! resolve_initial_target; then
         fail "$initial_target_error"
     fi
+    summary_branch=$initial_branch
+    summary_upstream=$initial_remote/$initial_branch
     if [[ -n $(git -C "$repo" ls-files --stage) ]]; then
         fail 'initial-publish 不允许预先存在 index 或 staged 内容'
     fi
@@ -1535,11 +1841,18 @@ if ((initial_publish == 1)); then
         fail "$initial_scope_error"
     fi
     if ((snapshot_seen == 1)); then
-        verify_initial_snapshot worktree ||
+        summary_snapshot_verification='pending'
+        if ! verify_initial_snapshot worktree; then
+            summary_snapshot_verification='failed'
             fail 'snapshot 证据不完整或已漂移'
+        fi
+        summary_snapshot_verification='worktree_verified'
     fi
 elif ! resolve_normal_target; then
     fail "$normal_target_error"
+else
+    summary_branch=$current_branch
+    summary_upstream=$upstream_name
 fi
 
 for path in "${staged_paths[@]}"; do
@@ -1571,17 +1884,22 @@ for index in "${!paths[@]}"; do
 done
 
 if ((initial_publish == 1)); then
+    summary_phase='remote_preflight'
     printf '\n== Root commit 前远端空状态检查 ==\n'
     if ! check_initial_remote_empty; then
         fail "$initial_remote_error；未执行新增 git add、commit 或 push"
     fi
+    summary_remote_conclusion='empty_remote_verified'
 else
+    summary_phase='remote_preflight'
     printf '\n== Commit 前 fetch 与 fast-forward 检查 ==\n'
     if ! check_normal_remote_state 'commit 前'; then
         fail "$normal_remote_error；未执行新增 git add、commit 或 push"
     fi
 fi
 
+summary_phase='staging'
+summary_default_failure_status='failed'
 printf '\n== 显式暂存 ==\n'
 for path in "${paths[@]}"; do
     if [[ -n ${retained_ignored_deletions[$path]+present} ]]; then
@@ -1632,16 +1950,26 @@ for path in "${staged_paths[@]}"; do
 done
 
 if ((initial_publish == 1 && snapshot_seen == 1)); then
-    verify_initial_snapshot index ||
+    if ! verify_initial_snapshot index; then
+        summary_snapshot_verification='failed'
         fail 'index 与 snapshot 不一致；未执行 commit 或 push'
+    fi
+    summary_snapshot_verification='index_verified'
 fi
 
+summary_phase='commit'
 printf '\n== Commit ==\n'
 if ! run_git_mutation 'git commit -m <message>' git -C "$repo" commit -m "$message"; then
     fail 'git commit 失败；未执行 fetch 或 push'
 fi
 
 commit_hash=$(git -C "$repo" rev-parse HEAD)
+summary_commit_created=true
+summary_commit_sha=$commit_hash
+summary_completed_through='commit'
+if ((initial_publish == 1)); then
+    summary_mode_state='commit_created'
+fi
 commit_message=$(git -C "$repo" log -1 --format=%B)
 mapfile -d '' -t committed_paths < <(
     git -C "$repo" diff-tree --root --no-commit-id --name-only -r --no-renames -z "$commit_hash"
@@ -1661,8 +1989,11 @@ if ((initial_publish == 1)) && ! verify_initial_root_commit; then
     fail_initial_after_commit "$initial_commit_error"
 fi
 if ((initial_publish == 1 && snapshot_seen == 1)); then
-    verify_initial_snapshot head ||
+    if ! verify_initial_snapshot head; then
+        summary_snapshot_verification='failed'
         fail_initial_after_commit 'root commit 与 Snapshot Runner 证据不一致'
+    fi
+    summary_snapshot_verification='passed'
 fi
 
 printf 'commit hash: %s\n' "$commit_hash"
@@ -1671,19 +2002,28 @@ printf 'changed files:\n'
 git -C "$repo" diff-tree --root --no-commit-id --name-status -r --no-renames "$commit_hash"
 
 if ((initial_publish == 1)); then
+    summary_phase='post_commit_verify'
     printf '\n== Root commit 后远端空状态复查 ==\n'
     if ! check_initial_remote_empty; then
         fail_initial_after_commit "$initial_remote_error"
     fi
+    summary_remote_conclusion='empty_remote_reverified'
 
+    summary_phase='push'
+    summary_push_executed=true
     printf '\n== Initial push ==\n'
     if ! run_git_remote_command \
         'git push --set-upstream --no-follow-tags <remote> HEAD:<branch>' \
         git -C "$repo" push --set-upstream --no-follow-tags \
         "$initial_remote" "HEAD:$initial_branch_ref"; then
+        summary_push_result='uncertain'
         fail_initial_after_commit 'initial push 失败或结果无法确认'
     fi
+    summary_push_result='succeeded'
+    summary_mode_state='pushed'
 
+    summary_phase='post_verify'
+    summary_post_verify='failed'
     printf '\n== Initial push 后验证 ==\n'
     final_head=$(git -C "$repo" rev-parse --verify 'HEAD^{commit}') ||
         fail_initial_after_commit 'push 后无法解析 HEAD'
@@ -1715,7 +2055,11 @@ if ((initial_publish == 1)); then
         fail_initial_after_commit 'push 后 worktree 不干净'
     git -C "$repo" diff --cached --quiet ||
         fail_initial_after_commit 'push 后 index 不干净'
+    summary_post_verify='passed'
+    summary_remote_conclusion='published_and_upstream_aligned'
+    summary_mode_state='verified'
 else
+    summary_phase='post_commit_verify'
     printf '\n== Commit 后 fetch 与 fast-forward 检查 ==\n'
     if ! resolve_normal_target; then
         fail_after_commit "$normal_target_error"
@@ -1724,12 +2068,18 @@ else
         fail_after_commit "$normal_remote_error"
     fi
 
+    summary_phase='push'
+    summary_push_executed=true
     printf '\n== Push ==\n'
     if ! run_git_remote_command 'git push <upstream remote> HEAD:<upstream branch>' \
         git -C "$repo" push "$upstream_remote" "HEAD:$upstream_branch_ref"; then
+        summary_push_result='uncertain'
         fail_after_commit 'git push 失败'
     fi
+    summary_push_result='succeeded'
 
+    summary_phase='post_verify'
+    summary_post_verify='failed'
     printf '\n== Push 后验证 ==\n'
     printf '$ git rev-parse HEAD\n'
     final_head=$(git -C "$repo" rev-parse HEAD)
@@ -1758,6 +2108,10 @@ else
         fail_after_commit 'push 后本地 HEAD 与远端 branch 不一致'
     [[ "$final_counts" == $'0\t0' ]] ||
         fail_after_commit 'push 后本地 HEAD 与 upstream ahead/behind 不是 0/0'
+    summary_post_verify='passed'
 fi
 
+summary_completed_through='post_verify'
+summary_status='success'
+summary_next_action='none'
 printf '\nGit Finalizer 完成：commit 与 push 已验证。\n'

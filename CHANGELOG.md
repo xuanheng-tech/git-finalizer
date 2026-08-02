@@ -13,6 +13,8 @@ section is invented for it.
 
 ## Unreleased
 
+- Added: Optional `--summary` output emits one deterministic, bounded JSON result for normal,
+  initial, and resume flows without changing default output, Git operations, or exit status.
 - Added: A tag-only Gitea Actions workflow for a deterministic script bundle, SHA-256 verification,
   and refusal to overwrite an existing Release.
 - Changed: Changelog validation now requires one non-empty section for the source version, and
