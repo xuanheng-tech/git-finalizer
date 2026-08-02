@@ -13,6 +13,8 @@ section is invented for it.
 
 ## Unreleased
 
+## 0.4.0 - 2026-08-02
+
 - Added: Optional `--summary` output emits one deterministic, bounded JSON result for normal,
   initial, and resume flows without changing default output, Git operations, or exit status.
 - Added: A tag-only Gitea Actions workflow for a deterministic script bundle, SHA-256 verification,
@@ -23,8 +25,6 @@ section is invented for it.
   on 2026-08-02.
 - Compatibility: Git Finalizer remains branch-only and retains `--no-follow-tags`; it does not
   create or push tags or call the Gitea Release API.
-- Release status: These changes are on `main` after the `0.3.1` source-version commit and are not
-  included in the backfilled `v0.3.1` tag.
 
 ## 0.3.1 - 2026-08-01
 
