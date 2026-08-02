@@ -168,6 +168,7 @@ def parse_direct_finalizer(
     dry_run = False
     summary = False
     initial_publish = False
+    initial_branch_publish = False
     index = 0
     while index < len(options):
         option = options[index]
@@ -189,7 +190,19 @@ def parse_direct_finalizer(
             initial_publish = True
             index += 1
             continue
-        if option not in ("--message", "--remote", "--repo", "--snapshot") or index + 1 >= len(options):
+        if option == "--initial-branch-publish":
+            if initial_branch_publish:
+                raise BridgeError("Finalizer --initial-branch-publish 不得重复")
+            initial_branch_publish = True
+            index += 1
+            continue
+        if option not in (
+            "--message",
+            "--remote",
+            "--remote-branch",
+            "--repo",
+            "--snapshot",
+        ) or index + 1 >= len(options):
             raise BridgeError("Finalizer 包含未授权参数或缺少参数值")
         if option in parsed:
             raise BridgeError("Finalizer 参数不得重复")
@@ -198,6 +211,8 @@ def parse_direct_finalizer(
 
     if not {"--message", "--repo"}.issubset(parsed):
         raise BridgeError("Finalizer 必须显式提供 --repo 和 --message")
+    if initial_publish and initial_branch_publish:
+        raise BridgeError("Finalizer 发布模式只能选择一个")
     if initial_publish:
         remote = parsed.get("--remote")
         if remote is None:
@@ -211,8 +226,39 @@ def parse_direct_finalizer(
         snapshot = parsed.get("--snapshot")
         if snapshot is not None and re.fullmatch(r"[0-9a-f]{64}", snapshot) is None:
             raise BridgeError("Finalizer --snapshot 不是有效的 Snapshot Runner ID")
+        if "--remote-branch" in parsed:
+            raise BridgeError("Finalizer --initial-publish 不接受 --remote-branch")
+    elif initial_branch_publish:
+        remote = parsed.get("--remote")
+        remote_branch = parsed.get("--remote-branch")
+        if remote is None or remote_branch is None:
+            raise BridgeError(
+                "Finalizer --initial-branch-publish 必须显式提供 --remote 和 --remote-branch"
+            )
+        if (
+            not remote
+            or remote.startswith("-")
+            or any(character in remote for character in ("\x00", "\n", "\r", "\t"))
+        ):
+            raise BridgeError("Finalizer --remote 不是有效的 remote 名")
+        if (
+            not remote_branch
+            or remote_branch.startswith("-")
+            or any(
+                character in remote_branch for character in ("\x00", "\n", "\r", "\t")
+            )
+        ):
+            raise BridgeError("Finalizer --remote-branch 不是有效的 branch 名")
+        if "--snapshot" in parsed:
+            raise BridgeError("Finalizer --initial-branch-publish 不接受 --snapshot")
     elif "--remote" in parsed:
-        raise BridgeError("Finalizer --remote 只允许与 --initial-publish 一起使用")
+        raise BridgeError(
+            "Finalizer --remote 只允许与 --initial-publish 或 --initial-branch-publish 一起使用"
+        )
+    elif "--remote-branch" in parsed:
+        raise BridgeError(
+            "Finalizer --remote-branch 只允许与 --initial-branch-publish 一起使用"
+        )
     elif "--snapshot" in parsed:
         raise BridgeError("Finalizer --snapshot 只允许与 --initial-publish 一起使用")
     message = parsed["--message"]
@@ -257,6 +303,8 @@ def validate_hook_event(event: object) -> tuple[str, list[str], Path, bool]:
     if not isinstance(tool_input, dict) or set(tool_input) != {"command"}:
         raise BridgeError("PreToolUse tool_input 必须只包含 command")
     public_command = tool_input.get("command")
+    if not isinstance(public_command, str):
+        raise BridgeError("PreToolUse tool_input 缺少 command")
     argv, raw_repo, _paths, dry_run = parse_direct_finalizer(public_command)
     repo = resolve_repo(raw_repo)
     return public_command, argv, repo, dry_run

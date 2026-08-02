@@ -3,9 +3,10 @@
 本目录是 Git Finalizer PreToolUse bridge 的版本化权威源。bridge 校验并执行的是
 Git Finalizer CLI 契约，因此 allowlist、对应测试和部署入口与 Finalizer 源码放在同一仓库。
 它不管理其他 Codex Hook，也不改变 Git Finalizer 的参数或安全语义。
-bridge 只放行固定绝对路径的 normal 与 `--initial-publish --remote <name>` 调用；
-initial 模式可额外携带一个严格的 `--snapshot <64-lowercase-hex>`，必须提供 remote，normal
-模式禁止 remote 和 snapshot，其他未知参数继续拒绝。
+bridge 只放行固定绝对路径的 normal、`--initial-publish --remote <name>` 与
+`--initial-branch-publish --remote <name> --remote-branch <name>` 调用；initial 模式可额外携带
+一个严格的 `--snapshot <64-lowercase-hex>`，initial-branch 模式禁止 snapshot，normal 模式
+禁止 remote、remote-branch 和 snapshot，其他未知参数继续拒绝。
 bridge 将严格解析并规范化的绝对 `--repo` 作为 Finalizer 子进程 cwd；PreToolUse 的会话 cwd
 不是目标仓库权限来源。若本次调用已出现在 transcript，bridge 还会要求其中的原命令、
 `workdir=<repo>` 和 `sandbox_permissions=require_escalated` 精确匹配；任何冲突均拒绝。

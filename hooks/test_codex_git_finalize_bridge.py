@@ -7,6 +7,7 @@ from pathlib import Path
 import shlex
 import sys
 import tempfile
+from typing import Any
 import unittest
 from unittest import mock
 
@@ -56,6 +57,23 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 "tests/test_runner.py",
             )
         )
+        self.initial_branch_command = " ".join(
+            (
+                bridge.FINALIZER,
+                "--initial-branch-publish",
+                "--remote",
+                "origin",
+                "--remote-branch",
+                "feat/validated-branch",
+                "--repo",
+                shlex.quote(str(self.repo)),
+                "--message",
+                shlex.quote("validated branch message"),
+                "--",
+                "scripts/runner.py",
+                "tests/test_runner.py",
+            )
+        )
         self.snapshot_command = self.initial_command.replace(
             " --repo ", " --snapshot " + "a" * 64 + " --repo ", 1
         )
@@ -75,9 +93,7 @@ class GitFinalizerBridgeTest(unittest.TestCase):
             "turn_id": "turn-test",
         }
 
-    def invoke_main(
-        self, event: dict[str, object]
-    ) -> tuple[dict[str, object], mock.Mock]:
+    def invoke_main(self, event: dict[str, object]) -> tuple[dict[str, Any], mock.Mock]:
         stdin = io.StringIO(json.dumps(event))
         stdout = io.StringIO()
         run = mock.Mock(return_value=(0, "synthetic success"))
@@ -128,6 +144,27 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0], shlex.split(self.initial_command))
 
+    def test_initial_branch_publish_is_accepted_and_forwarded(self) -> None:
+        command, argv, repo, dry_run = bridge.validate_hook_event(
+            self.event(self.initial_branch_command)
+        )
+
+        self.assertEqual(command, self.initial_branch_command)
+        self.assertIn("--initial-branch-publish", argv)
+        self.assertEqual(argv[argv.index("--remote") + 1], "origin")
+        self.assertEqual(
+            argv[argv.index("--remote-branch") + 1], "feat/validated-branch"
+        )
+        self.assertEqual(repo, self.repo)
+        self.assertFalse(dry_run)
+
+        output, run = self.invoke_main(self.event(self.initial_branch_command))
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+        self.assertEqual(
+            run.call_args.args[0], shlex.split(self.initial_branch_command)
+        )
+
     def test_initial_publish_snapshot_is_accepted_and_forwarded(self) -> None:
         output, run = self.invoke_main(self.event(self.snapshot_command))
 
@@ -143,9 +180,7 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         self.assertEqual(run.call_args.args[0], shlex.split(self.summary_command))
 
     def test_duplicate_summary_is_rejected(self) -> None:
-        duplicate = self.summary_command.replace(
-            "--summary", "--summary --summary", 1
-        )
+        duplicate = self.summary_command.replace("--summary", "--summary --summary", 1)
 
         with self.assertRaises(bridge.BridgeError):
             bridge.validate_hook_event(self.event(duplicate))
@@ -300,11 +335,49 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 with self.assertRaises(bridge.BridgeError):
                     bridge.validate_hook_event(event)
 
-    def test_initial_publish_requires_remote_and_remote_requires_initial_mode(self) -> None:
+    def test_initial_publish_requires_remote_and_remote_requires_initial_mode(
+        self,
+    ) -> None:
         initial_without_remote = self.initial_command.replace(" --remote origin", "", 1)
-        normal_with_remote = self.command.replace(" --repo ", " --remote origin --repo ", 1)
+        normal_with_remote = self.command.replace(
+            " --repo ", " --remote origin --repo ", 1
+        )
 
         for command in (initial_without_remote, normal_with_remote):
+            with self.subTest(command=command):
+                with self.assertRaises(bridge.BridgeError):
+                    bridge.validate_hook_event(self.event(command))
+
+    def test_initial_branch_publish_requires_one_explicit_matching_option_set(
+        self,
+    ) -> None:
+        missing_remote = self.initial_branch_command.replace(" --remote origin", "", 1)
+        missing_branch = self.initial_branch_command.replace(
+            " --remote-branch feat/validated-branch", "", 1
+        )
+        normal_with_branch = self.command.replace(
+            " --repo ", " --remote-branch feat/validated-branch --repo ", 1
+        )
+        conflicting_modes = self.initial_branch_command.replace(
+            " --initial-branch-publish",
+            " --initial-publish --initial-branch-publish",
+            1,
+        )
+        with_snapshot = self.initial_branch_command.replace(
+            " --repo ", " --snapshot " + "a" * 64 + " --repo ", 1
+        )
+        invalid_branch = self.initial_branch_command.replace(
+            "feat/validated-branch", shlex.quote("bad\tbranch"), 1
+        )
+
+        for command in (
+            missing_remote,
+            missing_branch,
+            normal_with_branch,
+            conflicting_modes,
+            with_snapshot,
+            invalid_branch,
+        ):
             with self.subTest(command=command):
                 with self.assertRaises(bridge.BridgeError):
                     bridge.validate_hook_event(self.event(command))
@@ -325,15 +398,11 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         without_remote = prefix.replace(" --remote origin", "", 1)
         commands = (
             without_remote + " --remote -- " + paths,
-            prefix.replace(
-                " --remote origin", " --remote origin --remote backup", 1
-            )
+            prefix.replace(" --remote origin", " --remote origin --remote backup", 1)
             + " -- "
             + paths,
             prefix.replace(" --remote origin", " --remote ''", 1) + " -- " + paths,
-            prefix.replace(" --remote origin", " --remote -origin", 1)
-            + " -- "
-            + paths,
+            prefix.replace(" --remote origin", " --remote -origin", 1) + " -- " + paths,
             prefix.replace(
                 " --remote origin", " --remote " + shlex.quote("bad\tremote"), 1
             )

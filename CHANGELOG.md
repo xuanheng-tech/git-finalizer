@@ -13,6 +13,20 @@ section is invented for it.
 
 ## Unreleased
 
+## 0.4.2 - 2026-08-03
+
+- Added: `--initial-branch-publish --remote <name> --remote-branch <name>` first-publishes an
+  existing-history local feature branch to an explicitly named, currently absent remote branch.
+- Safety: The mode rejects protected or mismatched branch names, ignores a stale current upstream
+  when selecting the push target, rechecks target absence after commit, and uses a non-force,
+  `--no-follow-tags`, explicit branch refspec with `--set-upstream`.
+- Added: Post-push verification proves HEAD, remote target, upstream, ahead/behind, index, explicit
+  path cleanliness, local tags, remote tags, and every non-target remote ref; failures retain and
+  report the real local commit and observed state.
+- Added: Bare-remote integration and PreToolUse bridge coverage for success, stale upstream,
+  existing targets, protected/detached/mismatched branches, scoped changes, tag protection,
+  post-verify, races, and push failure.
+
 ## 0.4.1 - 2026-08-02
 
 - Fixed: Normal branch pushes now explicitly pass `--no-follow-tags`, matching the existing

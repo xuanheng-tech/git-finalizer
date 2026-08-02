@@ -2,7 +2,7 @@
 
 Codex Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`0.4.1`
+当前版本：`0.4.2`
 
 ## 使用方式
 
@@ -27,6 +27,26 @@ codex-git-finalize \
   -- README.md
 ```
 
+已有正常历史的本地功能分支首次发布到尚不存在的同名远端分支时，使用独立模式：
+
+```bash
+codex-git-finalize \
+  --initial-branch-publish \
+  --remote origin \
+  --remote-branch feat/example \
+  --repo /home/user/projects/example \
+  --message "feat: publish example branch" \
+  -- path/to/file
+```
+
+该模式要求当前 symbolic local branch 与 `--remote-branch` 完全一致，拒绝
+`main`、`master`、`trunk` 和 `production`，并在暂存前确认显式远端目标不存在。当前 upstream
+可以缺失或错误指向其他分支；它不参与 push 目标选择，成功的显式
+`HEAD:refs/heads/<remote-branch>` push 会通过 `--set-upstream` 将其替换为正确目标。commit 前后
+均复查目标仍不存在；post-verify 要求远端目标与 HEAD 一致、upstream 精确对齐、ahead/behind
+为 `0/0`、index 为空、显式路径干净，并确认所有远端非目标 refs（包括 main 与 tags）和本地
+tags 均未变化。
+
 `--snapshot` 是 initial publish 的可选严格证据绑定。提供后，Finalizer 要求 Snapshot Runner
 schema 2 / security epoch 4 的 `diff-audit` artifact 为完整 unborn initial 证据：
 `truncated=false`、`evidence_gaps=[]`、`complete=true`、敏感扫描完整，并且 `--` 后每个显式
@@ -49,7 +69,8 @@ codex-git-finalize \
 
 ### 有界结果摘要
 
-normal、initial 和 resume 均可显式加入 `--summary`，以单行确定性 JSON 代替原有阶段输出：
+normal、initial、initial-branch 和 resume 均可显式加入 `--summary`，以单行确定性 JSON
+代替原有阶段输出：
 
 ```bash
 codex-git-finalize \
@@ -66,11 +87,12 @@ codex-git-finalize \
 `push.branch_refspec_only` 与 `follow_tags_requested` 才分别为 `true` 和 `false`；未执行 push
 时两者为 `null`。这些字段不枚举远端已有 tag。
 
-initial 的 `mode_result` 另含 initial publish、Snapshot artifact 校验和远端最终结论；resume
-另含恢复起点、原提交复用、已完成阶段和是否仍需恢复。只有确有恢复入口时才输出顶层
-`resume` 引用。warning 最多 5 条、每条最多 256 字符；失败原因最多 512 字符，省略数量通过
-对应 `*_omitted*` 字段显式报告。摘要不包含 diff、文件正文、commit message、凭据或完整命令
-日志。失败仍使用非零退出码；若序列化本身失败，fallback 会同时保留 Git 操作状态和原退出码。
+initial 的 `mode_result` 另含 initial publish、Snapshot artifact 校验和远端最终结论；
+initial-branch 另含首次分支发布状态、远端最终结论和 post-verify；resume 另含恢复起点、原提交
+复用、已完成阶段和是否仍需恢复。只有确有恢复入口时才输出顶层 `resume` 引用。warning 最多
+5 条、每条最多 256 字符；失败原因最多 512 字符，省略数量通过对应 `*_omitted*` 字段显式
+报告。摘要不包含 diff、文件正文、commit message、凭据或完整命令日志。失败仍使用非零退出码；
+若序列化本身失败，fallback 会同时保留 Git 操作状态和原退出码。
 
 PreToolUse bridge 仅将 `--summary` 作为官方无值参数原样转发；其调用授权、路径校验、停止
 条件和输出上限不变。
@@ -82,7 +104,9 @@ Git Finalizer Hook 的版本化源、测试、只读漂移检查和显式恢复�
 
 ## 工作流边界
 
-正常开发流程是先完成修改、测试和审查，再调用正常模式提交推送。首次发布仅适用于 unborn 本地仓库和完全空远端；恢复模式仅适用于干净、非空的单 root HEAD，不会再次创建提交。
+正常开发流程是先完成修改、测试和审查，再调用正常模式提交推送。首次发布仅适用于 unborn
+本地仓库和完全空远端；已有历史功能分支首次发布必须使用 initial-branch 模式；恢复模式仅适用于
+干净、非空的单 root HEAD，不会再次创建提交。
 
 空远端经 `git clone` 创建的 unborn 分支可能已有精确匹配但尚不可解析的 tracking target；initial 与 resume 模式接受该状态并由成功 push 自然完成 upstream。正常模式仍要求 upstream commit 已可解析。Upstream target 配置与 resolved upstream commit 是不同事实。
 
