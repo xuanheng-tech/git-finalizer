@@ -5,10 +5,14 @@ Git Finalizer CLI 契约，因此 allowlist、对应测试和部署入口与 Fin
 它不管理其他 Codex Hook，也不改变 Git Finalizer 的参数或安全语义。
 bridge 只放行固定绝对路径的 normal、`--mode commit-only`、`--mode verify-only`、
 `--initial-publish --remote <name>` 与
-`--initial-branch-publish --remote <name> --remote-branch <name>` 调用；initial 模式可额外携带
-一个严格的 `--snapshot <64-lowercase-hex>`。initial-branch、commit-only 与 verify-only 模式
+`--initial-branch-publish --remote <name> --remote-branch <name>` 调用，以及不带文件列表的
+`--resume-publish <full-head-oid> --repo <path>` 和兼容的
+`--resume-initial-publish <full-head-oid> --remote <name> --repo <path>`。initial 模式可额外携带
+一个严格的 `--snapshot <64-lowercase-hex>`。通用 resume 从 configured upstream 推导目标并禁止
+remote；root resume 要求 remote。两者均禁止 message、dry-run、snapshot、remote-branch、其他
+mode 和 `--` 文件范围；其他未知参数继续拒绝。initial-branch、commit-only 与 verify-only 模式
 禁止 snapshot；normal、commit-only 与 verify-only 模式禁止 remote 和 remote-branch；
-verify-only 还禁止 message 和 dry-run。其他 mode 和未知参数继续拒绝。
+verify-only 还禁止 message 和 dry-run。
 bridge 将严格解析并规范化的绝对 `--repo` 作为 Finalizer 子进程 cwd；PreToolUse 的会话 cwd
 不是目标仓库权限来源。若本次调用已出现在 transcript，bridge 还会要求其中的原命令、
 `workdir=<repo>` 和 `sandbox_permissions=require_escalated` 精确匹配；任何冲突均拒绝。

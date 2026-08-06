@@ -158,12 +158,15 @@ def parse_direct_finalizer(
             "Finalizer 必须以固定绝对路径作为直接命令，不能经 shell、env 或管道包装"
         )
     delimiters = [index for index, value in enumerate(argv) if value == "--"]
-    if len(delimiters) != 1:
-        raise BridgeError("Finalizer 必须且只能包含一个 -- 文件分隔符")
-    delimiter = delimiters[0]
-    paths = _explicit_paths(argv[delimiter + 1 :])
-
-    options = argv[1:delimiter]
+    if len(delimiters) > 1:
+        raise BridgeError("Finalizer 最多只能包含一个 -- 文件分隔符")
+    if delimiters:
+        delimiter = delimiters[0]
+        options = argv[1:delimiter]
+        path_values = argv[delimiter + 1 :]
+    else:
+        options = argv[1:]
+        path_values = []
     parsed: dict[str, str] = {}
     dry_run = False
     summary = False
@@ -202,6 +205,8 @@ def parse_direct_finalizer(
             "--remote",
             "--remote-branch",
             "--repo",
+            "--resume-initial-publish",
+            "--resume-publish",
             "--snapshot",
         ) or index + 1 >= len(options):
             raise BridgeError("Finalizer 包含未授权参数或缺少参数值")
@@ -214,10 +219,26 @@ def parse_direct_finalizer(
     if mode is not None and mode not in ("commit-only", "verify-only"):
         raise BridgeError("Finalizer --mode 仅支持 commit-only 或 verify-only")
     verify_only = mode == "verify-only"
-    required = {"--repo"} if verify_only else {"--message", "--repo"}
+    resume_initial_oid = parsed.get("--resume-initial-publish")
+    resume_publish_oid = parsed.get("--resume-publish")
+    if resume_initial_oid is not None and resume_publish_oid is not None:
+        raise BridgeError("Finalizer resume 发布入口只能选择一个")
+    resume = resume_initial_oid is not None or resume_publish_oid is not None
+    if resume:
+        if delimiters:
+            raise BridgeError("Finalizer resume 模式不接受 -- 分隔符或文件路径")
+        paths: tuple[str, ...] = ()
+    else:
+        if len(delimiters) != 1:
+            raise BridgeError("Finalizer 必须且只能包含一个 -- 文件分隔符")
+        paths = _explicit_paths(path_values)
+
+    required = {"--repo"} if verify_only or resume else {"--message", "--repo"}
     if not required.issubset(parsed):
         if verify_only:
             raise BridgeError("Finalizer verify-only 必须显式提供 --repo")
+        if resume:
+            raise BridgeError("Finalizer resume 必须显式提供 --repo")
         raise BridgeError("Finalizer 必须显式提供 --repo 和 --message")
     if mode in ("commit-only", "verify-only") and (
         initial_publish or initial_branch_publish
@@ -228,9 +249,36 @@ def parse_direct_finalizer(
             raise BridgeError("Finalizer --mode verify-only 不接受 --message")
         if dry_run:
             raise BridgeError("Finalizer --mode verify-only 不接受 --dry-run")
+    if resume:
+        resume_oid = resume_initial_oid or resume_publish_oid
+        if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", resume_oid or "") is None:
+            raise BridgeError("Finalizer resume 要求完整小写十六进制 HEAD OID")
+        if mode is not None or initial_publish or initial_branch_publish:
+            raise BridgeError("Finalizer resume 不接受其他 mode 或发布入口")
+        if "--message" in parsed:
+            raise BridgeError("Finalizer resume 不接受 --message")
+        if dry_run:
+            raise BridgeError("Finalizer resume 不接受 --dry-run")
+        if "--snapshot" in parsed or "--remote-branch" in parsed:
+            raise BridgeError("Finalizer resume 不接受 snapshot 或 remote-branch")
     if initial_publish and initial_branch_publish:
         raise BridgeError("Finalizer 发布模式只能选择一个")
-    if initial_publish:
+    if resume_initial_oid is not None:
+        remote = parsed.get("--remote")
+        if remote is None:
+            raise BridgeError("Finalizer root resume 必须显式提供 --remote")
+        if (
+            not remote
+            or remote.startswith("-")
+            or any(character in remote for character in ("\x00", "\n", "\r", "\t"))
+        ):
+            raise BridgeError("Finalizer --remote 不是有效的 remote 名")
+    elif resume_publish_oid is not None:
+        if "--remote" in parsed:
+            raise BridgeError(
+                "Finalizer --resume-publish 从 configured upstream 推导目标，不接受 --remote"
+            )
+    elif initial_publish:
         remote = parsed.get("--remote")
         if remote is None:
             raise BridgeError("Finalizer --initial-publish 必须显式提供 --remote")

@@ -1858,6 +1858,8 @@ test_release_contract() {
         'initial branch target option missing from help'
     assert_file_contains "$help_output" '--resume-initial-publish' \
         'resume-initial-publish mode missing from help'
+    assert_file_contains "$help_output" '--resume-publish' \
+        'existing-commit resume entry missing from help'
     assert_file_contains "$help_output" '--allow-large-binary' \
         'large binary override missing from help'
     assert_file_contains "$help_output" '--snapshot' \
@@ -1957,4 +1959,5 @@ printf 'all %s integration tests passed\n' "$passed"
 
 bash "$project_root/tests/test_initial_branch_publish.sh"
 bash "$project_root/tests/test_resume_initial_publish.sh"
+bash "$project_root/tests/test_resume_publish.sh"
 bash "$project_root/tests/test_summary.sh"

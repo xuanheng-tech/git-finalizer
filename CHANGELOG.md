@@ -13,6 +13,15 @@ section is invented for it.
 
 ## Unreleased
 
+- Added: `--resume-publish <full-head-oid>` safely publishes one or more existing local commits
+  ahead of the current attached branch's configured upstream without creating another commit.
+- Safety: Existing-commit resume requires a clean index/worktree, ahead >= 1 and behind = 0,
+  validates every commit and changed object in `upstream..HEAD`, and uses only a non-force,
+  `--no-follow-tags`, explicit branch refspec push followed by remote 0/0 verification.
+- Compatibility: The root-only `--resume-initial-publish` state machine, normal mode,
+  commit-only, verify-only, and initial-branch behavior remain available under their existing
+  interfaces; the bridge now fail-closed forwards both resume interfaces.
+
 ## 0.5.0 - 2026-08-06
 
 - Added: `--mode commit-only` runs the existing local pre-commit checks and creates one scoped

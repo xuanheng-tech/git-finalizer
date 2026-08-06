@@ -53,6 +53,14 @@ summary_head_after=''
 summary_head_unchanged=false
 summary_index_unchanged=false
 summary_worktree_unchanged=false
+summary_resume_publish_kind=''
+summary_publish_ahead=''
+summary_publish_behind=''
+summary_publish_commit_count=''
+summary_publish_range=''
+summary_push_target=''
+summary_final_head=''
+summary_final_remote_oid=''
 declare -a summary_warnings=()
 
 record_summary_warning() {
@@ -91,6 +99,10 @@ render_summary() {
         "$summary_worktree_before_state" "$summary_commit_result" \
         "$summary_head_before" "$summary_head_after" "$summary_head_unchanged" \
         "$summary_index_unchanged" "$summary_worktree_unchanged" \
+        "$summary_resume_publish_kind" "$summary_publish_ahead" \
+        "$summary_publish_behind" "$summary_publish_commit_count" \
+        "$summary_publish_range" "$summary_push_target" \
+        "$summary_final_head" "$summary_final_remote_oid" \
         "${summary_warnings[@]}" <<'PY'
 import json
 import sys
@@ -154,6 +166,18 @@ head_after = take(values)
 head_unchanged = boolean(take(values))
 index_unchanged = boolean(take(values))
 worktree_unchanged = boolean(take(values))
+resume_publish_kind = take(values)
+publish_ahead_raw = take(values)
+publish_behind_raw = take(values)
+publish_commit_count_raw = take(values)
+publish_range = take(values)
+push_target = take(values)
+final_head = take(values)
+final_remote_oid = take(values)
+
+
+def optional_integer(value):
+    return int(value) if value else None
 
 warnings = []
 warning_characters_omitted = 0
@@ -203,12 +227,30 @@ elif mode == "initial_branch":
         "post_verify": post_verify,
     }
 elif mode == "resume":
+    resume_interface = {
+        "initial_root": "resume-initial-publish",
+        "existing_commits": "resume-publish",
+    }.get(resume_publish_kind)
     result["mode_result"] = {
+        "interface": resume_interface,
+        "publish_kind": resume_publish_kind or None,
         "recovery_start": recovery_start or None,
         "commit_reused": commit_reused,
         "completed_through": completed_through,
         "resume_required": resume_required,
+        "pre_publish": {
+            "ahead": optional_integer(publish_ahead_raw),
+            "behind": optional_integer(publish_behind_raw),
+            "commit_count": optional_integer(publish_commit_count_raw),
+            "commit_range": publish_range or None,
+        },
+        "push_target": push_target or None,
         "post_verify": post_verify,
+        "final": {
+            "head": final_head or None,
+            "remote_ref_oid": final_remote_oid or None,
+            "worktree": worktree_state or None,
+        },
     }
 elif mode == "commit-only":
     result["mode_result"] = {
@@ -298,6 +340,8 @@ Usage:
     [--allow-large-binary <repo-relative-path>]... -- <file>...
   codex-git-finalize --resume-initial-publish <full-head-oid>
     --remote <remote-name> --repo <absolute-repo> [--summary]
+  codex-git-finalize --resume-publish <full-head-oid>
+    --repo <absolute-repo> [--summary]
 
 Options:
   --repo <path>                  Absolute path to the Git worktree root.
@@ -307,7 +351,8 @@ Options:
   --initial-publish              Publish one root commit from an unborn branch.
   --initial-branch-publish       First-publish one existing local history branch.
   --resume-initial-publish <oid> Resume publication of one exact root commit.
-  --remote <name>                Required by initial, initial-branch, and resume modes.
+  --resume-publish <oid>         Publish existing commits ahead of configured upstream.
+  --remote <name>                Required by initial, initial-branch, and root resume modes.
   --remote-branch <name>         Required by initial-branch mode; must match local branch.
   --snapshot <id>                Bind initial publish to a complete snapshot.
   --allow-test-fixture <path>    Ignore content secret signatures for this exact tests/ file.
@@ -380,8 +425,13 @@ fail_resume_retryable() {
     printf 'ERROR: %s\n' "$*" >&2
     printf '本地 HEAD %s 保持不变；可安全再次运行同一恢复命令:\n' \
         "$resume_expected_oid" >&2
-    printf '  codex-git-finalize --resume-initial-publish %s --remote %q --repo %q\n' \
-        "$resume_expected_oid" "$resume_remote" "$repo" >&2
+    if [[ "$resume_cli_option" == '--resume-publish' ]]; then
+        printf '  codex-git-finalize --resume-publish %s --repo %q\n' \
+            "$resume_expected_oid" "$repo" >&2
+    else
+        printf '  codex-git-finalize --resume-initial-publish %s --remote %q --repo %q\n' \
+            "$resume_expected_oid" "$resume_remote" "$repo" >&2
+    fi
     exit 1
 }
 
@@ -1015,6 +1065,10 @@ check_normal_remote_state() {
     local behind
 
     normal_remote_error=''
+    normal_local_hash=''
+    normal_upstream_hash=''
+    normal_ahead=''
+    normal_behind=''
     if ! run_git_remote_command 'git fetch <upstream remote>' \
         git -C "$repo" fetch --no-tags --no-recurse-submodules "$upstream_remote"; then
         normal_remote_error="$phase git fetch 失败"
@@ -1055,6 +1109,11 @@ check_normal_remote_state() {
         fi
         return 1
     fi
+
+    normal_local_hash=$local_hash
+    normal_upstream_hash=$upstream_hash
+    normal_ahead=$ahead
+    normal_behind=$behind
 
     printf 'upstream: %s\n' "$upstream_name"
     printf 'remote branch: %s\n' "$upstream_branch_ref"
@@ -1526,59 +1585,12 @@ verify_initial_branch_result() {
     printf 'remote non-target refs and tags: unchanged\n'
 }
 
-inspect_resume_upstream() {
-    resume_upstream_error=''
-    resume_upstream_present=0
-    classify_branch_upstream "$resume_branch" "$resume_remote" "$resume_branch_ref"
-    resume_upstream_state=$branch_upstream_state
-    case "$resume_upstream_state" in
-        none|exact_unresolved)
-            return 0
-            ;;
-        exact_resolved)
-            if [[ "$branch_upstream_oid" != "$resume_expected_oid" ]]; then
-                resume_upstream_error='resume upstream commit 与 expected HEAD 不一致'
-                return 1
-            fi
-            resume_upstream_present=1
-            ;;
-        conflicting)
-            resume_upstream_error=$branch_upstream_error
-            return 1
-            ;;
-    esac
-}
-
-resolve_resume_target() {
-    local symbolic_head
+validate_resume_expected_head() {
     local object_format
     local oid_length
     local resolved_head
-    local parent_line
-    local tree_paths
-    local resume_status
-    local git_dir
-    local marker
-    local configured_remotes
-    local fetch_urls
-    local push_urls
 
     resume_target_error=''
-    if ! symbolic_head=$(git -C "$repo" symbolic-ref --quiet HEAD 2>/dev/null); then
-        resume_target_error='resume 要求 symbolic attached branch'
-        return 1
-    fi
-    if [[ "$symbolic_head" != refs/heads/* || "$symbolic_head" == 'refs/heads/' ]]; then
-        resume_target_error='resume symbolic HEAD 不是本地 branch'
-        return 1
-    fi
-    resume_branch_ref=$symbolic_head
-    resume_branch=${resume_branch_ref#refs/heads/}
-    if [[ "$current_branch" != "$resume_branch" ]]; then
-        resume_target_error='resume symbolic HEAD 与当前 branch 名不一致'
-        return 1
-    fi
-
     if ! object_format=$(
         git -C "$repo" rev-parse --show-object-format=storage 2>/dev/null
     ); then
@@ -1607,16 +1619,14 @@ resolve_resume_target() {
         return 1
     fi
     resume_head=$resolved_head
-    if ! parent_line=$(git -C "$repo" rev-list --parents -n 1 "$resume_head" 2>/dev/null) ||
-        [[ "$parent_line" != "$resume_head" ]]; then
-        resume_target_error='resume 只接受无 parent 的 root commit'
-        return 1
-    fi
-    if ! tree_paths=$(git -C "$repo" ls-tree -r --name-only "$resume_head" 2>/dev/null) ||
-        [[ -z "$tree_paths" ]]; then
-        resume_target_error='resume root commit tree 不能为空'
-        return 1
-    fi
+}
+
+check_resume_clean_state() {
+    local resume_status
+    local git_dir
+    local marker
+
+    resume_target_error=''
     if ! git -C "$repo" diff --cached --quiet; then
         resume_target_error='resume 要求 index/staged 状态干净'
         return 1
@@ -1639,6 +1649,196 @@ resolve_resume_target() {
             return 1
         fi
     done
+}
+
+is_committed_large_binary() {
+    local oid=$1
+    local size
+
+    size=$(git -C "$repo" cat-file -s "$oid" 2>/dev/null) || return 1
+    ((size > MAX_BINARY_BYTES)) || return 1
+    if LC_ALL=C grep -Iq -- . < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null); then
+        return 1
+    fi
+    return 0
+}
+
+validate_existing_publish_range() {
+    local commit_output
+    local commit_oid
+    local whitespace_output
+    local whitespace_status
+    local path
+    local reason
+    local ignore_status
+    local entry
+    local entry_path
+    local metadata
+    local object_mode
+    local object_type
+    local object_oid
+    local extra
+    local -a commit_oids=()
+    local -a tree_entries=()
+    declare -A publish_paths=()
+
+    existing_range_error=''
+    if ! commit_output=$(
+        git -C "$repo" rev-list --reverse --topo-order "$resume_publish_range" 2>/dev/null
+    ); then
+        existing_range_error='无法解析待发布 commit range'
+        return 1
+    fi
+    [[ -n "$commit_output" ]] || {
+        existing_range_error='待发布 commit range 为空'
+        return 1
+    }
+    mapfile -t commit_oids <<<"$commit_output"
+    if ((${#commit_oids[@]} != resume_publish_commit_count)); then
+        existing_range_error='待发布 commit range 与 ahead 计数不一致'
+        return 1
+    fi
+
+    for commit_oid in "${commit_oids[@]}"; do
+        if whitespace_output=$(
+            git -C "$repo" diff-tree --root -m --no-commit-id --no-renames \
+                -r --check "$commit_oid" 2>&1
+        ); then
+            whitespace_status=0
+        else
+            whitespace_status=$?
+        fi
+        if ((whitespace_status != 0)) || [[ -n "$whitespace_output" ]]; then
+            existing_range_error="待发布 commit 存在 whitespace 错误: $commit_oid"
+            return 1
+        fi
+
+        while IFS= read -r -d '' path; do
+            if [[ -z "$path" || "$path" == /* || "$path" == '../'* ||
+                "$path" == *'/../'* || "$path" == *$'\n'* || "$path" == *$'\r'* ||
+                "$path" == *$'\t'* || "$path" == '.git' || "$path" == .git/* ]]; then
+                existing_range_error="待发布 commit 包含异常文件路径: $(printf '%q' "$path")"
+                return 1
+            fi
+            if reason=$(sensitive_path_reason "$path"); then
+                existing_range_error="拒绝待发布敏感文件 $(printf '%q' "$path"): $reason"
+                return 1
+            fi
+
+            ignore_status=0
+            git -C "$repo" check-ignore --quiet --no-index -- "$path" || ignore_status=$?
+            if ((ignore_status == 0)); then
+                existing_range_error="待发布 commit 包含 ignored 文件: $(printf '%q' "$path")"
+                return 1
+            fi
+            if ((ignore_status != 1)); then
+                existing_range_error="无法验证待发布文件的 ignore 状态: $(printf '%q' "$path")"
+                return 1
+            fi
+
+            tree_entries=()
+            mapfile -d '' -t tree_entries < <(
+                git -C "$repo" --literal-pathspecs ls-tree -z "$commit_oid" -- "$path"
+            )
+            if ((${#tree_entries[@]} == 0)); then
+                publish_paths["$path"]=1
+                continue
+            fi
+            if ((${#tree_entries[@]} != 1)); then
+                existing_range_error="待发布 commit 文件解析结果含糊: $(printf '%q' "$path")"
+                return 1
+            fi
+            entry=${tree_entries[0]}
+            [[ "$entry" == *$'\t'* ]] || {
+                existing_range_error="无法解析待发布 commit 文件: $(printf '%q' "$path")"
+                return 1
+            }
+            metadata=${entry%%$'\t'*}
+            entry_path=${entry#*$'\t'}
+            read -r object_mode object_type object_oid extra <<<"$metadata"
+            if [[ "$entry_path" != "$path" || -n "$extra" || "$object_type" != 'blob' ||
+                ( "$object_mode" != '100644' && "$object_mode" != '100755' ) ||
+                ! "$object_oid" =~ ^[0-9a-f]+$ ]]; then
+                existing_range_error="待发布 commit 包含非普通文件或异常对象: $(printf '%q' "$path")"
+                return 1
+            fi
+            if is_committed_large_binary "$object_oid"; then
+                existing_range_error="拒绝待发布的大于 5 MiB 明显二进制文件: $(printf '%q' "$path")"
+                return 1
+            fi
+            if reason=$(staged_content_reason "$object_oid"); then
+                existing_range_error="拒绝待发布敏感文件 $(printf '%q' "$path"): $reason"
+                return 1
+            fi
+            publish_paths["$path"]=1
+        done < <(
+            git -C "$repo" diff-tree --root -m --no-commit-id --no-renames \
+                -r --name-only -z "$commit_oid"
+        )
+    done
+
+    resume_publish_path_count=${#publish_paths[@]}
+}
+
+inspect_resume_upstream() {
+    resume_upstream_error=''
+    resume_upstream_present=0
+    classify_branch_upstream "$resume_branch" "$resume_remote" "$resume_branch_ref"
+    resume_upstream_state=$branch_upstream_state
+    case "$resume_upstream_state" in
+        none|exact_unresolved)
+            return 0
+            ;;
+        exact_resolved)
+            if [[ "$branch_upstream_oid" != "$resume_expected_oid" ]]; then
+                resume_upstream_error='resume upstream commit 与 expected HEAD 不一致'
+                return 1
+            fi
+            resume_upstream_present=1
+            ;;
+        conflicting)
+            resume_upstream_error=$branch_upstream_error
+            return 1
+            ;;
+    esac
+}
+
+resolve_resume_target() {
+    local symbolic_head
+    local parent_line
+    local tree_paths
+    local configured_remotes
+    local fetch_urls
+    local push_urls
+
+    resume_target_error=''
+    if ! symbolic_head=$(git -C "$repo" symbolic-ref --quiet HEAD 2>/dev/null); then
+        resume_target_error='resume 要求 symbolic attached branch'
+        return 1
+    fi
+    if [[ "$symbolic_head" != refs/heads/* || "$symbolic_head" == 'refs/heads/' ]]; then
+        resume_target_error='resume symbolic HEAD 不是本地 branch'
+        return 1
+    fi
+    resume_branch_ref=$symbolic_head
+    resume_branch=${resume_branch_ref#refs/heads/}
+    if [[ "$current_branch" != "$resume_branch" ]]; then
+        resume_target_error='resume symbolic HEAD 与当前 branch 名不一致'
+        return 1
+    fi
+
+    validate_resume_expected_head || return 1
+    if ! parent_line=$(git -C "$repo" rev-list --parents -n 1 "$resume_head" 2>/dev/null) ||
+        [[ "$parent_line" != "$resume_head" ]]; then
+        resume_target_error='resume 只接受无 parent 的 root commit'
+        return 1
+    fi
+    if ! tree_paths=$(git -C "$repo" ls-tree -r --name-only "$resume_head" 2>/dev/null) ||
+        [[ -z "$tree_paths" ]]; then
+        resume_target_error='resume root commit tree 不能为空'
+        return 1
+    fi
+    check_resume_clean_state || return 1
 
     if ! configured_remotes=$(git -C "$repo" remote 2>/dev/null); then
         resume_target_error='无法读取已配置 remote'
@@ -1779,6 +1979,10 @@ verify_resume_result() {
         return 1
     fi
 
+    summary_final_head=$final_head
+    summary_final_remote_oid=$resume_remote_oid
+    summary_worktree_state='clean'
+
     printf 'HEAD: %s\n' "$final_head"
     printf 'upstream: %s\n' "$final_upstream"
     printf 'remote branch OID: %s\n' "$resume_remote_oid"
@@ -1801,9 +2005,15 @@ resume_initial_publish() {
     summary_upstream=$resume_remote/$resume_branch
     summary_commit_sha=$resume_expected_oid
     summary_commit_reused=true
+    summary_resume_publish_kind='initial_root'
+    summary_publish_commit_count=1
+    summary_publish_range=$resume_expected_oid
+    summary_push_target="$resume_remote:$resume_branch_ref"
     summary_completed_through='preflight'
 
     printf '\n== Resume initial publish ==\n'
+    printf 'mode: resume-initial-publish\n'
+    printf 'publish kind: initial_root\n'
     printf 'expected HEAD: %s\n' "$resume_expected_oid"
     printf 'branch: %s\n' "$resume_branch"
     printf 'remote: %s\n' "$resume_remote"
@@ -1894,6 +2104,7 @@ resume_initial_publish() {
     if ! verify_resume_result; then
         fail "$resume_verify_error"
     fi
+    printf 'post-verify: passed\n'
     summary_post_verify='passed'
     summary_remote_conclusion='published_and_upstream_aligned'
     summary_completed_through='post_verify'
@@ -1901,6 +2112,339 @@ resume_initial_publish() {
     summary_status='success'
     summary_next_action='none'
     printf '\nGit Finalizer 完成：initial publish 恢复已验证。\n'
+}
+
+snapshot_local_git_config() {
+    local config_path
+    local worktree_config_path
+    local path
+    local state
+    local object_hash
+    local metadata
+
+    config_path=$(git -C "$repo" rev-parse --path-format=absolute --git-path config) ||
+        return 1
+    worktree_config_path=$(
+        git -C "$repo" rev-parse --path-format=absolute --git-path config.worktree
+    ) || return 1
+    for path in "$config_path" "$worktree_config_path"; do
+        if [[ -e "$path" || -L "$path" ]]; then
+            [[ -f "$path" && -r "$path" ]] || return 1
+            object_hash=$(git -C "$repo" hash-object --no-filters "$path") || return 1
+            metadata=$(stat -c '%f:%s' -- "$path") || return 1
+            state="present:$metadata:$object_hash"
+        else
+            state='absent'
+        fi
+        printf '%s\n' "$state"
+    done
+}
+
+resolve_existing_resume_upstream() {
+    local head_ref
+    local upstream_details
+    local upstream_full_ref
+    local resolved_upstream
+    local tracking_oid
+    local fetch_urls
+    local push_urls
+
+    existing_upstream_error=''
+    if ! resolve_local_commit_target normal; then
+        existing_upstream_error=$local_commit_target_error
+        return 1
+    fi
+    head_ref=$local_commit_branch_ref
+    if ! upstream_details=$(
+        git -C "$repo" for-each-ref \
+            --format='%(upstream:short)%09%(upstream:remotename)%09%(upstream:remoteref)%09%(upstream)' \
+            "$head_ref"
+    ); then
+        existing_upstream_error='无法解析当前分支 configured upstream'
+        return 1
+    fi
+    if [[ -z "$upstream_details" || "$upstream_details" == *$'\n'* ]]; then
+        existing_upstream_error='当前分支不存在唯一可解析的 configured upstream'
+        return 1
+    fi
+    IFS=$'\t' read -r upstream_name upstream_remote upstream_branch_ref \
+        upstream_full_ref <<<"$upstream_details"
+    if [[ -z "$upstream_name" || -z "$upstream_remote" || "$upstream_remote" == '.' ||
+        "$upstream_branch_ref" != refs/heads/* ||
+        "$upstream_full_ref" != refs/remotes/* ]]; then
+        existing_upstream_error='configured upstream 不是可验证的远端 branch'
+        return 1
+    fi
+    if ! resolved_upstream=$(
+        git -C "$repo" rev-parse --verify '@{upstream}^{commit}' 2>/dev/null
+    ) || [[ ! "$resolved_upstream" =~ ^[0-9a-f]+$ ]]; then
+        existing_upstream_error='configured upstream 无法解析为 commit'
+        return 1
+    fi
+    if ! tracking_oid=$(
+        git -C "$repo" rev-parse --verify "$upstream_full_ref^{commit}" 2>/dev/null
+    ) || [[ "$resolved_upstream" != "$tracking_oid" ]]; then
+        existing_upstream_error='configured upstream 解析结果不一致'
+        return 1
+    fi
+    if ! fetch_urls=$(git -C "$repo" remote get-url --all "$upstream_remote" 2>/dev/null) ||
+        [[ -z "$fetch_urls" || "$fetch_urls" == *$'\n'* ]]; then
+        existing_upstream_error='upstream remote 缺失或配置了多个 fetch endpoint'
+        return 1
+    fi
+    if ! push_urls=$(
+        git -C "$repo" remote get-url --push --all "$upstream_remote" 2>/dev/null
+    ) || [[ -z "$push_urls" || "$push_urls" == *$'\n'* ]]; then
+        existing_upstream_error='upstream remote 缺失或配置了多个 push endpoint'
+        return 1
+    fi
+    if [[ "$fetch_urls" != "$push_urls" ]]; then
+        existing_upstream_error='upstream 的 fetch 与 push endpoint 不一致'
+        return 1
+    fi
+}
+
+resolve_existing_resume_target() {
+    local symbolic_head
+    local parent_line
+
+    resume_target_error=''
+    if ! symbolic_head=$(git -C "$repo" symbolic-ref --quiet HEAD 2>/dev/null); then
+        resume_target_error='resume-publish 要求 symbolic attached branch'
+        return 1
+    fi
+    if [[ "$symbolic_head" != refs/heads/* || "$symbolic_head" == 'refs/heads/' ]]; then
+        resume_target_error='resume-publish symbolic HEAD 不是本地 branch'
+        return 1
+    fi
+    resume_branch_ref=$symbolic_head
+    resume_branch=${resume_branch_ref#refs/heads/}
+    if [[ "$current_branch" != "$resume_branch" ]]; then
+        resume_target_error='resume-publish symbolic HEAD 与当前 branch 名不一致'
+        return 1
+    fi
+    validate_resume_expected_head || return 1
+    if ! parent_line=$(git -C "$repo" rev-list --parents -n 1 "$resume_head" 2>/dev/null); then
+        resume_target_error='无法验证 resume-publish HEAD ancestry'
+        return 1
+    fi
+    if [[ "$parent_line" == "$resume_head" ]]; then
+        resume_target_error='普通 --resume-publish 要求非 root commit；root commit 请使用 --resume-initial-publish'
+        return 1
+    fi
+    check_resume_clean_state || return 1
+    if ! resolve_existing_resume_upstream; then
+        resume_target_error=$existing_upstream_error
+        return 1
+    fi
+    if [[ "$local_commit_branch_ref" != "$resume_branch_ref" ]]; then
+        resume_target_error='resume-publish 当前 branch ref 解析不一致'
+        return 1
+    fi
+
+    resume_remote=$upstream_remote
+    resume_push_target="$upstream_remote:$upstream_branch_ref"
+    if ! resume_branch_head_before=$(
+        git -C "$repo" rev-parse --verify "$resume_branch_ref^{commit}" 2>/dev/null
+    ) || [[ "$resume_branch_head_before" != "$resume_expected_oid" ]]; then
+        resume_target_error='resume-publish branch ref 与 expected HEAD 不一致'
+        return 1
+    fi
+    if ! resume_local_tags_before=$(
+        git -C "$repo" for-each-ref --format='%(objectname)%09%(refname)' refs/tags
+    ); then
+        resume_target_error='无法记录 resume-publish 本地 tag 基线'
+        return 1
+    fi
+    if ! resume_local_config_before=$(snapshot_local_git_config); then
+        resume_target_error='无法记录 resume-publish 本地配置基线'
+        return 1
+    fi
+}
+
+verify_existing_resume_result() {
+    local final_head
+    local final_branch_head
+    local symbolic_head
+    local final_status
+    local local_tags_now
+    local local_config_now
+    local publish_count_now
+
+    resume_verify_error=''
+    if ! final_head=$(git -C "$repo" rev-parse --verify 'HEAD^{commit}' 2>/dev/null) ||
+        [[ "$final_head" != "$resume_expected_oid" ]]; then
+        resume_verify_error='resume-publish 后 HEAD 与 expected OID 不一致'
+        return 1
+    fi
+    if ! symbolic_head=$(git -C "$repo" symbolic-ref --quiet HEAD 2>/dev/null) ||
+        [[ "$symbolic_head" != "$resume_branch_ref" ]]; then
+        resume_verify_error='resume-publish 后 symbolic branch 发生变化'
+        return 1
+    fi
+    if ! final_branch_head=$(
+        git -C "$repo" rev-parse --verify "$resume_branch_ref^{commit}" 2>/dev/null
+    ) || [[ "$final_branch_head" != "$resume_branch_head_before" ]]; then
+        resume_verify_error='resume-publish 后本地 branch ref 发生变化'
+        return 1
+    fi
+    if ! publish_count_now=$(
+        git -C "$repo" rev-list --count "$resume_publish_range" 2>/dev/null
+    ) || [[ "$publish_count_now" != "$resume_publish_commit_count" ]]; then
+        resume_verify_error='resume-publish 后原 commit range 发生变化'
+        return 1
+    fi
+    if ! resolve_existing_resume_upstream; then
+        resume_verify_error=$existing_upstream_error
+        return 1
+    fi
+    if [[ "$upstream_remote:$upstream_branch_ref" != "$resume_push_target" ]]; then
+        resume_verify_error='resume-publish 后 configured upstream 目标发生变化'
+        return 1
+    fi
+    if ! check_normal_remote_state 'resume-publish 后'; then
+        resume_verify_error=$normal_remote_error
+        return 1
+    fi
+    if [[ "$normal_local_hash" != "$resume_expected_oid" ||
+        "$normal_upstream_hash" != "$resume_expected_oid" ||
+        "$remote_branch_oid" != "$resume_expected_oid" ||
+        "$normal_ahead" != 0 || "$normal_behind" != 0 ]]; then
+        resume_verify_error='resume-publish 后 HEAD、upstream 与远端目标未精确对齐 0/0'
+        return 1
+    fi
+    if ! local_tags_now=$(
+        git -C "$repo" for-each-ref --format='%(objectname)%09%(refname)' refs/tags
+    ) || [[ "$local_tags_now" != "$resume_local_tags_before" ]]; then
+        resume_verify_error='resume-publish 后本地 tag refs 发生变化'
+        return 1
+    fi
+    if ! local_config_now=$(snapshot_local_git_config) ||
+        [[ "$local_config_now" != "$resume_local_config_before" ]]; then
+        resume_verify_error='resume-publish 后本地 Git 配置发生变化'
+        return 1
+    fi
+    if ! git -C "$repo" diff --cached --quiet; then
+        resume_verify_error='resume-publish 后 index 不干净'
+        return 1
+    fi
+    final_status=$(
+        GIT_OPTIONAL_LOCKS=0 git -C "$repo" status --porcelain=v1 --untracked-files=all
+    )
+    if [[ -n "$final_status" ]]; then
+        resume_verify_error='resume-publish 后 worktree 不干净'
+        return 1
+    fi
+
+    summary_final_head=$final_head
+    summary_final_remote_oid=$remote_branch_oid
+    summary_worktree_state='clean'
+    printf 'HEAD: %s\n' "$final_head"
+    printf 'remote branch OID: %s\n' "$remote_branch_oid"
+    printf 'ahead/behind: %s/%s\n' "$normal_ahead" "$normal_behind"
+    printf 'worktree/index: clean\n'
+    printf 'local branch, tags, and Git config: unchanged\n'
+}
+
+resume_existing_publish() {
+    local push_state_error=''
+
+    summary_phase='preflight'
+    summary_mode_state='recovering'
+    summary_resume_publish_kind='existing_commits'
+    summary_recovery_start='local_ahead_commits'
+    export GIT_OPTIONAL_LOCKS=0
+    print_snapshot
+    if ! resolve_existing_resume_target; then
+        fail "$resume_target_error"
+    fi
+    summary_branch=$resume_branch
+    summary_upstream=$upstream_name
+    summary_commit_sha=$resume_expected_oid
+    summary_commit_reused=true
+    summary_push_target=$resume_push_target
+
+    printf '\n== Resume existing commits ==\n'
+    printf 'mode: resume-publish\n'
+    printf 'publish kind: existing_commits\n'
+    printf 'expected HEAD: %s\n' "$resume_expected_oid"
+    printf 'branch: %s\n' "$resume_branch"
+    printf 'configured upstream: %s\n' "$upstream_name"
+    printf 'push target: %s\n' "$resume_push_target"
+
+    summary_phase='remote_preflight'
+    printf '\n== Resume publish 前 fetch 与 fast-forward 检查 ==\n'
+    if ! check_normal_remote_state 'resume-publish 前'; then
+        fail "$normal_remote_error；未执行 push"
+    fi
+    if [[ "$normal_local_hash" != "$resume_expected_oid" ]]; then
+        fail 'resume-publish 预检后 HEAD 与 expected OID 不一致；未执行 push'
+    fi
+    if ((normal_ahead < 1)); then
+        fail 'resume-publish 要求当前分支至少 ahead configured upstream 1 个 commit；未执行 push'
+    fi
+    resume_publish_commit_count=$normal_ahead
+    resume_publish_range="$normal_upstream_hash..$normal_local_hash"
+    summary_publish_ahead=$normal_ahead
+    summary_publish_behind=$normal_behind
+    summary_publish_commit_count=$resume_publish_commit_count
+    summary_publish_range=$resume_publish_range
+
+    printf '\n== Existing commit range 安全检查 ==\n'
+    printf 'pre-publish ahead/behind: %s/%s\n' "$normal_ahead" "$normal_behind"
+    printf 'commit count: %s\n' "$resume_publish_commit_count"
+    printf 'commit range: %s\n' "$resume_publish_range"
+    if ! validate_existing_publish_range; then
+        fail "$existing_range_error；未执行 push"
+    fi
+    printf 'validated changed paths: %s\n' "$resume_publish_path_count"
+    printf 'range safety checks: passed\n'
+    summary_completed_through='preflight'
+    summary_remote_conclusion='fast_forward_publish_ready'
+
+    summary_phase='push'
+    summary_default_failure_status='failed'
+    summary_push_executed=true
+    printf '\n== Resume publish push ==\n'
+    if ! run_branch_push false "$resume_remote" "HEAD:$upstream_branch_ref"; then
+        summary_push_result='uncertain'
+        if ! resolve_existing_resume_upstream; then
+            push_state_error=$existing_upstream_error
+        elif ! check_normal_remote_state 'resume-publish push 失败后'; then
+            push_state_error=$normal_remote_error
+        elif [[ "$normal_local_hash" == "$resume_expected_oid" &&
+            "$normal_upstream_hash" == "$resume_expected_oid" &&
+            "$remote_branch_oid" == "$resume_expected_oid" &&
+            "$normal_ahead" == 0 && "$normal_behind" == 0 ]]; then
+            summary_push_result='confirmed_after_uncertain'
+        elif [[ "$normal_local_hash" == "$resume_expected_oid" &&
+            "$normal_ahead" -ge 1 && "$normal_behind" == 0 ]]; then
+            fail_resume_retryable 'resume-publish push 失败且远端目标仍未包含全部待发布 commits'
+        else
+            push_state_error='push 失败后的远端状态不满足安全重试或成功条件'
+        fi
+        if [[ -n "$push_state_error" ]]; then
+            fail "resume-publish push 失败且无法确认安全结果: $push_state_error"
+        fi
+    else
+        summary_push_result='succeeded'
+    fi
+    summary_completed_through='push'
+
+    summary_phase='post_verify'
+    summary_post_verify='failed'
+    printf '\n== Resume publish 后验证 ==\n'
+    if ! verify_existing_resume_result; then
+        fail "$resume_verify_error"
+    fi
+    printf 'post-verify: passed\n'
+    summary_post_verify='passed'
+    summary_remote_conclusion='published_and_upstream_aligned'
+    summary_completed_through='post_verify'
+    summary_mode_state='verified'
+    summary_status='success'
+    summary_next_action='none'
+    printf '\nGit Finalizer 完成：既有本地 commit range 已发布并完成远端验证。\n'
 }
 
 if ((summary_requested == 1)); then
@@ -1926,6 +2470,7 @@ mode_arg=''
 remote_arg=''
 remote_branch_arg=''
 resume_expected_oid=''
+resume_cli_option=''
 snapshot_id=''
 dry_run=0
 commit_only=0
@@ -1933,6 +2478,7 @@ verify_only=0
 initial_publish=0
 initial_branch_publish=0
 resume_initial=0
+resume_existing=0
 repo_seen=0
 message_seen=0
 mode_seen=0
@@ -1983,7 +2529,17 @@ while (($# > 0)); do
             (($# >= 2)) || fail '--resume-initial-publish 缺少 expected HEAD OID'
             ((resume_seen == 0)) || fail '--resume-initial-publish 只能指定一次'
             resume_expected_oid=$2
+            resume_cli_option='--resume-initial-publish'
             resume_initial=1
+            resume_seen=1
+            shift 2
+            ;;
+        --resume-publish)
+            (($# >= 2)) || fail '--resume-publish 缺少 expected HEAD OID'
+            ((resume_seen == 0)) || fail 'resume 发布入口只能指定一次'
+            resume_expected_oid=$2
+            resume_cli_option='--resume-publish'
+            resume_existing=1
             resume_seen=1
             shift 2
             ;;
@@ -2060,7 +2616,7 @@ if ((mode_seen == 1)); then
         *) fail "--mode 仅支持 commit-only 或 verify-only: $mode_arg" ;;
     esac
 fi
-if ((resume_initial == 1)); then
+if ((resume_initial == 1 || resume_existing == 1)); then
     summary_mode='resume'
 elif ((initial_publish == 1)); then
     summary_mode='initial'
@@ -2074,10 +2630,11 @@ fi
 
 ((repo_seen == 1)) || fail '必须指定 --repo'
 if ((commit_only == 1 || verify_only == 1)); then
-    ((initial_publish == 0 && initial_branch_publish == 0 && resume_initial == 0)) ||
+    ((initial_publish == 0 && initial_branch_publish == 0 &&
+        resume_initial == 0 && resume_existing == 0)) ||
         fail "--mode $mode_arg 不接受其他发布模式"
 fi
-if ((resume_initial == 1)); then
+if ((resume_initial == 1 || resume_existing == 1)); then
     ((initial_publish == 0)) || fail 'resume 模式不接受 --initial-publish'
     ((initial_branch_publish == 0)) ||
         fail 'resume 模式不接受 --initial-branch-publish'
@@ -2091,7 +2648,12 @@ if ((resume_initial == 1)); then
     ((remote_branch_seen == 0)) || fail 'resume 模式不接受 --remote-branch'
     ((separator_seen == 0 && ${#input_paths[@]} == 0)) ||
         fail 'resume 模式不接受文件列表或 -- 分隔符'
-    ((remote_seen == 1)) || fail 'resume 模式必须指定 --remote'
+    if ((resume_initial == 1)); then
+        ((remote_seen == 1)) || fail 'root resume 模式必须指定 --remote'
+    else
+        ((remote_seen == 0)) ||
+            fail '--resume-publish 从 configured upstream 推导目标，不接受 --remote'
+    fi
 elif ((initial_publish == 1)); then
     ((initial_branch_publish == 0)) ||
         fail '--initial-publish 不接受 --initial-branch-publish'
@@ -2133,7 +2695,7 @@ if ((initial_branch_publish == 1)); then
         "$remote_branch_arg" != *$'\t'* ]] ||
         fail '--remote-branch 必须是有效的 branch 名'
 fi
-if ((resume_initial == 0)); then
+if ((resume_initial == 0 && resume_existing == 0)); then
     if ((verify_only == 0)); then
         [[ -n ${message//[[:space:]]/} ]] || fail 'commit message 不能为空'
     fi
@@ -2172,6 +2734,10 @@ fi
 
 if ((resume_initial == 1)); then
     resume_initial_publish
+    exit 0
+fi
+if ((resume_existing == 1)); then
+    resume_existing_publish
     exit 0
 fi
 

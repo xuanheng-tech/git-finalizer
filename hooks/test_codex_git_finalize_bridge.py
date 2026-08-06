@@ -93,6 +93,26 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 "tests/test_runner.py",
             )
         )
+        self.resume_publish_command = " ".join(
+            (
+                bridge.FINALIZER,
+                "--resume-publish",
+                "a" * 40,
+                "--repo",
+                shlex.quote(str(self.repo)),
+            )
+        )
+        self.resume_initial_command = " ".join(
+            (
+                bridge.FINALIZER,
+                "--resume-initial-publish",
+                "b" * 40,
+                "--remote",
+                "origin",
+                "--repo",
+                shlex.quote(str(self.repo)),
+            )
+        )
 
     def event(self, command: object | None = None) -> dict[str, object]:
         return {
@@ -207,6 +227,24 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0], shlex.split(self.verify_only_command))
+
+    def test_resume_publish_is_accepted_without_message_paths_or_remote(self) -> None:
+        output, run = self.invoke_main(self.event(self.resume_publish_command))
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+        self.assertEqual(
+            run.call_args.args[0], shlex.split(self.resume_publish_command)
+        )
+
+    def test_legacy_root_resume_is_accepted_and_forwarded(self) -> None:
+        output, run = self.invoke_main(self.event(self.resume_initial_command))
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+        self.assertEqual(
+            run.call_args.args[0], shlex.split(self.resume_initial_command)
+        )
 
     def test_duplicate_summary_is_rejected(self) -> None:
         duplicate = self.summary_command.replace("--summary", "--summary --summary", 1)
@@ -494,6 +532,32 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 " --initial-publish --mode verify-only ",
                 1,
             ),
+        )
+
+        for command in commands:
+            with self.subTest(command=command):
+                with self.assertRaises(bridge.BridgeError):
+                    bridge.validate_hook_event(self.event(command))
+
+    def test_resume_publish_rejects_unsafe_or_conflicting_options(self) -> None:
+        commands = (
+            self.resume_publish_command.replace("a" * 40, "abc", 1),
+            self.resume_publish_command.replace(
+                " --repo ", " --remote origin --repo ", 1
+            ),
+            self.resume_publish_command.replace(
+                " --repo ", " --message unexpected --repo ", 1
+            ),
+            self.resume_publish_command + " -- scripts/runner.py",
+            self.resume_publish_command.replace(
+                " --repo ", " --mode commit-only --repo ", 1
+            ),
+            self.resume_publish_command.replace(
+                " --resume-publish ",
+                " --resume-publish " + "b" * 40 + " --resume-initial-publish ",
+                1,
+            ),
+            self.resume_initial_command.replace(" --remote origin", "", 1),
         )
 
         for command in commands:
