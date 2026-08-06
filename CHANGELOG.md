@@ -13,6 +13,8 @@ section is invented for it.
 
 ## Unreleased
 
+## 0.6.0 - 2026-08-06
+
 - Added: `--resume-publish <full-head-oid>` safely publishes one or more existing local commits
   ahead of the current attached branch's configured upstream without creating another commit.
 - Safety: Existing-commit resume requires a clean index/worktree, ahead >= 1 and behind = 0,
