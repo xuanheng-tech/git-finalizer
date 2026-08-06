@@ -13,7 +13,8 @@ description: "用于实现、修复、重构或其他代码与仓库文件修改
 - 需要加载仓库上下文，或决定必要测试与 Snapshot Runner 审查的合理范围。
 - 需要审查当前 diff 或相对明确本地 base 的分支。
 - 用户明确要求使用 Three-tool Git workflow，或明确授权 commit/push。
-- 用户要求向完全空的 remote 首次发布，或用已创建 root commit 的完整 OID 恢复失败或不确定的 initial publish。
+- 用户要求向完全空的 remote 首次发布，或发布已经存在的普通 local commits，或用已创建
+  root commit 的完整 OID 恢复失败或不确定的 initial publish。
 
 触发本 Skill 不等于必须运行全部三工具或全量测试。不得从“完成实现”“修复问题”或历史任务推导 commit/push 授权。
 
@@ -43,18 +44,24 @@ description: "用于实现、修复、重构或其他代码与仓库文件修改
 | 只验证，不授权 commit/push | `--mode verify-only` | 只读本地验证；不创建 commit，不访问远端 |
 | 已授权本地 commit，未授权或暂不适合 push | `--mode commit-only` | 创建一个本地 commit；不访问远端 |
 | 已明确授权 commit 和 push，且任务已达到交付状态 | 默认模式（不传 `--mode`） | commit、push、远端 post-verify |
+| 已存在普通 local commits，已明确授权继续 push | `--resume-publish <full-head-oid> --repo <absolute-repo>` | 不创建 commit；发布 configured upstream 并远端 post-verify |
 
 ```bash
 /home/hsd/bin/codex-git-finalize --summary --mode verify-only --repo <absolute-repo> -- <repo-relative-file>...
 /home/hsd/bin/codex-git-finalize --summary --mode commit-only --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
 /home/hsd/bin/codex-git-finalize --summary --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
+/home/hsd/bin/codex-git-finalize --summary --resume-publish <full-head-oid> --repo <absolute-repo>
 ```
 
 - 三种模式共用适用于各自执行边界的本地提交前检查；`verify-only` 不实际运行 commit hooks、签名或索引写入，因此不得声称验证了这些能力。
 - `commit-only` 不要求 upstream，不执行 fetch、push、远端验证或其他远端操作。
 - `verify-only` 不修改 HEAD、index、worktree、refs 或 Git 配置，也不要求 upstream。
-- 默认模式才执行 push 和远端 post-verify。
-- 已存在本地提交、只需继续推送时，使用既有 resume/恢复流程；不得重跑会创建提交的模式或重复制造 commit。
+- 三种提交生命周期模式中只有默认模式执行 commit 后的 push 和远端 post-verify；显式
+  resume 接口也可发布既有 commit，但不创建 commit。
+- 普通 attached branch 的既有 commits 使用 `--resume-publish`；它要求 clean index/worktree、
+  configured upstream、`ahead >= 1`、`behind = 0`，只做 non-force、`--no-follow-tags` 的精确
+  branch push 和远端 post-verify。root commit 继续使用 `--resume-initial-publish`。
+- 不得重跑会创建提交的模式或重复制造 commit。
 - tag、Release、Artifact 和 deployment 继续属于独立 Release 流程，不并入任何 Git Finalizer 模式。
 
 ## 任务结束发布决策（强制）
@@ -68,7 +75,7 @@ description: "用于实现、修复、重构或其他代码与仓库文件修改
 
 ### 明确发布授权
 
-保持 explicit-only。用户明确要求 commit、push、发布或使用 Git Finalizer，或当前任务合同明确规定验收后的具体 Git 动作，才构成相应授权；授权范围以用户明确要求的动作、仓库和文件为限。只验证选择 `verify-only`，仅要求 commit 选择 `commit-only` 且不得自行扩大为 push；只有明确授权 commit 和 push 才选择默认模式。“完成这个任务”“全权处理”“修复这个问题”以及一般实现、测试或验收要求都不构成 commit/push 授权，不得从模糊意图、历史任务或完成状态推导权限。
+保持 explicit-only。用户明确要求 commit、push、发布或使用 Git Finalizer，或当前任务合同明确规定验收后的具体 Git 动作，才构成相应授权；授权范围以用户明确要求的动作、仓库和文件为限。只验证选择 `verify-only`，仅要求 commit 选择 `commit-only` 且不得自行扩大为 push；只有明确授权 commit 和 push 才选择默认模式。已有普通 local commits 且只授权继续 push 时可选择 `--resume-publish`，该授权不包含创建新 commit。“完成这个任务”“全权处理”“修复这个问题”以及一般实现、测试或验收要求都不构成 commit/push 授权，不得从模糊意图、历史任务或完成状态推导权限。
 
 ### 最终报告合同
 
@@ -80,7 +87,7 @@ Publication decision: <publish_now|publication_blocked|intentionally_unpublished
 
 并只补充与所选状态对应的必要信息：
 
-- `publish_now`：所选模式、commit 结果，以及仅在默认模式下发生的 push 和远端核验实际结果。
+- `publish_now`：所选模式或恢复接口、commit 结果，以及所选接口发生的 push 和远端核验实际结果。
 - `publication_blocked`：阻断阶段和原因、是否已创建 commit（如有则给出 OID）、当前工作树摘要和恢复条件。
 - `intentionally_unpublished`：未发布原因、仍未提交的目标改动摘要，以及是否适合后续单独发布；不得把范围不明、测试失败或远端异常描述为有意未发布。
 - `not_applicable`：不适用原因。
@@ -92,7 +99,7 @@ Publication decision: <publish_now|publication_blocked|intentionally_unpublished
 - Context Loader 只加载确定性的本地上下文；不实施、不测试、不审查、不发布。
 - 实现与测试由常规开发命令完成；不由三个生命周期工具代替。
 - Snapshot Runner 只收集并发布供人工检查的只读快照；不修改目标仓库 Git 状态、不运行测试、不自动调用模型、不 commit/push。
-- Git Finalizer 只做适用的本地提交前验证、显式路径暂存、commit，以及仅默认模式下的 fast-forward-safe push 和发布后验证；不加载上下文、不实施、不测试、不审查。
+- Git Finalizer 只做适用的本地提交前验证、显式路径暂存、commit，以及由默认或显式发布/恢复接口授权的 fast-forward-safe push 和发布后验证；不加载上下文、不实施、不测试、不审查。
 
 ### Git Finalizer 命令级 escalation（强制）
 

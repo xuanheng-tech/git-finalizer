@@ -240,7 +240,9 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("测试、验收或 Snapshot 未通过", section)
 
     def test_finalizer_mode_selection_preserves_authorization(self) -> None:
-        def select_mode(*, commit: bool, push: bool) -> str:
+        def select_mode(*, commit: bool, push: bool, existing_commits: bool = False) -> str:
+            if existing_commits and push and not commit:
+                return "resume-publish"
             if push and not commit:
                 return "blocked"
             if push:
@@ -253,11 +255,35 @@ class SkillContractTest(unittest.TestCase):
         self.assertEqual(select_mode(commit=True, push=False), "commit-only")
         self.assertEqual(select_mode(commit=True, push=True), "normal")
         self.assertEqual(select_mode(commit=False, push=True), "blocked")
+        self.assertEqual(
+            select_mode(commit=False, push=True, existing_commits=True),
+            "resume-publish",
+        )
 
         content = (VERSIONED_SOURCE / "SKILL.md").read_text(encoding="utf-8")
         for marker in quick_validate.FINALIZER_MODE_MARKERS:
             with self.subTest(marker=marker):
                 self.assertIn(marker, content)
+
+    def test_resume_publish_contract_is_explicit(self) -> None:
+        skill = (VERSIONED_SOURCE / "SKILL.md").read_text(encoding="utf-8")
+        reference = (
+            VERSIONED_SOURCE / "references" / "git-finalizer.md"
+        ).read_text(encoding="utf-8")
+
+        for marker in (
+            "--resume-publish <full-head-oid>",
+            "configured upstream",
+            "ahead >= 1",
+            "behind = 0",
+            "--no-follow-tags",
+            "--resume-initial-publish",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, skill)
+                self.assertIn(marker, reference)
+        self.assertIn("不执行 add 或 commit", reference)
+        self.assertIn("remote target ref 必须等于 HEAD", reference)
 
 
 if __name__ == "__main__":

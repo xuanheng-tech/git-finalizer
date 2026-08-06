@@ -2,7 +2,7 @@
 
 ## 职责、入口与模式门槛
 
-Git Finalizer 只负责适用的本地提交前验证、显式路径暂存、commit，以及仅默认模式下的 fast-forward-safe push 和远端 post-verify；它不实施代码、不运行测试、不审查 diff，也不解决冲突。initial、initial-branch 和 resume 仍是独立的首次发布或恢复接口。
+Git Finalizer 只负责适用的本地提交前验证、显式路径暂存、commit，以及由默认或显式发布/恢复接口授权的 fast-forward-safe push 和远端 post-verify；它不实施代码、不运行测试、不审查 diff，也不解决冲突。initial、initial-branch 和 resume 仍是独立的首次发布或恢复接口。
 
 选择模式不得扩大用户原有的 commit/push 授权：只验证使用 `--mode verify-only`，只授权本地 commit 使用 `--mode commit-only`，只有明确授权 commit 和 push 且任务达到交付状态才使用默认模式。调用绝对入口 `/home/hsd/bin/codex-git-finalize` 前，还必须满足：
 
@@ -103,7 +103,32 @@ Finalizer 在 commit 前 fetch 并核对远端 branch、upstream OID 和 ahead/b
 
 如果 commit 已创建但后续 fetch、push 或验证失败，保留并报告该 commit；不得自动 pull、merge、rebase、reset，不得重跑会创建另一 commit 的发布流程，也不得仅因 push 失败而 recommit。
 
-当前已经存在目标本地 commit、只需继续推送时，不得运行默认或 commit-only 模式重复制造 commit。必须使用前一次 Finalizer 结果给出的既有 resume/恢复入口；initial root commit 使用下述 `--resume-initial-publish`，其他情形只执行工具明确给出的安全恢复动作，没有明确入口时停止并报告。
+当前已经存在目标本地 commit、只需继续推送时，不得运行默认或 commit-only 模式重复制造 commit。普通 attached branch 使用下述 `--resume-publish`；initial root commit 使用 `--resume-initial-publish`。
+
+## Resume publish existing commits
+
+普通 attached branch 已有一个或多个连续 local ahead commits，且用户已明确授权继续 push 时使用：
+
+```bash
+/home/hsd/bin/codex-git-finalize \
+  --summary \
+  --resume-publish <full-head-oid> \
+  --repo <absolute-repo>
+```
+
+`<full-head-oid>` 必须是当前 HEAD 的确切完整小写 OID。该接口要求非 unborn、非 root 的
+attached branch，index 和包含 untracked 文件在内的 worktree 完全 clean，且不存在未完成的
+Git operation；不接受 `--message`、文件列表、`--remote`、`--dry-run` 或其他 mode。
+
+当前 branch 必须有唯一 configured upstream；push 目标严格由该 upstream 推导。Finalizer
+fetch 后要求 `ahead >= 1`、`behind = 0`，以 `upstream..HEAD` 为发布范围，并对范围内每个
+commit 和 changed object 执行适用的文件范围、敏感路径/内容、大文件、ignored/异常文件和
+whitespace 检查。它不执行 add 或 commit，不修改 tag 或 Git 配置，只允许 non-force、
+`--no-follow-tags` 的精确 branch refspec push。
+
+成功后 remote target ref 必须等于 HEAD，ahead/behind 必须为 `0/0`，index/worktree 保持
+clean，HEAD、local branch、tag 和 Git 配置保持不变。push 或 post-verify 失败时保留原 commits，
+只按摘要给出的同一完整 OID 恢复入口重试；不得创建替代 commit 或改写历史。
 
 ## Initial publish
 
@@ -151,7 +176,7 @@ initial 和 resume 可以接受与所选 remote/branch 精确匹配的 configure
   --repo <absolute-repo>
 ```
 
-`<full-root-oid>` 必须是该工具报告的确切完整小写 OID，并与当前 HEAD 完全一致。resume 不接受 `--message`、文件列表、`--dry-run` 或新的 commit 内容。
+`<full-root-oid>` 必须是该工具报告的确切完整小写 OID，并与当前 HEAD 完全一致。root resume 不接受 `--message`、文件列表、`--dry-run` 或新的 commit 内容。
 
 resume 要求当前 HEAD 仍是唯一、非空的 root commit，symbolic branch 未改变，index 和包含 untracked 文件在内的 worktree 完全干净，且不存在未完成的 merge、rebase、cherry-pick、revert、bisect 或 sequencer 操作。所选 remote 必须已配置且 endpoint 唯一一致；upstream 只能缺失、精确未解析，或精确解析到该 OID。
 
@@ -172,7 +197,8 @@ tag、Release、Artifact 和 deployment 是独立 Release 流程，必须按仓�
 - 文件范围或所有权不清、当前轮改动无法隔离、已有 staged 文件超出显式范围。
 - normal 模式为 detached/unborn HEAD、upstream 缺失或不可解析、remote 配置含糊、本地落后或分叉。
 - initial 模式发现本地已有 commit、预存 index、范围外 worktree 变更、可解析或冲突 upstream、remote 非空。
-- resume 的 OID、HEAD、root commit、branch、cleanliness、upstream 或 remote 精确状态不满足要求。
+- 普通 resume 的 OID、HEAD、branch、cleanliness、configured upstream、ahead/behind 或 remote
+  精确状态不满足要求；root resume 的 OID、唯一 root commit 或远端形状不满足要求。
 - index 有冲突、范围检查或安全检查失败、工具失败，verify-only 发生任何状态变化，或需要远端的模式出现 push 结果不确定或 post-verify 不一致。
 - 继续需要 amend、force push、重复创建 commit、自动冲突处理，或任何原始 Git 写命令绕过 Finalizer。
 
