@@ -102,6 +102,22 @@ make_synced_repo() {
     git -C "$test_repo" push --quiet --set-upstream origin main
 }
 
+install_git_probe() {
+    local fake_bin=$1
+
+    mkdir -p -- "$fake_bin"
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'set -Eeuo pipefail' \
+        'for argument in "$@"; do' \
+        "    printf \"arg=%q\\\\n\" \"\$argument\" >>\"\$GIT_PROBE_LOG\"" \
+        'done' \
+        "printf \"command-end\\\\n\" >>\"\$GIT_PROBE_LOG\"" \
+        'exec /usr/bin/git "$@"' \
+        >"$fake_bin/git"
+    chmod 700 "$fake_bin/git"
+}
+
 make_unborn_repo() {
     local case_dir=$1
 
@@ -513,6 +529,199 @@ test_synced_success_scope() {
     assert_equal ' M outside.txt' "$outside_status" 'outside change was not preserved unstaged'
     assert_equal '' "$(git -C "$test_repo" diff --cached --name-only)" \
         'synced success left staged content'
+}
+
+test_default_mode_still_pushes_and_verifies() {
+    local case_dir=$tmp_root/default-mode-contract
+    local fake_bin=$case_dir/bin
+    local probe=$case_dir/git-probe.log
+    local output=$case_dir/output.log
+    local final_head
+
+    make_synced_repo "$case_dir"
+    install_git_probe "$fake_bin"
+    printf 'default mode change\n' >>"$test_repo/wanted.txt"
+
+    GIT_PROBE_LOG="$probe" PATH="$fake_bin:$PATH" \
+        expect_success "$output" "$finalizer" --repo "$test_repo" \
+        --message 'default mode contract' -- wanted.txt
+
+    final_head=$(git -C "$test_repo" rev-parse HEAD)
+    assert_equal "$final_head" "$(remote_main "$test_remote")" \
+        'default mode no longer pushed its commit'
+    assert_file_contains "$probe" 'arg=fetch' 'default mode did not fetch'
+    assert_file_contains "$probe" 'arg=ls-remote' 'default mode did not verify the remote branch'
+    assert_file_contains "$probe" 'arg=push' 'default mode did not push'
+    assert_file_contains "$output" 'commit 与 push 已验证' \
+        'default success report changed'
+}
+
+test_commit_only_success_without_remote_commands() {
+    local case_dir=$tmp_root/commit-only-success
+    local fake_bin=$case_dir/bin
+    local probe=$case_dir/git-probe.log
+    local output=$case_dir/output.log
+    local config_before tags_before remote_before head_before count_before final_head
+
+    make_synced_repo "$case_dir"
+    git -C "$test_repo" config --unset-all branch.main.remote
+    git -C "$test_repo" config --unset-all branch.main.merge
+    git -C "$test_repo" tag commit-only-local-tag HEAD
+    install_git_probe "$fake_bin"
+    config_before=$(git -C "$test_repo" config --local --list)
+    tags_before=$(git -C "$test_repo" for-each-ref --format='%(objectname)%09%(refname)' refs/tags)
+    remote_before=$(remote_refs "$test_remote")
+    head_before=$(git -C "$test_repo" rev-parse HEAD)
+    count_before=$(git -C "$test_repo" rev-list --count HEAD)
+    printf 'commit-only change\n' >>"$test_repo/wanted.txt"
+
+    GIT_PROBE_LOG="$probe" PATH="$fake_bin:$PATH" \
+        expect_success "$output" "$finalizer" --mode commit-only \
+        --repo "$test_repo" --message 'local commit only' -- wanted.txt
+
+    final_head=$(git -C "$test_repo" rev-parse HEAD)
+    assert_equal "$head_before" "$(git -C "$test_repo" rev-parse 'HEAD^')" \
+        'commit-only commit has the wrong parent'
+    assert_equal "$((count_before + 1))" "$(git -C "$test_repo" rev-list --count HEAD)" \
+        'commit-only did not create exactly one commit'
+    assert_equal "$remote_before" "$(remote_refs "$test_remote")" \
+        'commit-only changed remote refs'
+    assert_equal "$tags_before" \
+        "$(git -C "$test_repo" for-each-ref --format='%(objectname)%09%(refname)' refs/tags)" \
+        'commit-only changed local tags'
+    assert_equal "$config_before" "$(git -C "$test_repo" config --local --list)" \
+        'commit-only changed local Git config'
+    assert_file_not_contains "$probe" 'arg=fetch' 'commit-only invoked fetch'
+    assert_file_not_contains "$probe" 'arg=ls-remote' 'commit-only invoked remote verification'
+    assert_file_not_contains "$probe" 'arg=push' 'commit-only invoked push'
+    assert_file_contains "$output" 'mode: commit-only' 'commit-only mode was not reported'
+    assert_file_contains "$output" "commit hash: $final_head" \
+        'commit-only result omitted the new commit hash'
+    assert_file_contains "$output" 'push: skipped (--mode commit-only)' \
+        'commit-only push skip was not reported'
+    assert_file_contains "$output" 'remote verification: skipped (--mode commit-only)' \
+        'commit-only remote-verification skip was not reported'
+    assert_file_contains "$output" '$ git status --short' \
+        'commit-only final worktree status was not reported'
+    assert_file_contains "$output" '(clean)' 'commit-only final worktree state is not clean'
+}
+
+test_verify_only_success_without_git_side_effects() {
+    local case_dir=$tmp_root/verify-only-success
+    local fake_bin=$case_dir/bin
+    local probe=$case_dir/git-probe.log
+    local output=$case_dir/output.log
+    local head_before index_before status_before file_before new_file_before
+    local metadata_before metadata_after remote_before
+
+    make_synced_repo "$case_dir"
+    git -C "$test_repo" branch --unset-upstream
+    git -C "$test_repo" config --unset user.name
+    git -C "$test_repo" config --unset user.email
+    git -C "$test_repo" tag verify-only-local-tag HEAD
+    printf 'verify-only staged change\n' >>"$test_repo/wanted.txt"
+    git -C "$test_repo" add -- wanted.txt
+    printf 'verify-only unstaged change\n' >>"$test_repo/wanted.txt"
+    printf 'verify-only untracked candidate\n' >"$test_repo/new.txt"
+    install_git_probe "$fake_bin"
+    head_before=$(git -C "$test_repo" rev-parse HEAD)
+    index_before=$(index_snapshot "$test_repo")
+    status_before=$(status_snapshot "$test_repo")
+    file_before=$(file_snapshot "$test_repo" wanted.txt)
+    new_file_before=$(file_snapshot "$test_repo" new.txt)
+    metadata_before=$(git_metadata_snapshot "$test_repo")
+    remote_before=$(remote_refs "$test_remote")
+
+    GIT_PROBE_LOG="$probe" PATH="$fake_bin:$PATH" \
+        expect_success "$output" "$finalizer" --mode verify-only \
+        --repo "$test_repo" -- wanted.txt new.txt
+
+    metadata_after=$(git_metadata_snapshot "$test_repo")
+    assert_equal "$metadata_before" "$metadata_after" \
+        'verify-only changed Git metadata'
+    assert_equal "$head_before" "$(git -C "$test_repo" rev-parse HEAD)" \
+        'verify-only changed HEAD'
+    assert_equal "$index_before" "$(index_snapshot "$test_repo")" \
+        'verify-only changed index entries'
+    assert_equal "$status_before" "$(status_snapshot "$test_repo")" \
+        'verify-only changed worktree status'
+    assert_equal "$file_before" "$(file_snapshot "$test_repo" wanted.txt)" \
+        'verify-only changed worktree content'
+    assert_equal "$new_file_before" "$(file_snapshot "$test_repo" new.txt)" \
+        'verify-only changed untracked candidate content'
+    assert_equal "$remote_before" "$(remote_refs "$test_remote")" \
+        'verify-only changed remote refs'
+    for forbidden in add commit push fetch ls-remote remote tag update-ref config; do
+        assert_file_not_contains "$probe" "arg=$forbidden" \
+            "verify-only invoked forbidden Git command: $forbidden"
+    done
+    assert_file_contains "$output" 'mode: verify-only' \
+        'verify-only mode was not reported'
+    assert_file_contains "$output" 'local validation: passed' \
+        'verify-only success was not reported'
+    assert_file_contains "$output" 'commit: skipped (--mode verify-only)' \
+        'verify-only commit skip was not reported'
+    assert_file_contains "$output" 'push: skipped (--mode verify-only)' \
+        'verify-only push skip was not reported'
+    assert_file_contains "$output" 'remote verification: skipped (--mode verify-only)' \
+        'verify-only remote-verification skip was not reported'
+    assert_file_contains "$output" 'HEAD unchanged: yes' \
+        'verify-only HEAD preservation was not reported'
+    assert_file_contains "$output" 'index unchanged: yes' \
+        'verify-only index preservation was not reported'
+    assert_file_contains "$output" 'worktree unchanged: yes' \
+        'verify-only worktree preservation was not reported'
+    assert_file_contains "$output" 'worktree after: dirty' \
+        'verify-only final worktree state was not reported'
+}
+
+test_verify_only_failure_is_non_mutating() {
+    local case_dir=$tmp_root/verify-only-failure
+    local output=$case_dir/output.log
+    local head_before index_before status_before file_before metadata_before metadata_after
+
+    make_synced_repo "$case_dir"
+    git -C "$test_repo" branch --unset-upstream
+    printf 'trailing whitespace   \n' >>"$test_repo/wanted.txt"
+    head_before=$(git -C "$test_repo" rev-parse HEAD)
+    index_before=$(index_snapshot "$test_repo")
+    status_before=$(status_snapshot "$test_repo")
+    file_before=$(file_snapshot "$test_repo" wanted.txt)
+    metadata_before=$(git_metadata_snapshot "$test_repo")
+
+    expect_failure "$output" "$finalizer" --mode verify-only \
+        --repo "$test_repo" -- wanted.txt
+
+    metadata_after=$(git_metadata_snapshot "$test_repo")
+    assert_file_contains "$output" 'git diff --check 失败' \
+        'verify-only validation failure diagnostic absent'
+    assert_file_not_contains "$output" 'local validation: passed' \
+        'verify-only failure reported success'
+    assert_equal "$metadata_before" "$metadata_after" \
+        'failed verify-only changed Git metadata'
+    assert_precommit_state_unchanged \
+        "$test_repo" "$head_before" "$index_before" "$status_before" "$file_before"
+}
+
+test_invalid_mode_is_rejected() {
+    local case_dir=$tmp_root/invalid-mode
+    local output=$case_dir/output.log
+    local head_before index_before status_before file_before
+
+    make_synced_repo "$case_dir"
+    printf 'invalid mode change\n' >>"$test_repo/wanted.txt"
+    head_before=$(git -C "$test_repo" rev-parse HEAD)
+    index_before=$(index_snapshot "$test_repo")
+    status_before=$(status_snapshot "$test_repo")
+    file_before=$(file_snapshot "$test_repo" wanted.txt)
+
+    expect_failure "$output" "$finalizer" --mode invalid \
+        --repo "$test_repo" --message test -- wanted.txt
+
+    assert_file_contains "$output" '--mode 仅支持 commit-only 或 verify-only' \
+        'invalid mode diagnostic absent'
+    assert_precommit_state_unchanged \
+        "$test_repo" "$head_before" "$index_before" "$status_before" "$file_before"
 }
 
 test_normal_disables_follow_tags_from_local_config() {
@@ -1637,6 +1846,10 @@ test_release_contract() {
     expect_success "$help_output" "$finalizer" --help
     assert_file_contains "$help_output" \
         'codex-git-finalize --repo <absolute-repo>' 'normal mode missing from help'
+    assert_file_contains "$help_output" '--mode commit-only' \
+        'commit-only mode missing from help'
+    assert_file_contains "$help_output" '--mode verify-only' \
+        'verify-only mode missing from help'
     assert_file_contains "$help_output" '--initial-publish' \
         'initial-publish mode missing from help'
     assert_file_contains "$help_output" '--initial-branch-publish' \
@@ -1675,6 +1888,15 @@ run_case 'behind blocks before add' test_behind
 run_case 'diverged blocks before add' test_diverged
 run_case 'local ahead remains supported' test_local_ahead
 run_case 'synced success preserves out-of-scope changes' test_synced_success_scope
+run_case 'default mode still pushes and verifies remote state' \
+    test_default_mode_still_pushes_and_verifies
+run_case 'commit-only creates one local commit without remote commands' \
+    test_commit_only_success_without_remote_commands
+run_case 'verify-only validates without local or remote Git side effects' \
+    test_verify_only_success_without_git_side_effects
+run_case 'verify-only validation failure remains non-mutating and nonzero' \
+    test_verify_only_failure_is_non_mutating
+run_case 'invalid explicit mode is rejected before mutation' test_invalid_mode_is_rejected
 run_case 'normal push disables configured follow-tags' \
     test_normal_disables_follow_tags_from_local_config
 run_case 'staged deletion preserves an ignored worktree copy' \

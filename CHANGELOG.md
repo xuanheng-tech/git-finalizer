@@ -13,6 +13,15 @@ section is invented for it.
 
 ## Unreleased
 
+- Added: `--mode commit-only` runs the existing local pre-commit checks and creates one scoped
+  local commit without fetch, remote verification, push, tag changes, or configuration changes.
+- Added: Default and JSON success reports identify commit-only mode, the new commit, the
+  mode-driven push skip, and the final worktree state; normal publication behavior is unchanged.
+- Added: `--mode verify-only` performs strict local pre-commit validation for explicit paths
+  without requiring a commit message or upstream and without add, commit, push, or remote access.
+- Added: Verify-only reports local validation, skipped commit/push/remote phases, final worktree
+  state, and unchanged HEAD/index/worktree evidence; default and commit-only behavior is unchanged.
+
 ## 0.4.2 - 2026-08-03
 
 - Added: `--initial-branch-publish --remote <name> --remote-branch <name>` first-publishes an

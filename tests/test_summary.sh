@@ -251,6 +251,81 @@ test_normal_success() {
     record_metric normal_success "$default_output" "$summary_output"
 }
 
+test_commit_only_success() {
+    local case_dir=$tmp_root/commit-only-success
+    local summary_output=$case_dir/output.log
+    local remote_before commit_sha
+
+    make_synced_repo "$case_dir"
+    remote_before=$(remote_refs "$test_remote")
+    run_capture 0 "$summary_output" "$finalizer" --summary --mode commit-only \
+        --repo "$test_repo" --message local-only -- wanted.txt
+    commit_sha=$(git -C "$test_repo" rev-parse HEAD)
+
+    assert_summary_contract "$summary_output"
+    assert_json_value "$summary_output" mode '"commit-only"'
+    assert_json_value "$summary_output" status '"success"'
+    assert_json_value "$summary_output" commit.created 'true'
+    assert_json_value "$summary_output" commit.sha "\"$commit_sha\""
+    assert_json_value "$summary_output" push.executed 'false'
+    assert_json_value "$summary_output" push.result '"skipped_by_commit_only"'
+    assert_json_value "$summary_output" push.branch_refspec_only 'null'
+    assert_json_value "$summary_output" push.follow_tags_requested 'null'
+    assert_json_value "$summary_output" mode_result.remote_verification \
+        '"skipped_by_commit_only"'
+    assert_json_value "$summary_output" mode_result.post_verify \
+        '"skipped_by_commit_only"'
+    assert_json_value "$summary_output" mode_result.worktree '"clean"'
+    assert_equal "$remote_before" "$(remote_refs "$test_remote")" \
+        'commit-only summary changed remote refs'
+}
+
+test_verify_only_success() {
+    local case_dir=$tmp_root/verify-only-success
+    local summary_output=$case_dir/output.log
+    local head_before index_before status_before remote_before
+
+    make_synced_repo "$case_dir"
+    git -C "$test_repo" branch --unset-upstream
+    head_before=$(git -C "$test_repo" rev-parse HEAD)
+    index_before=$(git -C "$test_repo" ls-files --stage)
+    status_before=$(git -C "$test_repo" status --porcelain=v1 --untracked-files=all)
+    remote_before=$(remote_refs "$test_remote")
+    run_capture 0 "$summary_output" "$finalizer" --summary --mode verify-only \
+        --repo "$test_repo" -- wanted.txt
+
+    assert_summary_contract "$summary_output"
+    assert_json_value "$summary_output" mode '"verify-only"'
+    assert_json_value "$summary_output" status '"success"'
+    assert_json_value "$summary_output" upstream 'null'
+    assert_json_value "$summary_output" commit.created 'false'
+    assert_json_value "$summary_output" commit.sha 'null'
+    assert_json_value "$summary_output" push.executed 'false'
+    assert_json_value "$summary_output" push.result '"skipped_by_verify_only"'
+    assert_json_value "$summary_output" mode_result.local_validation '"passed"'
+    assert_json_value "$summary_output" mode_result.commit '"skipped_by_verify_only"'
+    assert_json_value "$summary_output" mode_result.remote_verification \
+        '"skipped_by_verify_only"'
+    assert_json_value "$summary_output" mode_result.post_verify \
+        '"skipped_by_verify_only"'
+    assert_json_value "$summary_output" mode_result.head.before "\"$head_before\""
+    assert_json_value "$summary_output" mode_result.head.after "\"$head_before\""
+    assert_json_value "$summary_output" mode_result.head.unchanged 'true'
+    assert_json_value "$summary_output" mode_result.index_unchanged 'true'
+    assert_json_value "$summary_output" mode_result.worktree.before '"dirty"'
+    assert_json_value "$summary_output" mode_result.worktree.after '"dirty"'
+    assert_json_value "$summary_output" mode_result.worktree.unchanged 'true'
+    assert_equal "$head_before" "$(git -C "$test_repo" rev-parse HEAD)" \
+        'verify-only summary changed HEAD'
+    assert_equal "$index_before" "$(git -C "$test_repo" ls-files --stage)" \
+        'verify-only summary changed index'
+    assert_equal "$status_before" \
+        "$(git -C "$test_repo" status --porcelain=v1 --untracked-files=all)" \
+        'verify-only summary changed worktree status'
+    assert_equal "$remote_before" "$(remote_refs "$test_remote")" \
+        'verify-only summary changed remote refs'
+}
+
 test_initial_success() {
     local case_dir=$tmp_root/initial-success
     local default_output=$case_dir/default/output.log
@@ -427,6 +502,61 @@ test_commit_failure_without_resume() {
     record_metric terminal_failure "$default_output" "$summary_output"
 }
 
+test_commit_only_commit_failure() {
+    local case_dir=$tmp_root/commit-only-failure
+    local summary_output=$case_dir/output.log
+    local head_before remote_before
+
+    make_synced_repo "$case_dir"
+    install_failing_hook "$test_repo" pre-commit
+    head_before=$(git -C "$test_repo" rev-parse HEAD)
+    remote_before=$(remote_refs "$test_remote")
+    run_capture 1 "$summary_output" "$finalizer" --summary --mode commit-only \
+        --repo "$test_repo" --message rejected -- wanted.txt
+
+    assert_summary_contract "$summary_output"
+    assert_json_value "$summary_output" mode '"commit-only"'
+    assert_json_value "$summary_output" status '"failed"'
+    assert_json_value "$summary_output" final_phase '"commit"'
+    assert_json_value "$summary_output" commit.created 'false'
+    assert_json_value "$summary_output" push.executed 'false'
+    assert_json_value "$summary_output" push.result '"not_run"'
+    assert_json_value "$summary_output" mode_result.worktree 'null'
+    assert_equal "$head_before" "$(git -C "$test_repo" rev-parse HEAD)" \
+        'failed commit-only reported failure after creating a commit'
+    assert_equal "$remote_before" "$(remote_refs "$test_remote")" \
+        'failed commit-only changed remote refs'
+}
+
+test_verify_only_failure() {
+    local case_dir=$tmp_root/verify-only-failure
+    local summary_output=$case_dir/output.log
+    local head_before index_before status_before
+
+    make_synced_repo "$case_dir"
+    printf 'trailing whitespace   \n' >>"$test_repo/wanted.txt"
+    head_before=$(git -C "$test_repo" rev-parse HEAD)
+    index_before=$(git -C "$test_repo" ls-files --stage)
+    status_before=$(git -C "$test_repo" status --porcelain=v1 --untracked-files=all)
+    run_capture 1 "$summary_output" "$finalizer" --summary --mode verify-only \
+        --repo "$test_repo" -- wanted.txt
+
+    assert_summary_contract "$summary_output"
+    assert_json_value "$summary_output" mode '"verify-only"'
+    assert_json_value "$summary_output" status '"blocked"'
+    assert_json_value "$summary_output" final_phase '"local_validation"'
+    assert_json_value "$summary_output" commit.created 'false'
+    assert_json_value "$summary_output" push.executed 'false'
+    assert_json_value "$summary_output" push.result '"not_run"'
+    assert_equal "$head_before" "$(git -C "$test_repo" rev-parse HEAD)" \
+        'failed verify-only changed HEAD'
+    assert_equal "$index_before" "$(git -C "$test_repo" ls-files --stage)" \
+        'failed verify-only changed index'
+    assert_equal "$status_before" \
+        "$(git -C "$test_repo" status --porcelain=v1 --untracked-files=all)" \
+        'failed verify-only changed worktree status'
+}
+
 test_deterministic_and_bounded_output() {
     local case_dir=$tmp_root/deterministic-bounded
     local first=$case_dir/first.json
@@ -531,6 +661,9 @@ run_case() {
 }
 
 run_case 'normal summary preserves commit and push results' test_normal_success
+run_case 'commit-only summary reports the local-only result' test_commit_only_success
+run_case 'verify-only summary proves validation and state preservation' \
+    test_verify_only_success
 run_case 'initial summary preserves root publication results' test_initial_success
 run_case 'resume summary reports reuse and remaining publication' test_resume_success
 run_case 'preflight blocker remains non-mutating and nonzero' test_preflight_blocker
@@ -538,6 +671,9 @@ run_case 'post-commit failure retains a bounded resume reference' \
     test_recoverable_initial_push_failure
 run_case 'commit failure remains nonzero without a false resume path' \
     test_commit_failure_without_resume
+run_case 'commit-only commit failure never reports success' \
+    test_commit_only_commit_failure
+run_case 'verify-only validation failure remains nonzero' test_verify_only_failure
 run_case 'summary serialization is deterministic and bounded' \
     test_deterministic_and_bounded_output
 report_metrics

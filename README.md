@@ -15,6 +15,38 @@ codex-git-finalize \
   -- path/to/file
 ```
 
+只创建本地 commit、明确跳过 push 和全部远端验证时，使用 `commit-only`：
+
+```bash
+codex-git-finalize \
+  --mode commit-only \
+  --repo /home/user/projects/example \
+  --message "fix: describe the change" \
+  -- path/to/file
+```
+
+该模式保留 normal 模式的显式路径、staged scope、敏感内容、大文件、冲突、attached branch
+和非-unborn HEAD 检查，但不要求 upstream，不执行 fetch、ls-remote、push 或 post-push
+verification，也不修改 remote、tag 或 Git 配置。成功输出会报告 mode、新 commit hash、因模式
+跳过的 push/远端验证以及最终工作区状态。
+
+只读验证当前显式文件范围时，使用 `verify-only`；该模式不接受或要求 `--message`：
+
+```bash
+codex-git-finalize \
+  --mode verify-only \
+  --repo /home/user/projects/example \
+  -- path/to/file
+```
+
+verify-only 要求已有 commit 的 attached branch，但不要求 upstream。它复用路径规范化、已有
+staged scope、冲突、敏感路径与内容、大文件及例外范围检查，并以只读方式确认 HEAD 到当前
+worktree 的候选 diff 非空、ignored 文件不会进入候选范围且 whitespace 检查通过。它不运行
+`git add`、commit hooks、`git commit` 或任何远端命令，也不执行 config、tag 或 ref 写操作；
+因此不验证 commit message、author/签名、hook 结果、index 实际写入能力、远端状态或
+fast-forward 条件。
+`--dry-run` 与 verify-only 不兼容：verify-only 本身即为严格只读验证，失败使用非零退出码。
+
 首次发布模式只接受 unborn 分支和完全空的远端，并创建首个非空 root commit：
 
 ```bash
@@ -69,8 +101,8 @@ codex-git-finalize \
 
 ### 有界结果摘要
 
-normal、initial、initial-branch 和 resume 均可显式加入 `--summary`，以单行确定性 JSON
-代替原有阶段输出：
+normal、commit-only、verify-only、initial、initial-branch 和 resume 均可显式加入
+`--summary`，以单行确定性 JSON 代替原有阶段输出：
 
 ```bash
 codex-git-finalize \
@@ -89,13 +121,17 @@ codex-git-finalize \
 
 initial 的 `mode_result` 另含 initial publish、Snapshot artifact 校验和远端最终结论；
 initial-branch 另含首次分支发布状态、远端最终结论和 post-verify；resume 另含恢复起点、原提交
-复用、已完成阶段和是否仍需恢复。只有确有恢复入口时才输出顶层 `resume` 引用。warning 最多
+复用、已完成阶段和是否仍需恢复；commit-only 另含跳过的远端验证、post-verify 和最终工作区
+`clean|dirty` 状态，其 `push.result` 为 `skipped_by_commit_only`。只有确有恢复入口时才输出顶层
+`resume` 引用。verify-only 的 `mode_result` 另含本地验证结果、commit/push/远端验证跳过原因，
+以及验证前后 HEAD、index 和 worktree 不变的结论；其 `push.result` 为
+`skipped_by_verify_only`。warning 最多
 5 条、每条最多 256 字符；失败原因最多 512 字符，省略数量通过对应 `*_omitted*` 字段显式
 报告。摘要不包含 diff、文件正文、commit message、凭据或完整命令日志。失败仍使用非零退出码；
 若序列化本身失败，fallback 会同时保留 Git 操作状态和原退出码。
 
-PreToolUse bridge 仅将 `--summary` 作为官方无值参数原样转发；其调用授权、路径校验、停止
-条件和输出上限不变。
+PreToolUse bridge 将 `--summary` 及严格的 `--mode commit-only|verify-only` 原样转发；其调用
+授权、路径校验、停止条件和输出上限不变。
 
 ## Codex PreToolUse bridge
 
@@ -106,7 +142,9 @@ Git Finalizer Hook 的版本化源、测试、只读漂移检查和显式恢复�
 
 正常开发流程是先完成修改、测试和审查，再调用正常模式提交推送。首次发布仅适用于 unborn
 本地仓库和完全空远端；已有历史功能分支首次发布必须使用 initial-branch 模式；恢复模式仅适用于
-干净、非空的单 root HEAD，不会再次创建提交。
+干净、非空的单 root HEAD，不会再次创建提交。commit-only 仅在已有 commit 的 attached branch
+上创建本地提交，不接触远端；verify-only 在相同本地 branch 边界内只验证显式候选范围，不修改
+HEAD、index、worktree、refs、tags 或配置，也不接触远端。
 
 空远端经 `git clone` 创建的 unborn 分支可能已有精确匹配但尚不可解析的 tracking target；initial 与 resume 模式接受该状态并由成功 push 自然完成 upstream。正常模式仍要求 upstream commit 已可解析。Upstream target 配置与 resolved upstream commit 是不同事实。
 

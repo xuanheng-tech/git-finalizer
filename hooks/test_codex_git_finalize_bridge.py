@@ -78,6 +78,21 @@ class GitFinalizerBridgeTest(unittest.TestCase):
             " --repo ", " --snapshot " + "a" * 64 + " --repo ", 1
         )
         self.summary_command = self.command.replace(" --repo ", " --summary --repo ", 1)
+        self.commit_only_command = self.command.replace(
+            " --repo ", " --mode commit-only --repo ", 1
+        )
+        self.verify_only_command = " ".join(
+            (
+                bridge.FINALIZER,
+                "--mode",
+                "verify-only",
+                "--repo",
+                shlex.quote(str(self.repo)),
+                "--",
+                "scripts/runner.py",
+                "tests/test_runner.py",
+            )
+        )
 
     def event(self, command: object | None = None) -> dict[str, object]:
         return {
@@ -178,6 +193,20 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0], shlex.split(self.summary_command))
+
+    def test_commit_only_is_accepted_and_forwarded_without_rewriting(self) -> None:
+        output, run = self.invoke_main(self.event(self.commit_only_command))
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], shlex.split(self.commit_only_command))
+
+    def test_verify_only_is_accepted_without_message_and_forwarded(self) -> None:
+        output, run = self.invoke_main(self.event(self.verify_only_command))
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], shlex.split(self.verify_only_command))
 
     def test_duplicate_summary_is_rejected(self) -> None:
         duplicate = self.summary_command.replace("--summary", "--summary --summary", 1)
@@ -433,6 +462,42 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         for option in ("--amend", "--force", "--force-with-lease", "--unknown"):
             with self.subTest(option=option):
                 command = self.command.replace(" -- ", " " + option + " -- ", 1)
+                with self.assertRaises(bridge.BridgeError):
+                    bridge.validate_hook_event(self.event(command))
+
+    def test_explicit_modes_reject_invalid_duplicate_and_conflicting_options(self) -> None:
+        commands = (
+            self.command.replace(" --repo ", " --mode invalid --repo ", 1),
+            self.commit_only_command.replace(
+                " --mode commit-only ",
+                " --mode commit-only --mode commit-only ",
+                1,
+            ),
+            self.initial_command.replace(
+                " --initial-publish ",
+                " --initial-publish --mode commit-only ",
+                1,
+            ),
+            self.initial_branch_command.replace(
+                " --initial-branch-publish ",
+                " --initial-branch-publish --mode commit-only ",
+                1,
+            ),
+            self.verify_only_command.replace(
+                " --repo ", " --message unexpected --repo ", 1
+            ),
+            self.verify_only_command.replace(
+                " --repo ", " --dry-run --repo ", 1
+            ),
+            self.initial_command.replace(
+                " --initial-publish ",
+                " --initial-publish --mode verify-only ",
+                1,
+            ),
+        )
+
+        for command in commands:
+            with self.subTest(command=command):
                 with self.assertRaises(bridge.BridgeError):
                     bridge.validate_hook_event(self.event(command))
 

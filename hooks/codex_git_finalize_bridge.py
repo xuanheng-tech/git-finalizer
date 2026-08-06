@@ -198,6 +198,7 @@ def parse_direct_finalizer(
             continue
         if option not in (
             "--message",
+            "--mode",
             "--remote",
             "--remote-branch",
             "--repo",
@@ -209,8 +210,24 @@ def parse_direct_finalizer(
         parsed[option] = options[index + 1]
         index += 2
 
-    if not {"--message", "--repo"}.issubset(parsed):
+    mode = parsed.get("--mode")
+    if mode is not None and mode not in ("commit-only", "verify-only"):
+        raise BridgeError("Finalizer --mode 仅支持 commit-only 或 verify-only")
+    verify_only = mode == "verify-only"
+    required = {"--repo"} if verify_only else {"--message", "--repo"}
+    if not required.issubset(parsed):
+        if verify_only:
+            raise BridgeError("Finalizer verify-only 必须显式提供 --repo")
         raise BridgeError("Finalizer 必须显式提供 --repo 和 --message")
+    if mode in ("commit-only", "verify-only") and (
+        initial_publish or initial_branch_publish
+    ):
+        raise BridgeError(f"Finalizer --mode {mode} 不接受其他发布模式")
+    if verify_only:
+        if "--message" in parsed:
+            raise BridgeError("Finalizer --mode verify-only 不接受 --message")
+        if dry_run:
+            raise BridgeError("Finalizer --mode verify-only 不接受 --dry-run")
     if initial_publish and initial_branch_publish:
         raise BridgeError("Finalizer 发布模式只能选择一个")
     if initial_publish:
@@ -261,8 +278,11 @@ def parse_direct_finalizer(
         )
     elif "--snapshot" in parsed:
         raise BridgeError("Finalizer --snapshot 只允许与 --initial-publish 一起使用")
-    message = parsed["--message"]
-    if not message or any(character in message for character in ("\x00", "\n", "\r")):
+    message = parsed.get("--message")
+    if message is not None and (
+        not message
+        or any(character in message for character in ("\x00", "\n", "\r"))
+    ):
         raise BridgeError("Finalizer --message 不得为空或包含换行")
     return argv, parsed["--repo"], paths, dry_run
 
