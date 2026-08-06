@@ -25,7 +25,7 @@ CONTRACT_MARKERS = (
     "按顺序选择首个符合的状态，后续状态不再适用",
     "保持 explicit-only",
     "用户明确要求 commit、push、发布或使用 Git Finalizer",
-    "仅要求 commit 不得自行扩大为 push",
+    "仅要求 commit 选择 `commit-only` 且不得自行扩大为 push",
     "“完成这个任务”",
     "“全权处理”",
     "“修复这个问题”",
@@ -36,6 +36,19 @@ CONTRACT_MARKERS = (
     "实际调用 Git Finalizer",
     "最终回复必须包含一行",
     "Publication decision: <publish_now|publication_blocked|intentionally_unpublished|not_applicable>",
+)
+FINALIZER_MODE_MARKERS = (
+    "## Git Finalizer 模式选择",
+    "选择 Finalizer 模式不得扩大用户原有的 commit/push 授权",
+    "`--mode verify-only`",
+    "`--mode commit-only`",
+    "默认模式（不传 `--mode`）",
+    "三种模式共用适用于各自执行边界的本地提交前检查",
+    "`commit-only` 不要求 upstream",
+    "`verify-only` 不修改 HEAD、index、worktree、refs 或 Git 配置",
+    "默认模式才执行 push 和远端 post-verify",
+    "不得重跑会创建提交的模式或重复制造 commit",
+    "tag、Release、Artifact 和 deployment",
 )
 
 
@@ -98,6 +111,9 @@ def validation_errors(skill_path: Path) -> list[str]:
     for marker in CONTRACT_MARKERS:
         if marker not in section:
             errors.append(f"publication contract is missing: {marker}")
+    for marker in FINALIZER_MODE_MARKERS:
+        if marker not in content:
+            errors.append(f"Finalizer mode contract is missing: {marker}")
 
     for relative in REQUIRED_REFERENCES:
         reference = skill_path / relative

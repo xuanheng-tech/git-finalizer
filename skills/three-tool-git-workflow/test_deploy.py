@@ -232,9 +232,32 @@ class SkillContractTest(unittest.TestCase):
         section = quick_validate.contract_section(
             (VERSIONED_SOURCE / "SKILL.md").read_text(encoding="utf-8")
         )
-        self.assertIn("仅要求 commit 不得自行扩大为 push", section)
+        self.assertIn(
+            "仅要求 commit 选择 `commit-only` 且不得自行扩大为 push",
+            section,
+        )
         self.assertIn("工作树无法安全分离", section)
         self.assertIn("测试、验收或 Snapshot 未通过", section)
+
+    def test_finalizer_mode_selection_preserves_authorization(self) -> None:
+        def select_mode(*, commit: bool, push: bool) -> str:
+            if push and not commit:
+                return "blocked"
+            if push:
+                return "normal"
+            if commit:
+                return "commit-only"
+            return "verify-only"
+
+        self.assertEqual(select_mode(commit=False, push=False), "verify-only")
+        self.assertEqual(select_mode(commit=True, push=False), "commit-only")
+        self.assertEqual(select_mode(commit=True, push=True), "normal")
+        self.assertEqual(select_mode(commit=False, push=True), "blocked")
+
+        content = (VERSIONED_SOURCE / "SKILL.md").read_text(encoding="utf-8")
+        for marker in quick_validate.FINALIZER_MODE_MARKERS:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, content)
 
 
 if __name__ == "__main__":
