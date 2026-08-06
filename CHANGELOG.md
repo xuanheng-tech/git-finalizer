@@ -13,6 +13,8 @@ section is invented for it.
 
 ## Unreleased
 
+## 0.5.0 - 2026-08-06
+
 - Added: `--mode commit-only` runs the existing local pre-commit checks and creates one scoped
   local commit without fetch, remote verification, push, tag changes, or configuration changes.
 - Added: Default and JSON success reports identify commit-only mode, the new commit, the
