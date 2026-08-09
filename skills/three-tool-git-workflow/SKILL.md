@@ -66,29 +66,124 @@ description: "用于实现、修复、重构或其他代码与仓库文件修改
 
 ## 任务结束发布决策（强制）
 
-任何任务在最终回复前都必须形成且只形成一个发布决定。涉及 Git 仓库修改时不得仅报告“未 commit/push”后结束；没有仓库修改的任务也必须按下列规则明确判定是否适用。按顺序选择首个符合的状态，后续状态不再适用：
+Publication decision 只回答：当前任务结束前，是否应执行被明确授权的 Git Finalizer 操作。它不描述 Git 最终结果，也不得被当作“是否已经远端发布”的状态。任何任务在最终回复前都必须形成且只形成一个发布决定。涉及 Git 仓库修改时不得仅报告“未 commit/push”后结束；没有仓库修改的任务也必须按下列规则明确判定是否适用。按顺序选择首个符合的状态，后续状态不再适用：
 
 1. `not_applicable`：本轮是只读调查、没有仓库文件变化、不是 Git 仓库操作、只运行服务或查询状态，或所有临时变化均已安全清理。
-2. `publication_blocked`：存在任务未完成，测试、验收或 Snapshot 未通过，cwd/repo 不一致，所选模式需要的远端分叉或不可访问，Hook/bridge 阻断，工作树无法安全分离，staged/index 异常，敏感内容、异常删除或未解释的范围外改动，或其他发布停止条件。技术、范围或完成度阻断优先于“有意不发布”，不得用后者掩盖失败或异常。
+2. `publication_blocked`：任务本应进入已授权 finalization，但存在任务未完成，测试、验收或 Snapshot 未通过，cwd/repo 不一致，所选模式需要的远端分叉或不可访问，Hook/bridge 阻断，工作树无法安全分离，staged/index 异常，敏感内容、异常删除或未解释的范围外改动，或其他明确安全阻断。技术、范围或完成度阻断优先于“有意不发布”，不得用后者掩盖失败或异常。
 3. `intentionally_unpublished`：仓库修改不存在上述阻断，但用户明确要求不 commit/push、仅保留本地修改或未提交草稿，或者当前 explicit-only 合同下没有获得明确发布授权。此状态表示有意保留未发布结果，不是遗漏。
-4. `publish_now`：已获得明确且覆盖所选 Git 写模式的授权，实现完成，范围匹配的测试和验收通过，Snapshot Runner 无阻断，目标改动可与其他工作树改动安全分离，cwd/repo 及该模式要求的 upstream/远端状态可用，且不存在敏感内容、异常删除或未解释的范围外改动。进入该状态后必须在最终回复前实际调用 Git Finalizer；只有所选模式成功并完成其要求的本地或远端核验时最终状态才是 `publish_now`，否则改为 `publication_blocked`。
+4. `publish_now`：已获得明确且覆盖所选 Git 写模式的授权，实现完成，范围匹配的测试和验收通过，Snapshot Runner 无阻断，目标改动可与其他工作树改动安全分离，cwd/repo 及该模式要求的 upstream/远端状态可用，且不存在敏感内容、异常删除或未解释的范围外改动。当前应立即实际调用 Git Finalizer。`publish_now` 只是执行决策，不是最终结果；实际终态必须单独报告 Finalization outcome。
 
 ### 明确发布授权
 
 保持 explicit-only。用户明确要求 commit、push、发布或使用 Git Finalizer，或当前任务合同明确规定验收后的具体 Git 动作，才构成相应授权；授权范围以用户明确要求的动作、仓库和文件为限。只验证选择 `verify-only`，仅要求 commit 选择 `commit-only` 且不得自行扩大为 push；只有明确授权 commit 和 push 才选择默认模式。已有普通 local commits 且只授权继续 push 时可选择 `--resume-publish`，该授权不包含创建新 commit。“完成这个任务”“全权处理”“修复这个问题”以及一般实现、测试或验收要求都不构成 commit/push 授权，不得从模糊意图、历史任务或完成状态推导权限。
 
+### Finalization scope
+
+当 `Publication decision: publish_now` 时，必须在执行前按明确授权确定一个 scope：
+
+```text
+Finalization scope: <commit_only|commit_and_push>
+```
+
+- 用户只明确授权 commit：`commit_only`。
+- 用户明确授权 commit + push、发布，或任务提示词明确规定验收后 commit + push：`commit_and_push`。
+- 已有普通 local commits 且只授权继续 push 的 `--resume-publish` 也属于 `commit_and_push`，但不授权创建新 commit。
+- 不得把 commit 授权自动扩大为 push 授权；只有 Git Finalizer 实际支持的模式才能执行。
+- 非 `publish_now` 时使用 `not_applicable`；若是 `publication_blocked` 且阻断前已经明确授权 scope，可保留 `commit_only` 或 `commit_and_push`，不得猜测。
+
+### Finalization outcome
+
+所有任务最终回复都必须报告实际 Git 终态。允许状态仅为：
+
+```text
+not_run
+local_commit_created
+remote_pushed
+remote_verified
+blocked
+```
+
+- `not_run`：没有实际执行会创建 commit 或接触远端的 Finalizer 操作。只读任务、没有授权的修改任务和用户明确禁止发布的任务使用此状态；`verify-only` 不构成 Git finalization。
+- `local_commit_created`：Git Finalizer 已成功创建本地 commit，但没有执行或没有授权执行 push。这是 `commit-only` 的正常成功终态，不得称为“已发布”。
+- `remote_pushed`：push 确已成功，但当前执行没有完成实时远端 OID 核验。只有工具证据明确支持这一实际状态时才使用；不得为了凑状态主动跳过核验，也不得升级成 `remote_verified` 或声称完整发布成功。
+- `remote_verified`：push 成功，且 Git Finalizer 已完成实时远端核验，满足 `HEAD = upstream = remote OID`。这是完整远端发布成功终态。
+- `blocked`：Finalizer preflight 或执行被阻断。必须报告阻断阶段；如果阻断前已经创建本地 commit，正文还必须报告：
+
+```text
+Local commit: <oid>
+Remote publication: blocked
+```
+
+不得只靠一个 outcome 丢失已经创建本地 commit 的事实。
+
+### 合法组合
+
+| Publication decision | Finalization scope | Finalization outcome |
+| --- | --- | --- |
+| `not_applicable` | `not_applicable` | `not_run` |
+| `intentionally_unpublished` | `not_applicable` | `not_run` |
+| `publish_now` | `commit_only` | `local_commit_created` |
+| `publish_now` | `commit_and_push` | `remote_pushed` 或 `remote_verified` |
+| `publication_blocked` | `not_applicable`、`commit_only` 或 `commit_and_push` | `blocked` |
+
+`commit_only + remote_pushed|remote_verified` 非法；`publish_now + not_run` 不能作为正常完成终态；`remote_verified` 只能与 `commit_and_push` 配对。
+
+`intentionally_unpublished + local_commit_created` 默认非法。只有在复合历史报告必须明确保留此前阶段已创建的 commit 时，才可使用 `commit_only + local_commit_created`，并在正文增加：
+
+```text
+Prior-stage local commit: <oid>
+```
+
+该兼容说明不构成当前任务的新 commit/push 授权，不得扩展为一般新任务合同。
+
+历史 commit-only fixture 如果确有明确 commit 授权且 Finalizer 已创建本地 commit，无论旧报告曾写 `publish_now` 还是 `intentionally_unpublished`，按新合同都归一为：
+
+```text
+Publication decision: publish_now
+Finalization scope: commit_only
+Finalization outcome: local_commit_created
+```
+
 ### 最终报告合同
 
-最终回复必须包含一行：
+最终回复必须各包含且只包含一行：
 
 ```text
 Publication decision: <publish_now|publication_blocked|intentionally_unpublished|not_applicable>
+Finalization scope: <commit_only|commit_and_push|not_applicable>
+Finalization outcome: <not_run|local_commit_created|remote_pushed|remote_verified|blocked>
 ```
 
-并只补充与所选状态对应的必要信息：
+典型组合：
 
-- `publish_now`：所选模式或恢复接口、commit 结果，以及所选接口发生的 push 和远端核验实际结果。
-- `publication_blocked`：阻断阶段和原因、是否已创建 commit（如有则给出 OID）、当前工作树摘要和恢复条件。
+```text
+Publication decision: publish_now
+Finalization scope: commit_only
+Finalization outcome: local_commit_created
+```
+
+```text
+Publication decision: publish_now
+Finalization scope: commit_and_push
+Finalization outcome: remote_verified
+```
+
+```text
+Publication decision: intentionally_unpublished
+Finalization scope: not_applicable
+Finalization outcome: not_run
+```
+
+```text
+Publication decision: publication_blocked
+Finalization scope: commit_and_push
+Finalization outcome: blocked
+```
+
+并只补充与实际状态对应的必要信息：
+
+- `publish_now`：所选模式或恢复接口、commit 结果，以及所选接口实际发生的 push 和远端核验结果；不得从 decision 推导 outcome。
+- `publication_blocked`：阻断阶段和原因、是否已创建 commit（如有则给出 OID）、当前工作树摘要和恢复条件；scope 使用阻断前已知授权范围。
 - `intentionally_unpublished`：未发布原因、仍未提交的目标改动摘要，以及是否适合后续单独发布；不得把范围不明、测试失败或远端异常描述为有意未发布。
 - `not_applicable`：不适用原因。
 

@@ -17,6 +17,21 @@ import quick_validate
 VERSIONED_SOURCE = Path(__file__).resolve().parent
 
 
+def render_finalization_report(
+    decision: str,
+    scope: str,
+    outcome: str,
+    *body: str,
+) -> str:
+    lines = [
+        *body,
+        f"Publication decision: {decision}",
+        f"Finalization scope: {scope}",
+        f"Finalization outcome: {outcome}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 class SkillDeploymentTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -165,69 +180,61 @@ class SkillContractTest(unittest.TestCase):
             tuple(re.findall(r"^\d+\. `([^`]+)`：", section, re.MULTILINE)),
             quick_validate.REQUIRED_STATES,
         )
-        self.assertIn(
+        for marker in (
             "Publication decision: <publish_now|publication_blocked|intentionally_unpublished|not_applicable>",
-            section,
-        )
+            "Finalization scope: <commit_only|commit_and_push|not_applicable>",
+            "Finalization outcome: <not_run|local_commit_created|remote_pushed|remote_verified|blocked>",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, section)
 
     def test_historical_and_edge_scenarios(self) -> None:
-        def decide(
-            *,
-            changed: bool,
-            blocked: bool,
-            authorized: bool,
-            intentionally_local: bool = False,
-        ) -> str:
-            if not changed:
-                return "not_applicable"
-            if blocked:
-                return "publication_blocked"
-            if intentionally_local or not authorized:
-                return "intentionally_unpublished"
-            return "publish_now"
-
         cases = {
-            "normal_publish": (
-                dict(changed=True, blocked=False, authorized=True),
+            "read_only": render_finalization_report(
+                "not_applicable", "not_applicable", "not_run"
+            ),
+            "changed_without_authorization": render_finalization_report(
+                "intentionally_unpublished", "not_applicable", "not_run"
+            ),
+            "user_explicitly_forbids_publication": render_finalization_report(
+                "intentionally_unpublished", "not_applicable", "not_run"
+            ),
+            "commit_only_success": render_finalization_report(
                 "publish_now",
+                "commit_only",
+                "local_commit_created",
+                "Local commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             ),
-            "cwd_blocked": (
-                dict(changed=True, blocked=True, authorized=True),
+            "commit_and_push_verified": render_finalization_report(
+                "publish_now", "commit_and_push", "remote_verified"
+            ),
+            "push_without_remote_verification": render_finalization_report(
+                "publish_now", "commit_and_push", "remote_pushed"
+            ),
+            "finalizer_preflight_blocked": render_finalization_report(
+                "publication_blocked", "commit_and_push", "blocked"
+            ),
+            "local_commit_then_push_blocked": render_finalization_report(
                 "publication_blocked",
+                "commit_and_push",
+                "blocked",
+                "Local commit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "Remote publication: blocked",
             ),
-            "user_no_publish": (
-                dict(
-                    changed=True,
-                    blocked=False,
-                    authorized=False,
-                    intentionally_local=True,
-                ),
-                "intentionally_unpublished",
-            ),
-            "changed_without_authorization": (
-                dict(changed=True, blocked=False, authorized=False),
-                "intentionally_unpublished",
-            ),
-            "read_only": (
-                dict(changed=False, blocked=False, authorized=False),
-                "not_applicable",
-            ),
-            "commit_only_without_push": (
-                dict(changed=True, blocked=False, authorized=True),
-                "publish_now",
-            ),
-            "mixed_worktree": (
-                dict(changed=True, blocked=True, authorized=True),
-                "publication_blocked",
-            ),
-            "snapshot_blocked": (
-                dict(changed=True, blocked=True, authorized=True),
-                "publication_blocked",
+            "ambiguous_completion_instruction": render_finalization_report(
+                "intentionally_unpublished", "not_applicable", "not_run"
             ),
         }
-        for name, (arguments, expected) in cases.items():
+        for name, report in cases.items():
             with self.subTest(name=name):
-                self.assertEqual(decide(**arguments), expected)
+                self.assertEqual(quick_validate.finalization_report_errors(report), [])
+
+        commit_only = cases["commit_only_success"]
+        self.assertNotIn("remote_verified", commit_only)
+        self.assertNotIn("Remote publication: succeeded", commit_only)
+        blocked_after_commit = cases["local_commit_then_push_blocked"]
+        self.assertIn("Local commit: ", blocked_after_commit)
+        self.assertIn("Remote publication: blocked", blocked_after_commit)
 
         section = quick_validate.contract_section(
             (VERSIONED_SOURCE / "SKILL.md").read_text(encoding="utf-8")
@@ -238,6 +245,102 @@ class SkillContractTest(unittest.TestCase):
         )
         self.assertIn("工作树无法安全分离", section)
         self.assertIn("测试、验收或 Snapshot 未通过", section)
+
+    def test_invalid_finalization_reports_are_rejected(self) -> None:
+        cases = {
+            "missing_decision": (
+                "Finalization scope: not_applicable\n"
+                "Finalization outcome: not_run\n"
+            ),
+            "missing_scope": (
+                "Publication decision: not_applicable\n"
+                "Finalization outcome: not_run\n"
+            ),
+            "missing_outcome": (
+                "Publication decision: not_applicable\n"
+                "Finalization scope: not_applicable\n"
+            ),
+            "duplicate_decision": (
+                "Publication decision: not_applicable\n"
+                "Publication decision: not_applicable\n"
+                "Finalization scope: not_applicable\n"
+                "Finalization outcome: not_run\n"
+            ),
+            "commit_only_claims_remote_verification": render_finalization_report(
+                "publish_now", "commit_only", "remote_verified"
+            ),
+            "commit_only_claims_remote_success_in_body": render_finalization_report(
+                "publish_now",
+                "commit_only",
+                "local_commit_created",
+                "Remote publication: succeeded",
+            ),
+            "publish_now_did_not_run": render_finalization_report(
+                "publish_now", "commit_only", "not_run"
+            ),
+            "unpublished_claims_current_local_commit": render_finalization_report(
+                "intentionally_unpublished",
+                "commit_only",
+                "local_commit_created",
+            ),
+            "blocked_loses_local_commit_remote_fact": render_finalization_report(
+                "publication_blocked",
+                "commit_and_push",
+                "blocked",
+                "Local commit: cccccccccccccccccccccccccccccccccccccccc",
+            ),
+        }
+        for name, report in cases.items():
+            with self.subTest(name=name):
+                self.assertNotEqual(
+                    quick_validate.finalization_report_errors(report), []
+                )
+
+    def test_historical_commit_only_fixture_is_normalized(self) -> None:
+        expected_contract = (
+            "Publication decision: publish_now\n"
+            "Finalization scope: commit_only\n"
+            "Finalization outcome: local_commit_created\n"
+        )
+        for prior_label in ("publish_now", "intentionally_unpublished"):
+            with self.subTest(prior_label=prior_label):
+                normalized = render_finalization_report(
+                    "publish_now",
+                    "commit_only",
+                    "local_commit_created",
+                    f"Historical decision label: {prior_label}",
+                    "Explicit commit authorization: yes",
+                    "Finalizer mode: commit-only",
+                )
+                self.assertTrue(normalized.endswith(expected_contract))
+                self.assertEqual(
+                    quick_validate.finalization_report_errors(normalized), []
+                )
+
+        section = quick_validate.contract_section(
+            (VERSIONED_SOURCE / "SKILL.md").read_text(encoding="utf-8")
+        )
+        self.assertIn("历史 commit-only fixture", section)
+        self.assertIn(
+            "无论旧报告曾写 `publish_now` 还是 `intentionally_unpublished`",
+            section,
+        )
+
+    def test_prior_stage_commit_exception_requires_explicit_fact(self) -> None:
+        without_fact = render_finalization_report(
+            "intentionally_unpublished", "commit_only", "local_commit_created"
+        )
+        with_fact = render_finalization_report(
+            "intentionally_unpublished",
+            "commit_only",
+            "local_commit_created",
+            "Prior-stage local commit: dddddddddddddddddddddddddddddddddddddddd",
+        )
+
+        self.assertNotEqual(
+            quick_validate.finalization_report_errors(without_fact), []
+        )
+        self.assertEqual(quick_validate.finalization_report_errors(with_fact), [])
 
     def test_finalizer_mode_selection_preserves_authorization(self) -> None:
         def select_mode(*, commit: bool, push: bool, existing_commits: bool = False) -> str:

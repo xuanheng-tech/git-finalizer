@@ -16,12 +16,26 @@ REQUIRED_STATES = (
     "intentionally_unpublished",
     "publish_now",
 )
+REQUIRED_SCOPES = (
+    "commit_only",
+    "commit_and_push",
+    "not_applicable",
+)
+REQUIRED_OUTCOMES = (
+    "not_run",
+    "local_commit_created",
+    "remote_pushed",
+    "remote_verified",
+    "blocked",
+)
 REQUIRED_REFERENCES = (
     "references/context-loader.md",
     "references/git-finalizer.md",
     "references/snapshot-runner.md",
 )
 CONTRACT_MARKERS = (
+    "Publication decision 只回答",
+    "它不描述 Git 最终结果",
     "按顺序选择首个符合的状态，后续状态不再适用",
     "保持 explicit-only",
     "用户明确要求 commit、push、发布或使用 Git Finalizer",
@@ -34,8 +48,28 @@ CONTRACT_MARKERS = (
     "工作树无法安全分离",
     "没有获得明确发布授权",
     "实际调用 Git Finalizer",
-    "最终回复必须包含一行",
+    "`publish_now` 只是执行决策，不是最终结果",
+    "### Finalization scope",
+    "### Finalization outcome",
+    "### 合法组合",
+    "最终回复必须各包含且只包含一行",
     "Publication decision: <publish_now|publication_blocked|intentionally_unpublished|not_applicable>",
+    "Finalization scope: <commit_only|commit_and_push|not_applicable>",
+    "Finalization outcome: <not_run|local_commit_created|remote_pushed|remote_verified|blocked>",
+    "`local_commit_created`",
+    "不得称为“已发布”",
+    "`remote_pushed`",
+    "`remote_verified`",
+    "HEAD = upstream = remote OID",
+    "`blocked`",
+    "Local commit: <oid>",
+    "Remote publication: blocked",
+    "Prior-stage local commit: <oid>",
+    "历史 commit-only fixture",
+    "无论旧报告曾写 `publish_now` 还是 `intentionally_unpublished`",
+    "`commit_only + remote_pushed|remote_verified` 非法",
+    "`publish_now + not_run` 不能作为正常完成终态",
+    "`remote_verified` 只能与 `commit_and_push` 配对",
 )
 FINALIZER_MODE_MARKERS = (
     "## Git Finalizer 模式选择",
@@ -57,6 +91,32 @@ FINALIZER_MODE_MARKERS = (
     "tag、Release、Artifact 和 deployment",
 )
 
+VALID_FINALIZATION_COMBINATIONS = frozenset(
+    {
+        ("not_applicable", "not_applicable", "not_run"),
+        ("intentionally_unpublished", "not_applicable", "not_run"),
+        ("publish_now", "commit_only", "local_commit_created"),
+        ("publish_now", "commit_and_push", "remote_pushed"),
+        ("publish_now", "commit_and_push", "remote_verified"),
+        ("publication_blocked", "not_applicable", "blocked"),
+        ("publication_blocked", "commit_only", "blocked"),
+        ("publication_blocked", "commit_and_push", "blocked"),
+    }
+)
+PRIOR_STAGE_COMMIT_COMBINATION = (
+    "intentionally_unpublished",
+    "commit_only",
+    "local_commit_created",
+)
+PRIOR_STAGE_COMMIT_PATTERN = re.compile(
+    r"^Prior-stage local commit: [0-9a-f]{7,64}$", re.MULTILINE
+)
+REMOTE_SUCCESS_CLAIM_PATTERN = re.compile(
+    r"^(?:Push|Remote publication|Remote verification): "
+    r"(?:success|succeeded|verified)$",
+    re.MULTILINE,
+)
+
 
 def contract_section(content: str) -> str:
     start = "## 任务结束发布决策（强制）"
@@ -64,6 +124,64 @@ def contract_section(content: str) -> str:
     if start not in content or end not in content:
         return ""
     return content.split(start, 1)[1].split(end, 1)[0]
+
+
+def finalization_report_errors(report: str) -> list[str]:
+    """Validate the three canonical finalization report lines and their combination."""
+
+    errors: list[str] = []
+    specifications = (
+        ("Publication decision", REQUIRED_STATES),
+        ("Finalization scope", REQUIRED_SCOPES),
+        ("Finalization outcome", REQUIRED_OUTCOMES),
+    )
+    values: dict[str, str] = {}
+    for label, allowed in specifications:
+        matches = re.findall(
+            rf"^{re.escape(label)}: ([^\r\n]+)$",
+            report,
+            re.MULTILINE,
+        )
+        if len(matches) != 1:
+            errors.append(f"report must contain exactly one {label} line")
+            continue
+        value = matches[0].strip()
+        values[label] = value
+        if value not in allowed:
+            errors.append(
+                f"invalid {label}: {value}; expected one of {', '.join(allowed)}"
+            )
+
+    if len(values) != len(specifications) or errors:
+        return errors
+
+    decision = values["Publication decision"]
+    scope = values["Finalization scope"]
+    outcome = values["Finalization outcome"]
+    combination = (decision, scope, outcome)
+    prior_stage_exception = (
+        combination == PRIOR_STAGE_COMMIT_COMBINATION
+        and PRIOR_STAGE_COMMIT_PATTERN.search(report) is not None
+    )
+    if combination not in VALID_FINALIZATION_COMBINATIONS and not prior_stage_exception:
+        errors.append(
+            "invalid finalization combination: "
+            f"decision={decision}, scope={scope}, outcome={outcome}"
+        )
+
+    if scope == "commit_only" and REMOTE_SUCCESS_CLAIM_PATTERN.search(report):
+        errors.append("commit_only report cannot claim remote publication success")
+    if outcome == "remote_verified" and scope != "commit_and_push":
+        errors.append("remote_verified requires commit_and_push")
+    if decision == "publish_now" and outcome == "not_run":
+        errors.append("publish_now cannot finish with not_run")
+    if outcome == "blocked" and re.search(r"^Local commit: ", report, re.MULTILINE):
+        if "Remote publication: blocked" not in report:
+            errors.append(
+                "a blocked report with a local commit must state "
+                "Remote publication: blocked"
+            )
+    return errors
 
 
 def validation_errors(skill_path: Path) -> list[str]:
