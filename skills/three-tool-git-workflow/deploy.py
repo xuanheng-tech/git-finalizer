@@ -20,11 +20,18 @@ LIVE_DIR = Path.home() / ".agents" / "skills" / "three-tool-git-workflow"
 MANAGED_FILES = {
     "SKILL.md": 0o600,
     "quick_validate.py": 0o600,
+    "unpublished_queue.py": 0o600,
     "references/context-loader.md": 0o600,
     "references/git-finalizer.md": 0o600,
     "references/snapshot-runner.md": 0o600,
+    "references/unpublished-queue.md": 0o600,
 }
-SOURCE_ONLY_FILES = ("README.md", "deploy.py", "test_deploy.py")
+SOURCE_ONLY_FILES = (
+    "README.md",
+    "deploy.py",
+    "test_deploy.py",
+    "test_unpublished_queue.py",
+)
 EXPECTED_LIVE_DIRS = {"references"}
 
 

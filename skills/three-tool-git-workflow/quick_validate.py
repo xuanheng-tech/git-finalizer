@@ -32,6 +32,7 @@ REQUIRED_REFERENCES = (
     "references/context-loader.md",
     "references/git-finalizer.md",
     "references/snapshot-runner.md",
+    "references/unpublished-queue.md",
 )
 CONTRACT_MARKERS = (
     "Publication decision 只回答",
@@ -89,6 +90,14 @@ FINALIZER_MODE_MARKERS = (
     "root commit 继续使用 `--resume-initial-publish`",
     "不得重跑会创建提交的模式或重复制造 commit",
     "tag、Release、Artifact 和 deployment",
+)
+QUEUE_MARKERS = (
+    "### Completed-but-Unpublished Queue",
+    "`intentionally_unpublished`：幂等 upsert 为 `pending`",
+    "`publication_blocked`：幂等 upsert 为 `blocked`",
+    "`remote_pushed` 未完成实时核验：upsert `blocked`",
+    "`commit_only + local_commit_created`：upsert `pending`",
+    "Git Finalizer 只提供 publication evidence，不拥有 queue",
 )
 
 VALID_FINALIZATION_COMBINATIONS = frozenset(
@@ -238,6 +247,9 @@ def validation_errors(skill_path: Path) -> list[str]:
     for marker in FINALIZER_MODE_MARKERS:
         if marker not in content:
             errors.append(f"Finalizer mode contract is missing: {marker}")
+    for marker in QUEUE_MARKERS:
+        if marker not in content:
+            errors.append(f"unpublished queue contract is missing: {marker}")
 
     for relative in REQUIRED_REFERENCES:
         reference = skill_path / relative

@@ -388,6 +388,21 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("不执行 add 或 commit", reference)
         self.assertIn("remote target ref 必须等于 HEAD", reference)
 
+    def test_unpublished_queue_contract_is_explicit_and_versioned(self) -> None:
+        skill = (VERSIONED_SOURCE / "SKILL.md").read_text(encoding="utf-8")
+        reference = (
+            VERSIONED_SOURCE / "references" / "unpublished-queue.md"
+        ).read_text(encoding="utf-8")
+
+        for marker in quick_validate.QUEUE_MARKERS:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, skill)
+        self.assertIn("current-state record", reference)
+        self.assertIn("already_published_equivalent", reference)
+        self.assertIn("不会正式导入", reference)
+        self.assertIn("unpublished_queue.py", deploy.MANAGED_FILES)
+        self.assertIn("references/unpublished-queue.md", deploy.MANAGED_FILES)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -189,6 +189,29 @@ Finalization outcome: blocked
 
 保持内部完整检查、外部摘要报告；默认不输出长路径清单，只有异常、删除、范围外改动或无法用摘要解释风险时才展开。
 
+### Completed-but-Unpublished Queue
+
+对预计会修改的 Git repo，任务开始时可调用本地 queue `summary`；无 active record 时它不输出，
+有记录时只显示该 repo 的 pending/blocked 数量与最早日期，不得把完整 backlog 自动注入 context。
+helper、schema、权限、CLI 和 bounded review 合同见
+[Completed-but-Unpublished Queue reference](references/unpublished-queue.md)。
+
+任务结束且存在持久 repo 修改时，在最终回复前按实际三行 finalization 事实处理 queue：
+
+- `not_applicable` 或没有既有 record 的 `publish_now + remote_verified`：不创建 active record；
+- `intentionally_unpublished`：幂等 upsert 为 `pending`；
+- `publication_blocked`：幂等 upsert 为 `blocked`；
+- Finalizer 以 `publish_now` 开始但实际 outcome 为 `blocked`：可按该执行事实 upsert `blocked`，但
+  最终三行仍必须使用主合同的 `publication_blocked + blocked` 合法组合；
+- `remote_pushed` 未完成实时核验：upsert `blocked`；
+- `commit_only + local_commit_created`：upsert `pending`；
+- 已有 record 获得 `remote_verified`，或 bounded review 以明确 remote OID 证明 exact upstream
+  equivalence：只关闭 metadata 为 `published`，不得修改原 worktree。
+
+Queue 写入失败不得改写真实 Publication decision/scope/outcome，也不得触发自动 Snapshot、
+commit、push、stash、reset、restore 或 clean；最终回复应简短报告 record ID，或明确
+`record_failed` 及原因。Git Finalizer 只提供 publication evidence，不拥有 queue。
+
 ## 职责分离
 
 - Context Loader 只加载确定性的本地上下文；不实施、不测试、不审查、不发布。
