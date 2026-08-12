@@ -296,7 +296,7 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 with self.assertRaises(bridge.BridgeError):
                     bridge.validate_hook_event(event)
 
-    def test_non_finalizer_and_nested_string_disguise_are_rejected(self) -> None:
+    def test_direct_validator_rejects_non_direct_commands(self) -> None:
         for command in (
             "/usr/bin/true",
             "/bin/bash -lc " + shlex.quote(self.command),
@@ -320,6 +320,57 @@ class GitFinalizerBridgeTest(unittest.TestCase):
 
         self.assertEqual(stdout.getvalue(), "")
         run.assert_not_called()
+
+    def test_safe_finalizer_inspection_passes_through_without_bridge_allow(self) -> None:
+        commands = (
+            "rg -n 'codex-git-finalize|bridge' hooks README.md",
+            "file /home/hsd/bin/codex-git-finalize",
+            "readlink -f /home/hsd/bin/codex-git-finalize",
+            "sed -n '1,80p' /home/hsd/bin/codex-git-finalize",
+            "git status --short && git diff -- hooks/codex_git_finalize_bridge.py",
+            "command -v codex-git-finalize | head -n 1",
+            "/home/hsd/bin/codex-git-finalize --help | sed -n '1,80p'",
+            "/home/hsd/bin/codex-git-finalize --version",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                event = self.event(command)
+                stdin = io.StringIO(json.dumps(event))
+                stdout = io.StringIO()
+                run = mock.Mock(return_value=(0, "synthetic success"))
+                with (
+                    mock.patch.object(sys, "stdin", stdin),
+                    mock.patch.object(sys, "stdout", stdout),
+                    mock.patch.object(bridge, "run_finalizer", run),
+                ):
+                    bridge.main()
+
+                self.assertEqual(stdout.getvalue(), "")
+                run.assert_not_called()
+
+    def test_commands_that_can_execute_finalizer_stay_denied(self) -> None:
+        commands = (
+            "/bin/bash -lc " + shlex.quote(self.command),
+            "python3 -c "
+            + shlex.quote(
+                "import subprocess; subprocess.run(['/home/hsd/bin/codex-git-finalize'])"
+            ),
+            "find . -exec /home/hsd/bin/codex-git-finalize --help \\;",
+            "rg --pre=/home/hsd/bin/codex-git-finalize pattern .",
+            "git -c alias.inspect=!/home/hsd/bin/codex-git-finalize inspect",
+            "/tmp/rg -n codex-git-finalize README.md",
+            "./git status --short -- codex-git-finalize",
+            "/home/hsd/bin/codex-git-finalize --help -- README.md",
+            "rg -n bridge README.md && " + self.verify_only_command,
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                output, run = self.invoke_main(self.event(command))
+
+                self.assertEqual(
+                    output["hookSpecificOutput"]["permissionDecision"], "deny"
+                )
+                run.assert_not_called()
 
     def test_nested_finalizer_disguise_gets_hook_deny(self) -> None:
         command = "/bin/bash -lc " + shlex.quote(self.command)

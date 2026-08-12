@@ -16,6 +16,10 @@ verify-only 还禁止 message 和 dry-run。
 bridge 将严格解析并规范化的绝对 `--repo` 作为 Finalizer 子进程 cwd；PreToolUse 的会话 cwd
 不是目标仓库权限来源。若本次调用已出现在 transcript，bridge 还会要求其中的原命令、
 `workdir=<repo>` 和 `sandbox_permissions=require_escalated` 精确匹配；任何冲突均拒绝。
+命令仅把 Finalizer 名称或路径作为保守只读检查器的数据，或以固定入口精确查询 `--help`、
+`--version` 时，bridge 不作 allow/deny 决定，而是交回原生 sandbox、approval、execpolicy 和
+其他 Hook。shell wrapper、解释器、`find -exec`、可执行预处理器、带其他参数的元数据查询，
+以及复合命令中的实际 Finalizer 调用仍按固定绝对路径直接调用合同拒绝。
 
 ## 管理范围
 

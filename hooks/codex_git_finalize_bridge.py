@@ -33,10 +33,184 @@ TOOL_USE_ID_PATTERN = re.compile(
     r"^exec-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
 SHELL_CONTROL_TOKENS = {"&", "&&", "(", ")", ";", "<", "<<", ">", ">>", "|", "||"}
+SHELL_SEGMENT_SEPARATORS = {"&&", ";", "|", "||"}
+INERT_REFERENCE_COMMANDS = frozenset(
+    {
+        "file",
+        "head",
+        "ls",
+        "pgrep",
+        "ps",
+        "readlink",
+        "realpath",
+        "sha256sum",
+        "sort",
+        "stat",
+        "true",
+        "wc",
+    }
+)
+INERT_GIT_SUBCOMMANDS = frozenset(
+    {
+        "cat-file",
+        "describe",
+        "diff",
+        "grep",
+        "log",
+        "ls-files",
+        "ls-tree",
+        "name-rev",
+        "rev-parse",
+        "show",
+        "status",
+    }
+)
 
 
 class BridgeError(Exception):
     """An invariant failed before the Finalizer could run."""
+
+
+def _shell_segments(raw_command: str) -> list[list[str]] | None:
+    if any(value in raw_command for value in ("\x00", "\n", "\r", "`", "$(", "<(", ">(")):
+        return None
+    try:
+        lexer = shlex.shlex(raw_command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        return None
+
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in SHELL_SEGMENT_SEPARATORS:
+            if not current:
+                return None
+            segments.append(current)
+            current = []
+            continue
+        if token in SHELL_CONTROL_TOKENS or (
+            token and all(character in "();<>|&" for character in token)
+        ):
+            return None
+        current.append(token)
+    if not current:
+        return None
+    segments.append(current)
+    return segments
+
+
+def _is_inert_git_reference(arguments: list[str]) -> bool:
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "-C":
+            index += 2
+            continue
+        if argument in ("--no-optional-locks", "--no-pager", "--literal-pathspecs"):
+            index += 1
+            continue
+        if argument.startswith(("--git-dir=", "--work-tree=")):
+            index += 1
+            continue
+        if argument.startswith("-"):
+            return False
+        break
+    if index >= len(arguments):
+        return False
+
+    subcommand = arguments[index]
+    subcommand_arguments = arguments[index + 1 :]
+    if subcommand in INERT_GIT_SUBCOMMANDS:
+        return not any(
+            argument
+            in (
+                "--ext-diff",
+                "--filters",
+                "--open-files-in-pager",
+                "--output",
+                "--textconv",
+                "-O",
+            )
+            or argument.startswith("--output=")
+            for argument in subcommand_arguments
+        )
+    if subcommand == "branch":
+        safe_branch_arguments = {
+            "-a",
+            "--all",
+            "--no-color",
+            "--show-current",
+            "--verbose",
+            "-v",
+            "-vv",
+        }
+        return all(argument in safe_branch_arguments for argument in subcommand_arguments)
+    if subcommand == "remote":
+        return subcommand_arguments == ["-v"] or (
+            bool(subcommand_arguments)
+            and subcommand_arguments[0] == "get-url"
+            and all(
+                argument in ("--all", "--push") or not argument.startswith("-")
+                for argument in subcommand_arguments[1:]
+            )
+        )
+    return False
+
+
+def _is_inert_sed_reference(arguments: list[str]) -> bool:
+    if len(arguments) < 2 or arguments[0] not in ("--quiet", "--silent", "-n"):
+        return False
+    return (
+        re.fullmatch(r"(?:[0-9]+|\$)(?:,(?:[0-9]+|\$))?p", arguments[1])
+        is not None
+        and all(not argument.startswith("-") for argument in arguments[2:])
+    )
+
+
+def _is_inert_reference_segment(segment: list[str]) -> bool:
+    arguments = segment[1:]
+    if segment[0] == FINALIZER:
+        return arguments in (["--help"], ["--version"])
+    if segment[0] == "/home/hsd/bin/codex-diff-audit":
+        return True
+    executable = PurePosixPath(segment[0])
+    if "/" in segment[0] and executable.parent.as_posix() not in (
+        "/bin",
+        "/usr/bin",
+    ):
+        return False
+    command = executable.name
+    if command == "rg":
+        return not any(
+            argument in ("--hostname-bin", "--pre", "--search-zip", "-z")
+            or argument.startswith(("--hostname-bin=", "--pre="))
+            for argument in arguments
+        )
+    if command == "git":
+        return _is_inert_git_reference(arguments)
+    if command == "sed":
+        return _is_inert_sed_reference(arguments)
+    if command == "command":
+        return bool(arguments) and arguments[0] in ("-V", "-v")
+    return command in INERT_REFERENCE_COMMANDS
+
+
+def is_safe_finalizer_passthrough(raw_command: str) -> bool:
+    """Return whether a command only performs conservative inspection.
+
+    Returning true does not grant approval. It leaves the original command to
+    the normal sandbox, approval, execpolicy, and remaining hooks.
+    """
+
+    if FINALIZER_NAME not in raw_command:
+        return False
+    segments = _shell_segments(raw_command)
+    return segments is not None and all(
+        _is_inert_reference_segment(segment) for segment in segments
+    )
 
 
 def emit_hook_output(
@@ -486,6 +660,8 @@ def main() -> None:
         )
         return
     if FINALIZER_NAME not in public_command:
+        return
+    if is_safe_finalizer_passthrough(public_command):
         return
 
     try:
