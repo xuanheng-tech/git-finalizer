@@ -2,7 +2,7 @@
 
 Codex Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`0.6.0`
+当前版本：`0.6.1`
 
 ## 使用方式
 
@@ -116,9 +116,26 @@ ignored 文件、大二进制及异常对象检查；随后仅执行显式 branc
 index 仍 clean，并确认 HEAD、本地 branch、tags 和 Git 配置均未改变。旧的
 `--resume-initial-publish` 继续只处理单 root commit 和 initial-publish 的空远端恢复状态。
 
+若已有 clean attached feature branch 和既有 committed HEAD，但尚未配置 upstream，且同名远端
+branch 不存在，使用显式首次发布入口；该入口不创建 commit：
+
+```bash
+codex-git-finalize \
+  --publish-existing-branch <full-head-oid> \
+  --remote origin \
+  --remote-branch feat/example \
+  --repo /home/user/projects/example
+```
+
+该模式要求本地 branch 与 `--remote-branch` 完全一致，拒绝受保护分支、dirty/staged 状态、
+detached HEAD、任何既有 upstream 及已存在的远端目标。Finalizer fetch 后对 captured remote
+heads 尚不可达的 commits 执行既有 commit-range 安全检查，再以 non-force、`--no-follow-tags`、
+`--set-upstream` 的精确 branch refspec 首次发布。post-verify 要求 HEAD 和 commit history 不变、
+远端 OID 与 HEAD 相同、upstream 精确、ahead/behind 为 `0/0` 且 index/worktree clean。
+
 ### 有界结果摘要
 
-normal、commit-only、verify-only、initial、initial-branch 和 resume 均可显式加入
+normal、commit-only、verify-only、initial、initial-branch、publish-existing-branch 和 resume 均可显式加入
 `--summary`，以单行确定性 JSON 代替原有阶段输出：
 
 ```bash
@@ -137,7 +154,8 @@ codex-git-finalize \
 时两者为 `null`。这些字段不枚举远端已有 tag。
 
 initial 的 `mode_result` 另含 initial publish、Snapshot artifact 校验和远端最终结论；
-initial-branch 另含首次分支发布状态、远端最终结论和 post-verify；resume 另含实际 interface 与
+initial-branch 另含首次分支发布状态、远端最终结论和 post-verify；publish-existing-branch
+另含原 HEAD 复用、commit-range 安全检查、push 目标及 HEAD/index/worktree 不变证明；resume 另含实际 interface 与
 publish kind、恢复起点、原提交复用、发布前 ahead/behind、commit 数量与 range、push 目标、最终
 HEAD/remote/worktree、已完成阶段和是否仍需恢复；commit-only 另含跳过的远端验证、post-verify
 和最终工作区 `clean|dirty` 状态，其 `push.result` 为 `skipped_by_commit_only`。只有确有恢复入口时才输出顶层
@@ -149,7 +167,7 @@ HEAD/remote/worktree、已完成阶段和是否仍需恢复；commit-only 另含
 若序列化本身失败，fallback 会同时保留 Git 操作状态和原退出码。
 
 PreToolUse bridge 将 `--summary`、严格的 `--mode commit-only|verify-only`、通用
-`--resume-publish` 及兼容的 root resume 入口原样转发；其调用授权、路径校验、停止条件和输出
+`--publish-existing-branch`、`--resume-publish` 及兼容的 root resume 入口原样转发；其调用授权、路径校验、停止条件和输出
 上限不变。
 
 ## Codex PreToolUse bridge
@@ -160,7 +178,8 @@ Git Finalizer Hook 的版本化源、测试、只读漂移检查和显式恢复�
 ## 工作流边界
 
 正常开发流程是先完成修改、测试和审查，再调用正常模式提交推送。首次发布仅适用于 unborn
-本地仓库和完全空远端；已有历史功能分支首次发布必须使用 initial-branch 模式；恢复模式仅适用于
+本地仓库和完全空远端；需要同时创建 commit 的已有历史功能分支首次发布使用 initial-branch
+模式，已有 clean committed HEAD 且无 upstream 时使用 publish-existing-branch；恢复模式仅适用于
 干净状态且不会再次创建提交：root 恢复入口处理 initial-publish 的单 root commit，通用恢复入口
 处理 configured upstream 之上的一个或多个既有 commit。commit-only 仅在已有 commit 的
 attached branch 上创建本地提交，不接触远端；verify-only 在相同本地 branch 边界内只验证显式

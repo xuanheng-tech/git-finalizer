@@ -102,6 +102,19 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 shlex.quote(str(self.repo)),
             )
         )
+        self.publish_existing_branch_command = " ".join(
+            (
+                bridge.FINALIZER,
+                "--publish-existing-branch",
+                "c" * 40,
+                "--remote",
+                "origin",
+                "--remote-branch",
+                "feat/validated-branch",
+                "--repo",
+                shlex.quote(str(self.repo)),
+            )
+        )
         self.resume_initial_command = " ".join(
             (
                 bridge.FINALIZER,
@@ -206,6 +219,27 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0], shlex.split(self.snapshot_command))
+
+    def test_publish_existing_branch_is_accepted_and_forwarded(self) -> None:
+        command, argv, repo, dry_run = bridge.validate_hook_event(
+            self.event(self.publish_existing_branch_command)
+        )
+
+        self.assertEqual(command, self.publish_existing_branch_command)
+        self.assertIn("--publish-existing-branch", argv)
+        self.assertEqual(argv[argv.index("--remote") + 1], "origin")
+        self.assertEqual(
+            argv[argv.index("--remote-branch") + 1], "feat/validated-branch"
+        )
+        self.assertEqual(repo, self.repo)
+        self.assertFalse(dry_run)
+
+        output, run = self.invoke_main(self.event(self.publish_existing_branch_command))
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+        self.assertEqual(
+            run.call_args.args[0], shlex.split(self.publish_existing_branch_command)
+        )
 
     def test_summary_is_accepted_and_forwarded_without_rewriting(self) -> None:
         output, run = self.invoke_main(self.event(self.summary_command))
@@ -321,7 +355,9 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "")
         run.assert_not_called()
 
-    def test_safe_finalizer_inspection_passes_through_without_bridge_allow(self) -> None:
+    def test_safe_finalizer_inspection_passes_through_without_bridge_allow(
+        self,
+    ) -> None:
         commands = (
             "rg -n 'codex-git-finalize|bridge' hooks README.md",
             "file /home/hsd/bin/codex-git-finalize",
@@ -439,7 +475,7 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                     bridge.validate_hook_event(self.event(prefix + " -- " + paths))
 
     def test_tool_input_missing_or_malformed_is_rejected(self) -> None:
-        values = (
+        values: tuple[object, ...] = (
             None,
             "not-an-object",
             {},
@@ -554,7 +590,9 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 with self.assertRaises(bridge.BridgeError):
                     bridge.validate_hook_event(self.event(command))
 
-    def test_explicit_modes_reject_invalid_duplicate_and_conflicting_options(self) -> None:
+    def test_explicit_modes_reject_invalid_duplicate_and_conflicting_options(
+        self,
+    ) -> None:
         commands = (
             self.command.replace(" --repo ", " --mode invalid --repo ", 1),
             self.commit_only_command.replace(
@@ -575,9 +613,7 @@ class GitFinalizerBridgeTest(unittest.TestCase):
             self.verify_only_command.replace(
                 " --repo ", " --message unexpected --repo ", 1
             ),
-            self.verify_only_command.replace(
-                " --repo ", " --dry-run --repo ", 1
-            ),
+            self.verify_only_command.replace(" --repo ", " --dry-run --repo ", 1),
             self.initial_command.replace(
                 " --initial-publish ",
                 " --initial-publish --mode verify-only ",
@@ -609,6 +645,37 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 1,
             ),
             self.resume_initial_command.replace(" --remote origin", "", 1),
+        )
+
+        for command in commands:
+            with self.subTest(command=command):
+                with self.assertRaises(bridge.BridgeError):
+                    bridge.validate_hook_event(self.event(command))
+
+    def test_publish_existing_branch_rejects_unsafe_or_conflicting_options(
+        self,
+    ) -> None:
+        commands = (
+            self.publish_existing_branch_command.replace("c" * 40, "abc", 1),
+            self.publish_existing_branch_command.replace(" --remote origin", "", 1),
+            self.publish_existing_branch_command.replace(
+                " --remote-branch feat/validated-branch", "", 1
+            ),
+            self.publish_existing_branch_command.replace(
+                " --repo ", " --message unexpected --repo ", 1
+            ),
+            self.publish_existing_branch_command.replace(
+                " --repo ", " --mode commit-only --repo ", 1
+            ),
+            self.publish_existing_branch_command.replace(
+                " --repo ", " --dry-run --repo ", 1
+            ),
+            self.publish_existing_branch_command + " -- scripts/runner.py",
+            self.publish_existing_branch_command.replace(
+                " --publish-existing-branch ",
+                " --resume-publish " + "a" * 40 + " --publish-existing-branch ",
+                1,
+            ),
         )
 
         for command in commands:

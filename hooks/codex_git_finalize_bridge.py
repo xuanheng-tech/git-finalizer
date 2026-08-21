@@ -72,7 +72,9 @@ class BridgeError(Exception):
 
 
 def _shell_segments(raw_command: str) -> list[list[str]] | None:
-    if any(value in raw_command for value in ("\x00", "\n", "\r", "`", "$(", "<(", ">(")):
+    if any(
+        value in raw_command for value in ("\x00", "\n", "\r", "`", "$(", "<(", ">(")
+    ):
         return None
     try:
         lexer = shlex.shlex(raw_command, posix=True, punctuation_chars=True)
@@ -147,7 +149,9 @@ def _is_inert_git_reference(arguments: list[str]) -> bool:
             "-v",
             "-vv",
         }
-        return all(argument in safe_branch_arguments for argument in subcommand_arguments)
+        return all(
+            argument in safe_branch_arguments for argument in subcommand_arguments
+        )
     if subcommand == "remote":
         return subcommand_arguments == ["-v"] or (
             bool(subcommand_arguments)
@@ -163,11 +167,9 @@ def _is_inert_git_reference(arguments: list[str]) -> bool:
 def _is_inert_sed_reference(arguments: list[str]) -> bool:
     if len(arguments) < 2 or arguments[0] not in ("--quiet", "--silent", "-n"):
         return False
-    return (
-        re.fullmatch(r"(?:[0-9]+|\$)(?:,(?:[0-9]+|\$))?p", arguments[1])
-        is not None
-        and all(not argument.startswith("-") for argument in arguments[2:])
-    )
+    return re.fullmatch(
+        r"(?:[0-9]+|\$)(?:,(?:[0-9]+|\$))?p", arguments[1]
+    ) is not None and all(not argument.startswith("-") for argument in arguments[2:])
 
 
 def _is_inert_reference_segment(segment: list[str]) -> bool:
@@ -379,6 +381,7 @@ def parse_direct_finalizer(
             "--remote",
             "--remote-branch",
             "--repo",
+            "--publish-existing-branch",
             "--resume-initial-publish",
             "--resume-publish",
             "--snapshot",
@@ -395,23 +398,36 @@ def parse_direct_finalizer(
     verify_only = mode == "verify-only"
     resume_initial_oid = parsed.get("--resume-initial-publish")
     resume_publish_oid = parsed.get("--resume-publish")
-    if resume_initial_oid is not None and resume_publish_oid is not None:
-        raise BridgeError("Finalizer resume 发布入口只能选择一个")
+    publish_existing_oid = parsed.get("--publish-existing-branch")
+    existing_publish_entries = tuple(
+        value
+        for value in (resume_initial_oid, resume_publish_oid, publish_existing_oid)
+        if value is not None
+    )
+    if len(existing_publish_entries) > 1:
+        raise BridgeError("Finalizer existing commit 发布入口只能选择一个")
     resume = resume_initial_oid is not None or resume_publish_oid is not None
-    if resume:
+    publish_existing = publish_existing_oid is not None
+    if resume or publish_existing:
         if delimiters:
-            raise BridgeError("Finalizer resume 模式不接受 -- 分隔符或文件路径")
+            raise BridgeError(
+                "Finalizer existing commit 发布不接受 -- 分隔符或文件路径"
+            )
         paths: tuple[str, ...] = ()
     else:
         if len(delimiters) != 1:
             raise BridgeError("Finalizer 必须且只能包含一个 -- 文件分隔符")
         paths = _explicit_paths(path_values)
 
-    required = {"--repo"} if verify_only or resume else {"--message", "--repo"}
+    required = (
+        {"--repo"}
+        if verify_only or resume or publish_existing
+        else {"--message", "--repo"}
+    )
     if not required.issubset(parsed):
         if verify_only:
             raise BridgeError("Finalizer verify-only 必须显式提供 --repo")
-        if resume:
+        if resume or publish_existing:
             raise BridgeError("Finalizer resume 必须显式提供 --repo")
         raise BridgeError("Finalizer 必须显式提供 --repo 和 --message")
     if mode in ("commit-only", "verify-only") and (
@@ -423,17 +439,23 @@ def parse_direct_finalizer(
             raise BridgeError("Finalizer --mode verify-only 不接受 --message")
         if dry_run:
             raise BridgeError("Finalizer --mode verify-only 不接受 --dry-run")
-    if resume:
-        resume_oid = resume_initial_oid or resume_publish_oid
+    if resume or publish_existing:
+        resume_oid = resume_initial_oid or resume_publish_oid or publish_existing_oid
         if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", resume_oid or "") is None:
-            raise BridgeError("Finalizer resume 要求完整小写十六进制 HEAD OID")
+            raise BridgeError(
+                "Finalizer existing commit 发布要求完整小写十六进制 HEAD OID"
+            )
         if mode is not None or initial_publish or initial_branch_publish:
-            raise BridgeError("Finalizer resume 不接受其他 mode 或发布入口")
+            raise BridgeError(
+                "Finalizer existing commit 发布不接受其他 mode 或发布入口"
+            )
         if "--message" in parsed:
-            raise BridgeError("Finalizer resume 不接受 --message")
+            raise BridgeError("Finalizer existing commit 发布不接受 --message")
         if dry_run:
-            raise BridgeError("Finalizer resume 不接受 --dry-run")
-        if "--snapshot" in parsed or "--remote-branch" in parsed:
+            raise BridgeError("Finalizer existing commit 发布不接受 --dry-run")
+        if "--snapshot" in parsed:
+            raise BridgeError("Finalizer existing commit 发布不接受 snapshot")
+        if resume and "--remote-branch" in parsed:
             raise BridgeError("Finalizer resume 不接受 snapshot 或 remote-branch")
     if initial_publish and initial_branch_publish:
         raise BridgeError("Finalizer 发布模式只能选择一个")
@@ -452,6 +474,27 @@ def parse_direct_finalizer(
             raise BridgeError(
                 "Finalizer --resume-publish 从 configured upstream 推导目标，不接受 --remote"
             )
+    elif publish_existing_oid is not None:
+        remote = parsed.get("--remote")
+        remote_branch = parsed.get("--remote-branch")
+        if remote is None or remote_branch is None:
+            raise BridgeError(
+                "Finalizer --publish-existing-branch 必须显式提供 --remote 和 --remote-branch"
+            )
+        if (
+            not remote
+            or remote.startswith("-")
+            or any(character in remote for character in ("\x00", "\n", "\r", "\t"))
+        ):
+            raise BridgeError("Finalizer --remote 不是有效的 remote 名")
+        if (
+            not remote_branch
+            or remote_branch.startswith("-")
+            or any(
+                character in remote_branch for character in ("\x00", "\n", "\r", "\t")
+            )
+        ):
+            raise BridgeError("Finalizer --remote-branch 不是有效的 branch 名")
     elif initial_publish:
         remote = parsed.get("--remote")
         if remote is None:
@@ -502,8 +545,7 @@ def parse_direct_finalizer(
         raise BridgeError("Finalizer --snapshot 只允许与 --initial-publish 一起使用")
     message = parsed.get("--message")
     if message is not None and (
-        not message
-        or any(character in message for character in ("\x00", "\n", "\r"))
+        not message or any(character in message for character in ("\x00", "\n", "\r"))
     ):
         raise BridgeError("Finalizer --message 不得为空或包含换行")
     return argv, parsed["--repo"], paths, dry_run

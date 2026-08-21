@@ -13,6 +13,18 @@ section is invented for it.
 
 ## Unreleased
 
+## 0.6.1 - 2026-08-22
+
+- Added: `--publish-existing-branch <full-head-oid>` first-publishes an existing clean attached
+  feature branch whose explicit same-name remote target is absent, without creating another commit.
+- Safety: The mode rejects protected/detached/dirty/staged or already-tracking branches, validates
+  commits not reachable from captured remote heads, uses a non-force branch-only push with
+  `--no-follow-tags` and `--set-upstream`, and fail-closes if the target appears or verification is
+  ambiguous.
+- Verification: Success proves local HEAD/history unchanged, remote branch OID equals HEAD,
+  configured upstream is exact, ahead/behind is `0/0`, and index/worktree remain clean; the
+  PreToolUse bridge and summary schema expose the same explicit path.
+
 ## 0.6.0 - 2026-08-06
 
 - Added: `--resume-publish <full-head-oid>` safely publishes one or more existing local commits

@@ -45,12 +45,14 @@ description: "用于实现、修复、重构或其他代码与仓库文件修改
 | 已授权本地 commit，未授权或暂不适合 push | `--mode commit-only` | 创建一个本地 commit；不访问远端 |
 | 已明确授权 commit 和 push，且任务已达到交付状态 | 默认模式（不传 `--mode`） | commit、push、远端 post-verify |
 | 已存在普通 local commits，已明确授权继续 push | `--resume-publish <full-head-oid> --repo <absolute-repo>` | 不创建 commit；发布 configured upstream 并远端 post-verify |
+| 已存在 clean feature branch、无 upstream、远端同名 branch 不存在，已明确授权首次发布 | `--publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>` | 不创建 commit；non-force 首次发布、设置 upstream 并远端 post-verify |
 
 ```bash
 /home/hsd/bin/codex-git-finalize --summary --mode verify-only --repo <absolute-repo> -- <repo-relative-file>...
 /home/hsd/bin/codex-git-finalize --summary --mode commit-only --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
 /home/hsd/bin/codex-git-finalize --summary --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
 /home/hsd/bin/codex-git-finalize --summary --resume-publish <full-head-oid> --repo <absolute-repo>
+/home/hsd/bin/codex-git-finalize --summary --publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
 ```
 
 - 三种模式共用适用于各自执行边界的本地提交前检查；`verify-only` 不实际运行 commit hooks、签名或索引写入，因此不得声称验证了这些能力。
@@ -61,6 +63,9 @@ description: "用于实现、修复、重构或其他代码与仓库文件修改
 - 普通 attached branch 的既有 commits 使用 `--resume-publish`；它要求 clean index/worktree、
   configured upstream、`ahead >= 1`、`behind = 0`，只做 non-force、`--no-follow-tags` 的精确
   branch push 和远端 post-verify。root commit 继续使用 `--resume-initial-publish`。
+- clean attached feature branch 尚无 upstream 且 explicit 同名 remote branch 不存在时，使用
+  `--publish-existing-branch`；它绑定完整 HEAD OID，不创建 commit，拒绝受保护分支和任何既有
+  upstream，并在 non-force 首次 push 后验证 upstream、remote OID 与 `0/0`。
 - 不得重跑会创建提交的模式或重复制造 commit。
 - tag、Release、Artifact 和 deployment 继续属于独立 Release 流程，不并入任何 Git Finalizer 模式。
 
@@ -75,7 +80,7 @@ Publication decision 只回答：当前任务结束前，是否应执行被明�
 
 ### 明确发布授权
 
-保持 explicit-only。用户明确要求 commit、push、发布或使用 Git Finalizer，或当前任务合同明确规定验收后的具体 Git 动作，才构成相应授权；授权范围以用户明确要求的动作、仓库和文件为限。只验证选择 `verify-only`，仅要求 commit 选择 `commit-only` 且不得自行扩大为 push；只有明确授权 commit 和 push 才选择默认模式。已有普通 local commits 且只授权继续 push 时可选择 `--resume-publish`，该授权不包含创建新 commit。“完成这个任务”“全权处理”“修复这个问题”以及一般实现、测试或验收要求都不构成 commit/push 授权，不得从模糊意图、历史任务或完成状态推导权限。
+保持 explicit-only。用户明确要求 commit、push、发布或使用 Git Finalizer，或当前任务合同明确规定验收后的具体 Git 动作，才构成相应授权；授权范围以用户明确要求的动作、仓库和文件为限。只验证选择 `verify-only`，仅要求 commit 选择 `commit-only` 且不得自行扩大为 push；只有明确授权 commit 和 push 才选择默认模式。已有普通 local commits 且只授权继续 push 时可选择 `--resume-publish`；无 upstream 的首次分支发布可选择 `--publish-existing-branch`，两者授权均不包含创建新 commit。“完成这个任务”“全权处理”“修复这个问题”以及一般实现、测试或验收要求都不构成 commit/push 授权，不得从模糊意图、历史任务或完成状态推导权限。
 
 ### Finalization scope
 
@@ -88,6 +93,7 @@ Finalization scope: <commit_only|commit_and_push>
 - 用户只明确授权 commit：`commit_only`。
 - 用户明确授权 commit + push、发布，或任务提示词明确规定验收后 commit + push：`commit_and_push`。
 - 已有普通 local commits 且只授权继续 push 的 `--resume-publish` 也属于 `commit_and_push`，但不授权创建新 commit。
+- 已有 clean local feature branch 首次发布的 `--publish-existing-branch` 也属于 `commit_and_push`，但不授权创建新 commit。
 - 不得把 commit 授权自动扩大为 push 授权；只有 Git Finalizer 实际支持的模式才能执行。
 - 非 `publish_now` 时使用 `not_applicable`；若是 `publication_blocked` 且阻断前已经明确授权 scope，可保留 `commit_only` 或 `commit_and_push`，不得猜测。
 

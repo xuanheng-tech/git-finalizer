@@ -105,6 +105,25 @@ Finalizer 在 commit 前 fetch 并核对远端 branch、upstream OID 和 ahead/b
 
 当前已经存在目标本地 commit、只需继续推送时，不得运行默认或 commit-only 模式重复制造 commit。普通 attached branch 使用下述 `--resume-publish`；initial root commit 使用 `--resume-initial-publish`。
 
+若普通 attached feature branch 尚无 configured upstream，且显式同名 remote branch 不存在，
+不得伪造 upstream 或创建空 commit；使用 `--publish-existing-branch`：
+
+```bash
+/home/hsd/bin/codex-git-finalize \
+  --summary \
+  --publish-existing-branch <full-head-oid> \
+  --remote <remote-name> \
+  --remote-branch <same-local-branch-name> \
+  --repo <absolute-repo>
+```
+
+该接口要求 clean index/worktree、attached 非受保护 branch、完整 HEAD OID、无任何 configured
+upstream，并要求显式 remote target 不存在。它不 add、不 commit、不改写 HEAD；fetch 后检查
+captured remote heads 尚不可达的 commit objects，仅以 non-force、`--no-follow-tags`、
+`--set-upstream` 的精确 branch refspec 发布。成功必须验证 remote OID、upstream、`0/0`、
+clean 状态以及 HEAD/branch/history 不变。若远端目标已存在、push 结果或 post-verify 含糊，
+fail closed，不自动重试、覆盖或切换到 force。
+
 ## Resume publish existing commits
 
 普通 attached branch 已有一个或多个连续 local ahead commits，且用户已明确授权继续 push 时使用：

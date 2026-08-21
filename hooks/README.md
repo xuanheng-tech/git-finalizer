@@ -6,11 +6,13 @@ Git Finalizer CLI 契约，因此 allowlist、对应测试和部署入口与 Fin
 bridge 只放行固定绝对路径的 normal、`--mode commit-only`、`--mode verify-only`、
 `--initial-publish --remote <name>` 与
 `--initial-branch-publish --remote <name> --remote-branch <name>` 调用，以及不带文件列表的
+`--publish-existing-branch <full-head-oid> --remote <name> --remote-branch <name> --repo <path>`、
 `--resume-publish <full-head-oid> --repo <path>` 和兼容的
 `--resume-initial-publish <full-head-oid> --remote <name> --repo <path>`。initial 模式可额外携带
 一个严格的 `--snapshot <64-lowercase-hex>`。通用 resume 从 configured upstream 推导目标并禁止
 remote；root resume 要求 remote。两者均禁止 message、dry-run、snapshot、remote-branch、其他
-mode 和 `--` 文件范围；其他未知参数继续拒绝。initial-branch、commit-only 与 verify-only 模式
+mode 和 `--` 文件范围；publish-existing-branch 同样禁止 message、dry-run、snapshot、其他
+mode 和文件范围，但要求 explicit remote 与 remote-branch。其他未知参数继续拒绝。initial-branch、commit-only 与 verify-only 模式
 禁止 snapshot；normal、commit-only 与 verify-only 模式禁止 remote 和 remote-branch；
 verify-only 还禁止 message 和 dry-run。
 bridge 将严格解析并规范化的绝对 `--repo` 作为 Finalizer 子进程 cwd；PreToolUse 的会话 cwd
