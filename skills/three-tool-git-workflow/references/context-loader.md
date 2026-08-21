@@ -2,10 +2,10 @@
 
 ## 入口与调用
 
-使用本机绝对入口：
+使用当前 shell 可解析的 CLI 入口：
 
 ```bash
-/home/hsd/bin/codex-project-context --repo <absolute-repo>
+codex-project-context --repo <absolute-repo>
 ```
 
 `--repo` 必须是现有、非 bare Git worktree 的规范绝对根目录。工具只接受这一仓库输入；`--help` 和 `--version` 用于查看本机接口信息。
