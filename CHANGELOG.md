@@ -33,6 +33,8 @@ section is invented for it.
 - Fixed: Exact versioned/live Completed-but-Unpublished queue helper calls may carry
   `codex-git-finalize` as inert path data without being mistaken for a wrapped Finalizer execution;
   shell, interpreter, composite-command, and unknown-option execution paths remain rejected.
+- Fixed: retirement accepts the matching `<remote>/<branch>` spelling for `--integrated-into` and
+  normalizes it to the live `refs/heads/<branch>` target before ancestry and CI verification.
 
 ## 0.6.1 - 2026-08-22
 

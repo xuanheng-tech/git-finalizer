@@ -140,7 +140,7 @@ worktree，也不复用 commit/publish mode：
 codex-git-finalize \
   --retire-remote-branch feat/example \
   --remote origin \
-  --integrated-into main \
+  --integrated-into origin/main \
   --expected-remote-oid <full-feature-oid> \
   --repo /home/user/projects/example \
   --dry-run
@@ -152,6 +152,10 @@ remote default branch，要求 clean attached worktree、feature OID 精确匹�
 local upstream 依赖。需要 CI 时增加 `--ci-required --ci-status SUCCESS --ci-commit-oid <oid>`
 以及 `--ci-verification-source tool_authenticated|human_authenticated_ui`；CI OID 必须等于 live
 integration target OID。
+
+`--integrated-into` 接受 branch、完整 `refs/heads/*`，以及与 `--remote` 同名的
+`<remote>/<branch>` remote-tracking 写法；后者在 live remote 查询前规范化为
+`refs/heads/<branch>`。若远端 branch 名本身以 remote 名开头，使用完整 `refs/heads/*` 消除歧义。
 
 实际删除只使用绑定 exact expected OID 的
 `--force-with-lease=<ref>:<expected> <remote> :<ref>` compare-and-delete；它不是 unconditional

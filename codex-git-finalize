@@ -456,7 +456,8 @@ Usage:
     --remote <remote-name> --remote-branch <branch-name>
     --repo <absolute-repo> [--summary]
   codex-git-finalize --retire-remote-branch <branch-name-or-refs/heads/ref>
-    --remote <remote-name> --integrated-into <branch-name-or-refs/heads/ref>
+    --remote <remote-name>
+    --integrated-into <branch-name-or-matching-remote/branch-or-refs/heads/ref>
     --expected-remote-oid <full-oid> --repo <absolute-repo> [--dry-run] [--summary]
     [--ci-required --ci-status SUCCESS --ci-commit-oid <full-oid>
       --ci-verification-source <tool_authenticated|human_authenticated_ui>
@@ -2885,6 +2886,16 @@ normalize_heads_ref() {
     normalized_ref="refs/heads/$branch"
 }
 
+normalize_integration_ref() {
+    local value=$1
+    local remote_name=$2
+
+    if [[ "$value" == "$remote_name/"* ]]; then
+        value=${value#"$remote_name/"}
+    fi
+    normalize_heads_ref "$value" '--integrated-into'
+}
+
 validate_retirement_oid() {
     local value=$1
     local label=$2
@@ -3305,7 +3316,7 @@ retire_remote_branch_ref() {
         fail_retirement RETIREMENT_BLOCKED \
             "retire-remote-branch 拒绝受保护分支: $retirement_feature_branch"
     fi
-    if ! normalize_heads_ref "$integrated_into_arg" '--integrated-into'; then
+    if ! normalize_integration_ref "$integrated_into_arg" "$retirement_remote"; then
         fail_retirement RETIREMENT_BLOCKED "$normalized_ref_error"
     fi
     retirement_integration_ref=$normalized_ref

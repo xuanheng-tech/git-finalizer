@@ -131,7 +131,7 @@ remote_feature_oid() {
 
 retire_command() {
     "$finalizer" --retire-remote-branch "$feature_branch" --remote origin \
-        --integrated-into main --expected-remote-oid "$feature_oid" \
+        --integrated-into origin/main --expected-remote-oid "$feature_oid" \
         --repo "$test_repo" "$@"
 }
 
@@ -178,6 +178,9 @@ test_success_and_state_preservation() {
     assert_equal "$before" "$(state_fingerprint)" 'retirement changed local HEAD/index/worktree/tags'
     assert_equal 'REMOTE_BRANCH_RETIRED_VERIFIED' \
         "$(summary_field "$output" mode_result.result)" 'success result is wrong'
+    assert_equal 'refs/heads/main' \
+        "$(summary_field "$output" mode_result.integrated_into_ref)" \
+        'remote-qualified integration target was not normalized'
     assert_equal 'true' "$(summary_field "$output" mode_result.expected_oid_lease_bound)" \
         'successful deletion was not lease-bound'
     assert_equal 'true' "$(summary_field "$output" mode_result.remote_absent_after)" \
