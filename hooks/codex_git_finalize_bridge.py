@@ -212,11 +212,18 @@ def _is_lifecycle_helper_passthrough(segment: list[str]) -> bool:
     arguments = segment[1:]
     if arguments[:1] == ["-B"]:
         arguments = arguments[1:]
-    return (
-        len(arguments) >= 2
-        and arguments[0] in LIFECYCLE_HELPERS
-        and arguments[1] in LIFECYCLE_HELPER_COMMANDS
-    )
+    if len(arguments) < 2 or arguments[0] not in LIFECYCLE_HELPERS:
+        return False
+    cursor = 1
+    if arguments[cursor] == "--state-dir":
+        if len(arguments) <= cursor + 2 or arguments[cursor + 1].startswith("-"):
+            return False
+        cursor += 2
+    elif arguments[cursor].startswith("--state-dir="):
+        if arguments[cursor] == "--state-dir=":
+            return False
+        cursor += 1
+    return cursor < len(arguments) and arguments[cursor] in LIFECYCLE_HELPER_COMMANDS
 
 
 def _is_inert_reference_segment(segment: list[str]) -> bool:

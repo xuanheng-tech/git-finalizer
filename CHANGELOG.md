@@ -35,6 +35,8 @@ section is invented for it.
   shell, interpreter, composite-command, and unknown-option execution paths remain rejected.
 - Fixed: retirement accepts the matching `<remote>/<branch>` spelling for `--integrated-into` and
   normalizes it to the live `refs/heads/<branch>` target before ancestry and CI verification.
+- Fixed: the Hook recognizes the queue helper's optional global `--state-dir` before its subcommand,
+  so a self-release filename remains inert lifecycle data in default and isolated queue roots.
 
 ## 0.6.1 - 2026-08-22
 

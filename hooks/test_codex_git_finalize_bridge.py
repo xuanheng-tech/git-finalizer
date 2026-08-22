@@ -551,6 +551,46 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "")
         run.assert_not_called()
 
+    def test_unpublished_queue_state_dir_option_keeps_path_data_inert(self) -> None:
+        for state_arguments in (
+            ("--state-dir", "/tmp/task-owned-queue-state"),
+            ("--state-dir=/tmp/task-owned-queue-state",),
+        ):
+            command = " ".join(
+                (
+                    "/usr/bin/python3",
+                    "-B",
+                    "/home/hsd/.agents/skills/three-tool-git-workflow/unpublished_queue.py",
+                    *state_arguments,
+                    "upsert",
+                    "--repo",
+                    shlex.quote(str(self.repo)),
+                    "--workstream",
+                    "self-release",
+                    "--publication-decision",
+                    "intentionally_unpublished",
+                    "--finalization-scope",
+                    "not_applicable",
+                    "--finalization-outcome",
+                    "not_run",
+                    "--path",
+                    "codex-git-finalize",
+                )
+            )
+            with self.subTest(state_arguments=state_arguments):
+                stdin = io.StringIO(json.dumps(self.event(command)))
+                stdout = io.StringIO()
+                run = mock.Mock(return_value=(0, "synthetic success"))
+                with (
+                    mock.patch.object(sys, "stdin", stdin),
+                    mock.patch.object(sys, "stdout", stdout),
+                    mock.patch.object(bridge, "run_finalizer", run),
+                ):
+                    bridge.main()
+
+                self.assertEqual(stdout.getvalue(), "")
+                run.assert_not_called()
+
     def test_commands_that_can_execute_finalizer_stay_denied(self) -> None:
         commands = (
             "/bin/bash -lc " + shlex.quote(self.command),
