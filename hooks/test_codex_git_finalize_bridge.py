@@ -13,6 +13,7 @@ from unittest import mock
 
 
 BRIDGE_PATH = Path(__file__).with_name("codex_git_finalize_bridge.py")
+ROOT = BRIDGE_PATH.parents[1]
 SPEC = importlib.util.spec_from_file_location("codex_git_finalize_bridge", BRIDGE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 bridge = importlib.util.module_from_spec(SPEC)
@@ -111,6 +112,28 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 "origin",
                 "--remote-branch",
                 "feat/validated-branch",
+                "--repo",
+                shlex.quote(str(self.repo)),
+            )
+        )
+        self.retirement_command = " ".join(
+            (
+                bridge.FINALIZER,
+                "--retire-remote-branch",
+                "feat/validated-branch",
+                "--remote",
+                "origin",
+                "--integrated-into",
+                "main",
+                "--expected-remote-oid",
+                "d" * 40,
+                "--ci-required",
+                "--ci-status",
+                "SUCCESS",
+                "--ci-commit-oid",
+                "e" * 40,
+                "--ci-verification-source",
+                "human_authenticated_ui",
                 "--repo",
                 shlex.quote(str(self.repo)),
             )
@@ -248,6 +271,114 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0], shlex.split(self.summary_command))
 
+    def test_allow_test_fixture_is_accepted_and_forwarded_without_rewriting(
+        self,
+    ) -> None:
+        command = self.command.replace(
+            " -- ", " --allow-test-fixture tests/foo.py -- ", 1
+        )
+
+        output, run = self.invoke_main(self.event(command))
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], shlex.split(command))
+
+    def test_legitimate_self_release_scope_is_accepted_and_forwarded(self) -> None:
+        prefix = self.command.rsplit(" -- ", 1)[0]
+        command = (
+            prefix + " -- codex-git-finalize hooks/codex_git_finalize_bridge.py"
+            " tests/test_codex_git_finalize_bridge.py tool_cli_contract.json"
+        )
+
+        output, run = self.invoke_main(self.event(command))
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], shlex.split(command))
+
+    def test_repeated_allow_test_fixture_values_are_forwarded_in_order(self) -> None:
+        command = self.command.replace(
+            " -- ",
+            " --allow-test-fixture tests/foo.py --allow-test-fixture tests/bar.py -- ",
+            1,
+        )
+
+        output, run = self.invoke_main(self.event(command))
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], shlex.split(command))
+
+    def test_fixture_path_semantics_are_left_to_finalizer(self) -> None:
+        command = self.command.replace(
+            " -- ", " --allow-test-fixture ../outside.py -- ", 1
+        )
+
+        output, run = self.invoke_main(self.event(command))
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], shlex.split(command))
+
+    def test_bridge_option_schema_matches_public_cli_contract(self) -> None:
+        contract = json.loads(
+            (ROOT / "tool_cli_contract.json").read_text(encoding="utf-8")
+        )
+        expected = contract["host_bridge"]["exposed_options"]
+        actual = {
+            option: {"arity": arity, "repeatable": repeatable}
+            for option, (arity, repeatable) in bridge.BRIDGE_OPTION_SPECS.items()
+        }
+        command_options = {
+            flag.split(maxsplit=1)[0]
+            for command in contract["commands"]
+            for flag in command["flags"]
+            if flag != "--"
+        }
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(set(expected), command_options)
+        self.assertEqual(contract["host_bridge"]["path_delimiter"], "--")
+        self.assertEqual(contract["host_bridge"]["unknown_options"], "reject")
+
+    def test_remote_retirement_is_accepted_and_forwarded_without_rewriting(
+        self,
+    ) -> None:
+        output, run = self.invoke_main(self.event(self.retirement_command))
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], shlex.split(self.retirement_command))
+
+    def test_remote_retirement_contract_rejects_incomplete_or_unsafe_calls(
+        self,
+    ) -> None:
+        commands = (
+            self.retirement_command.replace(
+                " --expected-remote-oid " + "d" * 40, "", 1
+            ),
+            self.retirement_command.replace(
+                " --ci-status SUCCESS", " --ci-status FAILED", 1
+            ),
+            self.retirement_command.replace(
+                " --ci-verification-source human_authenticated_ui",
+                " --ci-verification-source not_required",
+                1,
+            ),
+            self.retirement_command + " -- scripts/runner.py",
+            self.retirement_command.replace(
+                " --retire-remote-branch ",
+                " --resume-publish " + "a" * 40 + " --retire-remote-branch ",
+                1,
+            ),
+        )
+
+        for command in commands:
+            with self.subTest(command=command):
+                with self.assertRaises(bridge.BridgeError):
+                    bridge.validate_hook_event(self.event(command))
+
     def test_commit_only_is_accepted_and_forwarded_without_rewriting(self) -> None:
         output, run = self.invoke_main(self.event(self.commit_only_command))
 
@@ -383,6 +514,42 @@ class GitFinalizerBridgeTest(unittest.TestCase):
 
                 self.assertEqual(stdout.getvalue(), "")
                 run.assert_not_called()
+
+    def test_unpublished_queue_path_data_passes_through_without_bridge_allow(
+        self,
+    ) -> None:
+        command = " ".join(
+            (
+                "/usr/bin/python3",
+                "-B",
+                "/home/hsd/.agents/skills/three-tool-git-workflow/unpublished_queue.py",
+                "upsert",
+                "--repo",
+                shlex.quote(str(self.repo)),
+                "--workstream",
+                "self-release",
+                "--publication-decision",
+                "intentionally_unpublished",
+                "--finalization-scope",
+                "not_applicable",
+                "--finalization-outcome",
+                "not_run",
+                "--path",
+                "codex-git-finalize",
+            )
+        )
+        stdin = io.StringIO(json.dumps(self.event(command)))
+        stdout = io.StringIO()
+        run = mock.Mock(return_value=(0, "synthetic success"))
+        with (
+            mock.patch.object(sys, "stdin", stdin),
+            mock.patch.object(sys, "stdout", stdout),
+            mock.patch.object(bridge, "run_finalizer", run),
+        ):
+            bridge.main()
+
+        self.assertEqual(stdout.getvalue(), "")
+        run.assert_not_called()
 
     def test_commands_that_can_execute_finalizer_stay_denied(self) -> None:
         commands = (
@@ -576,6 +743,7 @@ class GitFinalizerBridgeTest(unittest.TestCase):
             prefix.replace(" --message 'validated message'", " --message", 1)
             + " -- "
             + paths,
+            prefix + " --allow-test-fixture -- " + paths,
         )
 
         for command in commands:

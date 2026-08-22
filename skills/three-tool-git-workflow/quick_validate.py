@@ -90,6 +90,15 @@ FINALIZER_MODE_MARKERS = (
     "root commit 继续使用 `--resume-initial-publish`",
     "不得重跑会创建提交的模式或重复制造 commit",
     "tag、Release、Artifact 和 deployment",
+    "--retire-remote-branch <branch>",
+    "expected-OID compare-and-delete",
+    "lease-bound compare-and-delete",
+    "不删除 local branch/worktree",
+)
+TOOLCHAIN_MARKERS = (
+    "Worktree Controller 是计划中的独立第 4 个生命周期工具，当前不可用",
+    "`toolchain_compatibility.json`",
+    "incompatible change",
 )
 QUEUE_MARKERS = (
     "### Completed-but-Unpublished Queue",
@@ -250,6 +259,9 @@ def validation_errors(skill_path: Path) -> list[str]:
     for marker in QUEUE_MARKERS:
         if marker not in content:
             errors.append(f"unpublished queue contract is missing: {marker}")
+    for marker in TOOLCHAIN_MARKERS:
+        if marker not in content:
+            errors.append(f"toolchain workflow contract is missing: {marker}")
 
     for relative in REQUIRED_REFERENCES:
         reference = skill_path / relative

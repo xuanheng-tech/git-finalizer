@@ -13,6 +13,27 @@ section is invented for it.
 
 ## Unreleased
 
+## 0.7.0 - 2026-08-22
+
+- Added: `--retire-remote-branch` performs ancestry-only remote feature-branch retirement with
+  explicit integration target, expected remote OID, optional CI evidence, and a read-only dry-run.
+- Safety: Retirement reuses the protected-branch authority, rejects the live default branch and
+  local lifecycle dependencies, and deletes only through an exact expected-OID lease-bound refspec.
+- Verification: Success proves the remote and remote-tracking refs are absent, the integration OID
+  is unchanged, and local HEAD, index, worktree, and tags are unchanged; bounded JSON provides a
+  deterministic receipt and truthful absent, blocked, or unverified results.
+- Added: Public CLI contracts and ToolSkillManifest v1 bind the three tool versions to the one
+  canonical workflow Skill and an explicit toolchain compatibility contract.
+- Added: `codex-skill-sync` reports binary/Skill drift, validates release inputs, stages complete
+  versioned bundles, atomically switches a pair-level `CURRENT` pointer, and supports explicit
+  transactional production activation and whole-pair rollback for stable entries, Skill, and bridge.
+- Fixed: The PreToolUse bridge now accepts and exactly forwards repeatable `--allow-test-fixture`
+  and `--allow-large-binary` values; its option arity and repeatability are checked against the
+  public CLI contract, and bundle verification rejects a mismatched bridge.
+- Fixed: Exact versioned/live Completed-but-Unpublished queue helper calls may carry
+  `codex-git-finalize` as inert path data without being mistaken for a wrapped Finalizer execution;
+  shell, interpreter, composite-command, and unknown-option execution paths remain rejected.
+
 ## 0.6.1 - 2026-08-22
 
 - Added: `--publish-existing-branch <full-head-oid>` first-publishes an existing clean attached

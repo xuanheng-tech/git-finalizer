@@ -65,6 +65,40 @@ INERT_GIT_SUBCOMMANDS = frozenset(
         "status",
     }
 )
+LIFECYCLE_HELPERS = frozenset(
+    {
+        "/home/hsd/.agents/skills/three-tool-git-workflow/unpublished_queue.py",
+        "/home/hsd/projects/git-finalizer/skills/three-tool-git-workflow/unpublished_queue.py",
+    }
+)
+LIFECYCLE_HELPER_COMMANDS = frozenset(
+    {"close", "migration-dry-run", "review", "summary", "upsert", "validate"}
+)
+BRIDGE_OPTION_SPECS: dict[str, tuple[int, bool]] = {
+    "--allow-large-binary": (1, True),
+    "--allow-test-fixture": (1, True),
+    "--ci-commit-oid": (1, False),
+    "--ci-required": (0, False),
+    "--ci-status": (1, False),
+    "--ci-verification-source": (1, False),
+    "--ci-verified-at": (1, False),
+    "--dry-run": (0, False),
+    "--expected-remote-oid": (1, False),
+    "--initial-branch-publish": (0, False),
+    "--initial-publish": (0, False),
+    "--integrated-into": (1, False),
+    "--message": (1, False),
+    "--mode": (1, False),
+    "--publish-existing-branch": (1, False),
+    "--remote": (1, False),
+    "--remote-branch": (1, False),
+    "--repo": (1, False),
+    "--resume-initial-publish": (1, False),
+    "--resume-publish": (1, False),
+    "--retire-remote-branch": (1, False),
+    "--snapshot": (1, False),
+    "--summary": (0, False),
+}
 
 
 class BridgeError(Exception):
@@ -172,10 +206,25 @@ def _is_inert_sed_reference(arguments: list[str]) -> bool:
     ) is not None and all(not argument.startswith("-") for argument in arguments[2:])
 
 
+def _is_lifecycle_helper_passthrough(segment: list[str]) -> bool:
+    if segment[0] not in ("python3", "/usr/bin/python3"):
+        return False
+    arguments = segment[1:]
+    if arguments[:1] == ["-B"]:
+        arguments = arguments[1:]
+    return (
+        len(arguments) >= 2
+        and arguments[0] in LIFECYCLE_HELPERS
+        and arguments[1] in LIFECYCLE_HELPER_COMMANDS
+    )
+
+
 def _is_inert_reference_segment(segment: list[str]) -> bool:
     arguments = segment[1:]
     if segment[0] == FINALIZER:
         return arguments in (["--help"], ["--version"])
+    if _is_lifecycle_helper_passthrough(segment):
+        return True
     if segment[0] == "/home/hsd/bin/codex-diff-audit":
         return True
     executable = PurePosixPath(segment[0])
@@ -344,53 +393,38 @@ def parse_direct_finalizer(
         options = argv[1:]
         path_values = []
     parsed: dict[str, str] = {}
-    dry_run = False
-    summary = False
-    initial_publish = False
-    initial_branch_publish = False
+    switches: set[str] = set()
+    repeated: dict[str, list[str]] = {}
     index = 0
     while index < len(options):
         option = options[index]
-        if option == "--dry-run":
-            if dry_run:
-                raise BridgeError("Finalizer --dry-run 不得重复")
-            dry_run = True
-            index += 1
-            continue
-        if option == "--summary":
-            if summary:
-                raise BridgeError("Finalizer --summary 不得重复")
-            summary = True
-            index += 1
-            continue
-        if option == "--initial-publish":
-            if initial_publish:
-                raise BridgeError("Finalizer --initial-publish 不得重复")
-            initial_publish = True
-            index += 1
-            continue
-        if option == "--initial-branch-publish":
-            if initial_branch_publish:
-                raise BridgeError("Finalizer --initial-branch-publish 不得重复")
-            initial_branch_publish = True
-            index += 1
-            continue
-        if option not in (
-            "--message",
-            "--mode",
-            "--remote",
-            "--remote-branch",
-            "--repo",
-            "--publish-existing-branch",
-            "--resume-initial-publish",
-            "--resume-publish",
-            "--snapshot",
-        ) or index + 1 >= len(options):
+        spec = BRIDGE_OPTION_SPECS.get(option)
+        if spec is None:
             raise BridgeError("Finalizer 包含未授权参数或缺少参数值")
-        if option in parsed:
+        arity, repeatable = spec
+        if arity == 0:
+            if option in switches:
+                raise BridgeError("Finalizer 参数不得重复")
+            switches.add(option)
+            index += 1
+            continue
+        if arity != 1 or index + 1 >= len(options):
+            raise BridgeError("Finalizer 包含未授权参数或缺少参数值")
+        value = options[index + 1]
+        if repeatable:
+            if value.startswith("--"):
+                raise BridgeError("Finalizer 包含未授权参数或缺少参数值")
+            repeated.setdefault(option, []).append(value)
+        elif option in parsed:
             raise BridgeError("Finalizer 参数不得重复")
-        parsed[option] = options[index + 1]
+        else:
+            parsed[option] = value
         index += 2
+
+    dry_run = "--dry-run" in switches
+    initial_publish = "--initial-publish" in switches
+    initial_branch_publish = "--initial-branch-publish" in switches
+    ci_required = "--ci-required" in switches
 
     mode = parsed.get("--mode")
     if mode is not None and mode not in ("commit-only", "verify-only"):
@@ -399,6 +433,8 @@ def parse_direct_finalizer(
     resume_initial_oid = parsed.get("--resume-initial-publish")
     resume_publish_oid = parsed.get("--resume-publish")
     publish_existing_oid = parsed.get("--publish-existing-branch")
+    retirement_branch = parsed.get("--retire-remote-branch")
+    retirement = retirement_branch is not None
     existing_publish_entries = tuple(
         value
         for value in (resume_initial_oid, resume_publish_oid, publish_existing_oid)
@@ -408,10 +444,14 @@ def parse_direct_finalizer(
         raise BridgeError("Finalizer existing commit 发布入口只能选择一个")
     resume = resume_initial_oid is not None or resume_publish_oid is not None
     publish_existing = publish_existing_oid is not None
-    if resume or publish_existing:
+    if (resume or publish_existing or retirement) and repeated:
+        raise BridgeError(
+            "Finalizer existing-commit/retirement operation 不接受 fixture 或 binary exception"
+        )
+    if resume or publish_existing or retirement:
         if delimiters:
             raise BridgeError(
-                "Finalizer existing commit 发布不接受 -- 分隔符或文件路径"
+                "Finalizer explicit lifecycle operation 不接受 -- 分隔符或文件路径"
             )
         paths: tuple[str, ...] = ()
     else:
@@ -421,14 +461,14 @@ def parse_direct_finalizer(
 
     required = (
         {"--repo"}
-        if verify_only or resume or publish_existing
+        if verify_only or resume or publish_existing or retirement
         else {"--message", "--repo"}
     )
     if not required.issubset(parsed):
         if verify_only:
             raise BridgeError("Finalizer verify-only 必须显式提供 --repo")
-        if resume or publish_existing:
-            raise BridgeError("Finalizer resume 必须显式提供 --repo")
+        if resume or publish_existing or retirement:
+            raise BridgeError("Finalizer lifecycle operation 必须显式提供 --repo")
         raise BridgeError("Finalizer 必须显式提供 --repo 和 --message")
     if mode in ("commit-only", "verify-only") and (
         initial_publish or initial_branch_publish
@@ -439,6 +479,23 @@ def parse_direct_finalizer(
             raise BridgeError("Finalizer --mode verify-only 不接受 --message")
         if dry_run:
             raise BridgeError("Finalizer --mode verify-only 不接受 --dry-run")
+    if retirement:
+        if (
+            mode is not None
+            or initial_publish
+            or initial_branch_publish
+            or resume
+            or publish_existing
+        ):
+            raise BridgeError("Finalizer remote retirement 不接受其他 mode 或发布入口")
+        if (
+            "--message" in parsed
+            or "--snapshot" in parsed
+            or "--remote-branch" in parsed
+        ):
+            raise BridgeError(
+                "Finalizer remote retirement 不接受 message、snapshot 或 remote-branch"
+            )
     if resume or publish_existing:
         resume_oid = resume_initial_oid or resume_publish_oid or publish_existing_oid
         if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", resume_oid or "") is None:
@@ -459,7 +516,81 @@ def parse_direct_finalizer(
             raise BridgeError("Finalizer resume 不接受 snapshot 或 remote-branch")
     if initial_publish and initial_branch_publish:
         raise BridgeError("Finalizer 发布模式只能选择一个")
-    if resume_initial_oid is not None:
+    if retirement:
+        remote = parsed.get("--remote")
+        integrated_into = parsed.get("--integrated-into")
+        expected_oid = parsed.get("--expected-remote-oid")
+        if (
+            remote is None
+            or retirement_branch is None
+            or integrated_into is None
+            or expected_oid is None
+        ):
+            raise BridgeError(
+                "Finalizer remote retirement 必须显式提供 remote、integration target 和 expected OID"
+            )
+        for label, value in (
+            ("--remote", remote),
+            ("--retire-remote-branch", retirement_branch),
+            ("--integrated-into", integrated_into),
+        ):
+            if (
+                not value
+                or value.startswith("-")
+                or any(character in value for character in ("\x00", "\n", "\r", "\t"))
+            ):
+                raise BridgeError(f"Finalizer {label} 不是有效的单行值")
+        if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", expected_oid) is None:
+            raise BridgeError(
+                "Finalizer expected remote OID 必须是完整小写十六进制 OID"
+            )
+        ci_options = {
+            "--ci-status",
+            "--ci-commit-oid",
+            "--ci-verification-source",
+            "--ci-verified-at",
+        }
+        supplied_ci_options = ci_options.intersection(parsed)
+        if ci_required:
+            required_ci = {
+                "--ci-status",
+                "--ci-commit-oid",
+                "--ci-verification-source",
+            }
+            if not required_ci.issubset(parsed):
+                raise BridgeError("Finalizer required CI evidence 不完整")
+            ci_oid = parsed["--ci-commit-oid"]
+            if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", ci_oid) is None:
+                raise BridgeError("Finalizer CI commit OID 必须是完整小写十六进制 OID")
+            if parsed["--ci-status"] != "SUCCESS":
+                raise BridgeError("Finalizer required CI status 必须是 SUCCESS")
+            if parsed["--ci-verification-source"] not in (
+                "tool_authenticated",
+                "human_authenticated_ui",
+            ):
+                raise BridgeError("Finalizer required CI verification source 无效")
+            verified_at = parsed.get("--ci-verified-at", "")
+            if len(verified_at) > 128 or any(
+                character in verified_at for character in ("\x00", "\n", "\r", "\t")
+            ):
+                raise BridgeError("Finalizer CI verified-at 不是有效的单行值")
+        elif supplied_ci_options:
+            raise BridgeError("Finalizer CI evidence 参数要求同时指定 --ci-required")
+    elif ci_required or any(
+        option in parsed
+        for option in (
+            "--ci-status",
+            "--ci-commit-oid",
+            "--ci-verification-source",
+            "--ci-verified-at",
+            "--integrated-into",
+            "--expected-remote-oid",
+        )
+    ):
+        raise BridgeError(
+            "Finalizer retirement 参数只允许与 --retire-remote-branch 一起使用"
+        )
+    elif resume_initial_oid is not None:
         remote = parsed.get("--remote")
         if remote is None:
             raise BridgeError("Finalizer root resume 必须显式提供 --remote")

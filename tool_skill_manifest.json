@@ -1,0 +1,40 @@
+{
+  "canonical_skill": {
+    "owner": "git-finalizer",
+    "path": "skills/three-tool-git-workflow/SKILL.md"
+  },
+  "canonical_skill_sha256": "b130f34952f7371e580bc70fefabb8a762f827fbf0d7f15eb11b6ae36f8328fd",
+  "compatible_toolchain_contract_version": 1,
+  "executable": {
+    "entrypoints": [
+      "codex-git-finalize"
+    ],
+    "kind": "source_files",
+    "paths": [
+      "codex-git-finalize",
+      "codex-git-finalize-snapshot-verify.py",
+      "hooks/codex_git_finalize_bridge.py",
+      "codex-skill-sync",
+      "tooling/codex_skill_sync.py"
+    ],
+    "production_targets": {
+      "codex-git-finalize": "bin/codex-git-finalize",
+      "codex-git-finalize-snapshot-verify.py": "bin/codex-git-finalize-snapshot-verify.py",
+      "codex-skill-sync": "bin/codex-skill-sync",
+      "hooks/codex_git_finalize_bridge.py": "hooks/codex_git_finalize_bridge.py",
+      "tooling/codex_skill_sync.py": "bin/codex-skill-sync-support/codex_skill_sync.py"
+    }
+  },
+  "install_targets": {
+    "skill_directory": "three-tool-git-workflow",
+    "stable_entries": [
+      "codex-git-finalize"
+    ]
+  },
+  "public_cli_contract_sha256": "06c3ac56a4559a67a9afcd8ca3d18f30b35a13344b2affe42ef572c30373174e",
+  "schema_version": 1,
+  "skill_contract_version": 1,
+  "tool_commit": "@release",
+  "tool_name": "git-finalizer",
+  "tool_version": "0.7.0"
+}

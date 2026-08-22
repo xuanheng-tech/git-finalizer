@@ -2,7 +2,7 @@
 
 Codex Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`0.6.1`
+当前版本：`0.7.0`
 
 ## 使用方式
 
@@ -133,9 +133,38 @@ heads 尚不可达的 commits 执行既有 commit-range 安全检查，再以 no
 `--set-upstream` 的精确 branch refspec 首次发布。post-verify 要求 HEAD 和 commit history 不变、
 远端 OID 与 HEAD 相同、upstream 精确、ahead/behind 为 `0/0` 且 index/worktree clean。
 
+已完成集成的远端 feature branch 使用独立 retirement operation；它不删除本地 branch 或
+worktree，也不复用 commit/publish mode：
+
+```bash
+codex-git-finalize \
+  --retire-remote-branch feat/example \
+  --remote origin \
+  --integrated-into main \
+  --expected-remote-oid <full-feature-oid> \
+  --repo /home/user/projects/example \
+  --dry-run
+```
+
+每次 retirement 都重新 fetch 并查询 live remote，只接受 `refs/heads/*`，拒绝受保护分支和
+remote default branch，要求 clean attached worktree、feature OID 精确匹配、feature commit
+是 live integration target 的 ancestor，且没有 checkout、local-only/remote-only 或其他
+local upstream 依赖。需要 CI 时增加 `--ci-required --ci-status SUCCESS --ci-commit-oid <oid>`
+以及 `--ci-verification-source tool_authenticated|human_authenticated_ui`；CI OID 必须等于 live
+integration target OID。
+
+实际删除只使用绑定 exact expected OID 的
+`--force-with-lease=<ref>:<expected> <remote> :<ref>` compare-and-delete；它不是 unconditional
+force push。删除后工具实时确认 remote ref 缺失，执行 `fetch --prune`，并验证 remote-tracking
+ref 缺失、integration OID 未变、HEAD/index/worktree/tags 未变。`--summary` 的
+`mode_result.result` 为 `REMOTE_BRANCH_RETIRED_VERIFIED`、`ALREADY_ABSENT_VERIFIED`、
+`RETIREMENT_PREFLIGHT_PASSED`、`RETIREMENT_BLOCKED` 或 `REMOTE_DELETE_UNVERIFIED`，同时构成
+deterministic retirement receipt；Finalizer 不另建持久 audit store。
+
 ### 有界结果摘要
 
-normal、commit-only、verify-only、initial、initial-branch、publish-existing-branch 和 resume 均可显式加入
+normal、commit-only、verify-only、initial、initial-branch、publish-existing-branch、retirement
+和 resume 均可显式加入
 `--summary`，以单行确定性 JSON 代替原有阶段输出：
 
 ```bash
@@ -167,13 +196,23 @@ HEAD/remote/worktree、已完成阶段和是否仍需恢复；commit-only 另含
 若序列化本身失败，fallback 会同时保留 Git 操作状态和原退出码。
 
 PreToolUse bridge 将 `--summary`、严格的 `--mode commit-only|verify-only`、通用
-`--publish-existing-branch`、`--resume-publish` 及兼容的 root resume 入口原样转发；其调用授权、路径校验、停止条件和输出
+`--publish-existing-branch`、`--resume-publish`、显式 remote retirement 及兼容的 root resume
+入口原样转发；其调用授权、路径校验、停止条件和输出
 上限不变。
 
 ## Codex PreToolUse bridge
 
 Git Finalizer Hook 的版本化源、测试、只读漂移检查和显式恢复入口见
 [`hooks/README.md`](hooks/README.md)。
+
+## Tool / Skill release pairing
+
+本仓库同时是三工具共同 Skill 与最小 release pairing 基础设施的 owner；不拥有 Context Loader
+或 Snapshot Runner 的实现。`tool_cli_contract.json`、`tool_skill_manifest.json`、
+`toolchain_compatibility.json` 和 `codex-skill-sync` 的合同、隔离安装与显式生产激活流程见
+[`docs/codex-skill-sync.md`](docs/codex-skill-sync.md)。Skill Sync 的 `CURRENT` 只指向一个完整
+ToolReleaseBundle；`--activate-production` 在完整验证后事务化同步稳定入口、active Skill 与
+Git Finalizer bridge，并为整组回滚保留 production `PREVIOUS`。
 
 ## 工作流边界
 

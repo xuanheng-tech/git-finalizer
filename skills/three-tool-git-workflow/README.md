@@ -1,6 +1,6 @@
 # Versioned Three-tool Git workflow Skill
 
-权威源位于：
+唯一 active canonical Skill source 位于：
 
 ```text
 /home/hsd/projects/git-finalizer/skills/three-tool-git-workflow/
@@ -12,7 +12,8 @@ live 目标位于：
 /home/hsd/.agents/skills/three-tool-git-workflow/
 ```
 
-只读检查 source/live 文件清单、SHA-256、权限和未知 live 文件：
+`README.md`、reference 或 installed copy 都不是第二个 authority。只读检查 source/live 文件
+清单、SHA-256、权限和未知 live 文件：
 
 ```bash
 just skill-check
@@ -31,3 +32,7 @@ just skill-install
 四态发布决策保持 `explicit-only`，不会启用默认自动 commit/push。该仓库只拥有这一三工具
 工作流集成资产，不拥有 Context Loader 或 Snapshot Runner 的实现。Completed-but-Unpublished
 Queue 只持久化用户私有 control-plane metadata，不执行 Git finalization 或 worktree 清理。
+
+跨三工具的 binary/entry identity、Skill payload、CLI contract 和兼容性由仓库根目录的
+`codex-skill-sync` 验证。旧的 `deploy.py` 保留为已安装 Skill 的兼容检查/显式恢复入口；新发布
+流程以完整 ToolReleaseBundle 的 pair-level `CURRENT` 原子切换为 authority，不得只更新 Skill。

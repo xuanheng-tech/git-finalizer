@@ -4,6 +4,9 @@
 
 Git Finalizer 只负责适用的本地提交前验证、显式路径暂存、commit，以及由默认或显式发布/恢复接口授权的 fast-forward-safe push 和远端 post-verify；它不实施代码、不运行测试、不审查 diff，也不解决冲突。initial、initial-branch 和 resume 仍是独立的首次发布或恢复接口。
 
+远端 feature branch retirement 是独立操作，不属于 commit/publish mode。它只在明确授权下用
+expected-OID lease 退役已 ancestry-integrated 的远端 branch，不删除 local worktree/branch。
+
 选择模式不得扩大用户原有的 commit/push 授权：只验证使用 `--mode verify-only`，只授权本地 commit 使用 `--mode commit-only`，只有明确授权 commit 和 push 且任务达到交付状态才使用默认模式。调用绝对入口 `/home/hsd/bin/codex-git-finalize` 前，还必须满足：
 
 - 实现已完成，相关测试和检查实际通过；
@@ -203,7 +206,47 @@ resume 要求当前 HEAD 仍是唯一、非空的 root commit，symbolic branch 
 
 ## `--dry-run`
 
-normal、commit-only 和 initial 模式可增加 `--dry-run`，用于报告显式范围和静态风险。它不执行 `git add`、commit、fetch 或 push；也不实时证明远端 branch、ahead/behind 或空 remote 状态。verify-only 本身是严格只读验证且不接受 `--dry-run`；resume 不支持 dry-run。dry-run 不替代测试、Runner 审查或真实发布后的验证。
+normal、commit-only 和 initial 模式可增加 `--dry-run`，用于报告显式范围和静态风险。它不执行 `git add`、commit、fetch 或 push；也不实时证明远端 branch、ahead/behind 或空 remote 状态。verify-only 本身是严格只读验证且不接受 `--dry-run`；resume 不支持 dry-run。
+
+retirement 的 `--dry-run` 不同：它会执行 live `fetch`/`ls-remote` 并完成全部 preflight，但不
+push delete；成功结果必须是 `RETIREMENT_PREFLIGHT_PASSED`。两类 dry-run 都不能替代真实操作
+后的 post-verify。
+
+## Remote feature branch retirement
+
+```bash
+/home/hsd/bin/codex-git-finalize \
+  --summary \
+  --retire-remote-branch <branch-or-refs/heads/branch> \
+  --remote <remote-name> \
+  --integrated-into <branch-or-refs/heads/branch> \
+  --expected-remote-oid <full-feature-oid> \
+  --repo <absolute-repo> \
+  --dry-run
+```
+
+删除前必须去掉 `--dry-run` 并取得对确切 remote/ref 的明确授权。工具每次重新 fetch 和查询 live
+refs，只接受 `refs/heads/*`；拒绝 symbolic ref、tag、remote default branch 以及复用既有
+protected-branch authority 判定的 `main`、`master`、`trunk`、`production`。preflight 要求
+attached 且完全 clean、feature live OID 等于 expected OID、integration target 存在、feature
+commit 是其 ancestor，并且目标 branch 没有 attached worktree、local-only/remote-only 差异或
+其他 local branch 的 required upstream 依赖。squash、tree/semantic equivalence 在 v1 一律
+`RETIREMENT_BLOCKED`。
+
+repository policy 要求 CI 时，必须同时传
+`--ci-required --ci-status SUCCESS --ci-commit-oid <live-integration-oid>` 以及
+`--ci-verification-source tool_authenticated|human_authenticated_ui`；可选
+`--ci-verified-at <timestamp>` 只记录外部证据时间，不替代 OID/status gate。私有 CI 不可认证时
+停止，不尝试绕过认证。
+
+实际 delete 只允许 Git 的
+`--force-with-lease=refs/heads/<branch>:<expected-oid> <remote> :refs/heads/<branch>`；这是绑定精确
+OID 的 compare-and-delete，不是 unconditional force push。并发更新造成 lease mismatch 时
+fail closed。随后必须 live 验证目标 ref 缺失、integration OID 未变，执行 `fetch --prune`，并
+确认 remote-tracking ref、HEAD/index/worktree/tags 均未变化。摘要中的 `mode_result` 是确定性
+receipt，result 只取 `REMOTE_BRANCH_RETIRED_VERIFIED`、`ALREADY_ABSENT_VERIFIED`、
+`RETIREMENT_PREFLIGHT_PASSED`、`RETIREMENT_BLOCKED` 或 `REMOTE_DELETE_UNVERIFIED`；工具不另建
+持久 audit store。
 
 ## Release 流程边界
 

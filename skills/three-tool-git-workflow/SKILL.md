@@ -28,10 +28,18 @@ description: "用于实现、修复、重构或其他代码与仓库文件修改
 
 ## 总体流程
 
-1. 读取适用规则；在正式代码任务开始时按需使用 Context Loader 获取确定性的本地仓库上下文。调用和失败处理见 [references/context-loader.md](references/context-loader.md)。
-2. 在三工具之外实施最小范围变更，并运行从定向到必要完整度的实际测试与检查。记录真实结果；任何工具输出都不能替代测试。
-3. 按风险选择 Snapshot Runner 命令，默认显式使用 `--summary` 作首轮判断；仅在摘要异常、证据不足或任务需要具体内容时读取正式 artifact。命令选择、摘要充分性、展开条件和产物语义见 [references/snapshot-runner.md](references/snapshot-runner.md)。
-4. 需要复用 Finalizer 的本地提交前验证或执行已授权 Git 写入时，按下表选择模式；所有模式默认显式启用 `--summary`，结果消费、展开和停止语义见 [references/git-finalizer.md](references/git-finalizer.md)。
+Worktree Controller 是计划中的独立第 4 个生命周期工具，当前不可用；不得假装它已经完成
+worktree 创建或清理。当前可执行流程是：
+
+1. 未来由 Worktree Controller 准备隔离 worktree；目前由调用方按现有安全流程准备。
+2. 读取适用规则；在正式代码任务开始时按需使用 Context Loader 获取确定性的本地仓库上下文。调用和失败处理见 [references/context-loader.md](references/context-loader.md)。
+3. 在三工具之外实施最小范围变更，并运行从定向到必要完整度的实际测试与检查。记录真实结果；任何工具输出都不能替代测试。
+4. 按风险选择 Snapshot Runner 命令，默认显式使用 `--summary` 作首轮判断；仅在摘要异常、证据不足或任务需要具体内容时读取正式 artifact。命令选择、摘要充分性、展开条件和产物语义见 [references/snapshot-runner.md](references/snapshot-runner.md)。
+5. 需要复用 Finalizer 的本地提交前验证、执行已授权 Git 写入或显式退役远端 feature branch 时，按下表及 reference 选择独立接口；所有模式默认显式启用 `--summary`，结果消费、展开和停止语义见 [references/git-finalizer.md](references/git-finalizer.md)。
+6. 未来由 Worktree Controller 清理 worktree；目前 Git Finalizer 不删除 local worktree 或 branch。
+
+`toolchain_compatibility.json` 是总体 contract version 绑定。任一工具的 public contract 发生
+incompatible change 而未同步更新该文件时，兼容检查必须失败。
 
 简单、局部且不发布的任务可跳过 Runner；不要机械运行四个 Runner 命令。需要发布时，只选择足以证明发布门槛的最小相关 Runner 集合，通常至少审查当前 diff；不得因为任务简单而跳过 Git Finalizer 所要求的 Snapshot Runner 审查。
 
@@ -46,6 +54,7 @@ description: "用于实现、修复、重构或其他代码与仓库文件修改
 | 已明确授权 commit 和 push，且任务已达到交付状态 | 默认模式（不传 `--mode`） | commit、push、远端 post-verify |
 | 已存在普通 local commits，已明确授权继续 push | `--resume-publish <full-head-oid> --repo <absolute-repo>` | 不创建 commit；发布 configured upstream 并远端 post-verify |
 | 已存在 clean feature branch、无 upstream、远端同名 branch 不存在，已明确授权首次发布 | `--publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>` | 不创建 commit；non-force 首次发布、设置 upstream 并远端 post-verify |
+| 已完成 ancestry-provable integration，明确授权退役 remote feature ref | `--retire-remote-branch <branch> --remote <name> --integrated-into <branch> --expected-remote-oid <full-oid> --repo <absolute-repo>` | 不创建 commit；expected-OID compare-and-delete、远端 post-verify |
 
 ```bash
 /home/hsd/bin/codex-git-finalize --summary --mode verify-only --repo <absolute-repo> -- <repo-relative-file>...
@@ -53,6 +62,7 @@ description: "用于实现、修复、重构或其他代码与仓库文件修改
 /home/hsd/bin/codex-git-finalize --summary --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
 /home/hsd/bin/codex-git-finalize --summary --resume-publish <full-head-oid> --repo <absolute-repo>
 /home/hsd/bin/codex-git-finalize --summary --publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
+/home/hsd/bin/codex-git-finalize --summary --retire-remote-branch <branch> --remote <name> --integrated-into <branch> --expected-remote-oid <full-oid> --repo <absolute-repo> --dry-run
 ```
 
 - 三种模式共用适用于各自执行边界的本地提交前检查；`verify-only` 不实际运行 commit hooks、签名或索引写入，因此不得声称验证了这些能力。
@@ -66,6 +76,10 @@ description: "用于实现、修复、重构或其他代码与仓库文件修改
 - clean attached feature branch 尚无 upstream 且 explicit 同名 remote branch 不存在时，使用
   `--publish-existing-branch`；它绑定完整 HEAD OID，不创建 commit，拒绝受保护分支和任何既有
   upstream，并在 non-force 首次 push 后验证 upstream、remote OID 与 `0/0`。
+- remote retirement 是与 publish mode 分离的显式 remote mutation。它只接受非受保护、非
+  default 的 `refs/heads/*`，每次重新 fetch，要求 exact expected OID、ancestry、local lifecycle
+  与 CI gate 通过，使用 lease-bound compare-and-delete，随后验证 remote 缺失和本地状态不变；
+  不删除 local branch/worktree，不做 force push 或 semantic-equivalence retirement。
 - 不得重跑会创建提交的模式或重复制造 commit。
 - tag、Release、Artifact 和 deployment 继续属于独立 Release 流程，不并入任何 Git Finalizer 模式。
 

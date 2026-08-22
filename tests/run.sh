@@ -1834,7 +1834,7 @@ test_release_contract() {
     printf '%s\n' '#!/usr/bin/env bash' ": >\"\$GIT_PROBE\"" 'exit 97' \
         >"$fake_bin/git"
     chmod 700 "$fake_bin/git"
-    printf 'codex-git-finalize 0.6.1\n' >"$version_expected"
+    printf 'codex-git-finalize 0.7.0\n' >"$version_expected"
 
     GIT_PROBE="$git_probe" PATH="$fake_bin:$PATH" \
         "$finalizer" --version >"$version_output" 2>"$version_error"
@@ -1862,13 +1862,15 @@ test_release_contract() {
         'existing-commit resume entry missing from help'
     assert_file_contains "$help_output" '--publish-existing-branch' \
         'existing clean branch first-publish entry missing from help'
+    assert_file_contains "$help_output" '--retire-remote-branch' \
+        'remote branch retirement entry missing from help'
     assert_file_contains "$help_output" '--allow-large-binary' \
         'large binary override missing from help'
     assert_file_contains "$help_output" '--snapshot' \
         'snapshot evidence option missing from help'
     assert_file_contains "$project_root/codex-git-finalize" \
-        'readonly VERSION="0.6.1"' 'script version constant drifted'
-    assert_file_contains "$project_root/README.md" "当前版本：\`0.6.1\`" \
+        'readonly VERSION="0.7.0"' 'script version constant drifted'
+    assert_file_contains "$project_root/README.md" "当前版本：\`0.7.0\`" \
         'README version drifted'
     [[ -f "$project_root/codex-git-finalize-snapshot-verify.py" ]] ||
         fail_assertion 'snapshot verifier companion is missing'
@@ -1964,3 +1966,4 @@ bash "$project_root/tests/test_publish_existing_branch.sh"
 bash "$project_root/tests/test_resume_initial_publish.sh"
 bash "$project_root/tests/test_resume_publish.sh"
 bash "$project_root/tests/test_summary.sh"
+bash "$project_root/tests/test_retire_remote_branch.sh"

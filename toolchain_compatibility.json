@@ -1,0 +1,31 @@
+{
+  "context_loader_contract_version": 1,
+  "git_finalizer_contract_version": 1,
+  "schema_version": 1,
+  "snapshot_runner_contract_version": 1,
+  "toolchain_contract_version": 1,
+  "tools": {
+    "context-loader": {
+      "public_cli_contract_version": 1,
+      "skill_contract_version": 1,
+      "source_directory": "context-loader"
+    },
+    "git-finalizer": {
+      "public_cli_contract_version": 1,
+      "skill_contract_version": 1,
+      "source_directory": "git-finalizer"
+    },
+    "snapshot-runner": {
+      "public_cli_contract_version": 1,
+      "skill_contract_version": 1,
+      "source_directory": "snapshot-runner"
+    }
+  },
+  "workflow_skill": {
+    "canonical_owner": "git-finalizer",
+    "contract_version": 1,
+    "name": "three-tool-git-workflow"
+  },
+  "worktree_controller_contract_version": null,
+  "worktree_controller_status": "planned_unavailable"
+}

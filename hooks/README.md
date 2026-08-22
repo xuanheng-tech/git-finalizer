@@ -8,13 +8,22 @@ bridge 只放行固定绝对路径的 normal、`--mode commit-only`、`--mode ve
 `--initial-branch-publish --remote <name> --remote-branch <name>` 调用，以及不带文件列表的
 `--publish-existing-branch <full-head-oid> --remote <name> --remote-branch <name> --repo <path>`、
 `--resume-publish <full-head-oid> --repo <path>` 和兼容的
-`--resume-initial-publish <full-head-oid> --remote <name> --repo <path>`。initial 模式可额外携带
-一个严格的 `--snapshot <64-lowercase-hex>`。通用 resume 从 configured upstream 推导目标并禁止
+`--resume-initial-publish <full-head-oid> --remote <name> --repo <path>`，以及显式
+`--retire-remote-branch <branch> --remote <name> --integrated-into <branch>` 与
+`--expected-remote-oid <full-oid> --repo <path>`。retirement 可携带完整 CI evidence、`--dry-run`
+和 `--summary`，但不接受文件范围、message、snapshot 或其他 mode。initial 模式可额外携带
+一个严格的 `--snapshot <64-lowercase-hex>`。带显式文件范围的模式可原样转发可重复的
+`--allow-test-fixture <path>` 和 `--allow-large-binary <path>`；bridge 只验证参数 arity，路径语义
+仍由 Finalizer 的正式规则判定。通用 resume 从 configured upstream 推导目标并禁止
 remote；root resume 要求 remote。两者均禁止 message、dry-run、snapshot、remote-branch、其他
 mode 和 `--` 文件范围；publish-existing-branch 同样禁止 message、dry-run、snapshot、其他
 mode 和文件范围，但要求 explicit remote 与 remote-branch。其他未知参数继续拒绝。initial-branch、commit-only 与 verify-only 模式
 禁止 snapshot；normal、commit-only 与 verify-only 模式禁止 remote 和 remote-branch；
 verify-only 还禁止 message 和 dry-run。
+`tool_cli_contract.json` 的 `host_bridge.exposed_options` 是 bridge-exposed public options 的
+机器可读 authority；版本化测试要求 bridge 的 arity/repeatability schema 与其精确一致，未知
+mutation options 继续 fail closed。ToolReleaseBundle 校验也拒绝 CLI contract 与 bundled bridge
+不匹配的组合。
 bridge 将严格解析并规范化的绝对 `--repo` 作为 Finalizer 子进程 cwd；PreToolUse 的会话 cwd
 不是目标仓库权限来源。若本次调用已出现在 transcript，bridge 还会要求其中的原命令、
 `workdir=<repo>` 和 `sandbox_permissions=require_escalated` 精确匹配；任何冲突均拒绝。
@@ -22,6 +31,9 @@ bridge 将严格解析并规范化的绝对 `--repo` 作为 Finalizer 子进程 
 `--version` 时，bridge 不作 allow/deny 决定，而是交回原生 sandbox、approval、execpolicy 和
 其他 Hook。shell wrapper、解释器、`find -exec`、可执行预处理器、带其他参数的元数据查询，
 以及复合命令中的实际 Finalizer 调用仍按固定绝对路径直接调用合同拒绝。
+精确调用 active 或 versioned `unpublished_queue.py` lifecycle helper 时，文件 scope 中出现
+`codex-git-finalize` 仅作为路径数据，bridge 不作 allow/deny 决定并交回正常 sandbox/execpolicy；
+该例外不适用于 Python `-c`、其他脚本、shell wrapper 或复合 Finalizer 执行。
 
 ## 管理范围
 

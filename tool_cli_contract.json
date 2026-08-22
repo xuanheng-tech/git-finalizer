@@ -1,0 +1,345 @@
+{
+  "commands": [
+    {
+      "flags": [
+        "--mode verify-only",
+        "--repo",
+        "--allow-test-fixture",
+        "--allow-large-binary",
+        "--summary",
+        "--"
+      ],
+      "name": "verify_only",
+      "operation_class": "read_only",
+      "preconditions": [
+        "attached_existing_branch",
+        "explicit_file_scope"
+      ],
+      "result_statuses": [
+        "success",
+        "blocked",
+        "failed"
+      ]
+    },
+    {
+      "flags": [
+        "--mode commit-only",
+        "--repo",
+        "--message",
+        "--allow-test-fixture",
+        "--allow-large-binary",
+        "--dry-run",
+        "--summary",
+        "--"
+      ],
+      "name": "commit_only",
+      "operation_class": "local_mutation",
+      "preconditions": [
+        "attached_existing_branch",
+        "explicit_file_scope"
+      ],
+      "result_statuses": [
+        "success",
+        "blocked",
+        "failed"
+      ]
+    },
+    {
+      "flags": [
+        "--repo",
+        "--message",
+        "--allow-test-fixture",
+        "--allow-large-binary",
+        "--dry-run",
+        "--summary",
+        "--"
+      ],
+      "name": "normal_publish",
+      "operation_class": "remote_mutation",
+      "preconditions": [
+        "attached_existing_branch",
+        "explicit_file_scope",
+        "configured_unique_upstream",
+        "fast_forward_safe"
+      ],
+      "result_statuses": [
+        "success",
+        "blocked",
+        "failed",
+        "commit_retained"
+      ]
+    },
+    {
+      "flags": [
+        "--initial-publish",
+        "--remote",
+        "--repo",
+        "--message",
+        "--snapshot",
+        "--allow-test-fixture",
+        "--allow-large-binary",
+        "--dry-run",
+        "--summary",
+        "--"
+      ],
+      "name": "initial_publish",
+      "operation_class": "remote_mutation",
+      "preconditions": [
+        "attached_unborn_branch",
+        "explicit_file_scope",
+        "empty_remote"
+      ],
+      "result_statuses": [
+        "success",
+        "blocked",
+        "failed",
+        "commit_retained"
+      ]
+    },
+    {
+      "flags": [
+        "--initial-branch-publish",
+        "--remote",
+        "--remote-branch",
+        "--repo",
+        "--message",
+        "--allow-test-fixture",
+        "--allow-large-binary",
+        "--dry-run",
+        "--summary",
+        "--"
+      ],
+      "name": "initial_branch_publish",
+      "operation_class": "remote_mutation",
+      "preconditions": [
+        "attached_existing_unprotected_branch",
+        "explicit_file_scope",
+        "remote_target_absent"
+      ],
+      "result_statuses": [
+        "success",
+        "blocked",
+        "failed",
+        "commit_retained"
+      ]
+    },
+    {
+      "flags": [
+        "--resume-initial-publish",
+        "--remote",
+        "--repo",
+        "--summary"
+      ],
+      "name": "resume_initial_publish",
+      "operation_class": "remote_mutation",
+      "preconditions": [
+        "clean_attached_single_root_commit",
+        "full_expected_head_oid",
+        "empty_or_exact_remote_shape"
+      ],
+      "result_statuses": [
+        "success",
+        "blocked",
+        "failed"
+      ]
+    },
+    {
+      "flags": [
+        "--resume-publish",
+        "--repo",
+        "--summary"
+      ],
+      "name": "resume_publish",
+      "operation_class": "remote_mutation",
+      "preconditions": [
+        "clean_attached_branch",
+        "full_expected_head_oid",
+        "configured_upstream",
+        "ahead_at_least_one_and_not_behind"
+      ],
+      "result_statuses": [
+        "success",
+        "blocked",
+        "failed"
+      ]
+    },
+    {
+      "flags": [
+        "--publish-existing-branch",
+        "--remote",
+        "--remote-branch",
+        "--repo",
+        "--summary"
+      ],
+      "name": "publish_existing_branch",
+      "operation_class": "remote_mutation",
+      "preconditions": [
+        "clean_attached_unprotected_branch",
+        "full_expected_head_oid",
+        "no_configured_upstream",
+        "remote_target_absent"
+      ],
+      "result_statuses": [
+        "success",
+        "blocked",
+        "failed"
+      ]
+    },
+    {
+      "flags": [
+        "--retire-remote-branch",
+        "--remote",
+        "--integrated-into",
+        "--expected-remote-oid",
+        "--ci-required",
+        "--ci-status",
+        "--ci-commit-oid",
+        "--ci-verification-source",
+        "--ci-verified-at",
+        "--repo",
+        "--dry-run",
+        "--summary"
+      ],
+      "name": "retire_remote_branch",
+      "operation_class": "remote_mutation",
+      "preconditions": [
+        "clean_attached_worktree",
+        "refs_heads_only",
+        "unprotected_non_default_branch",
+        "live_expected_remote_oid_match",
+        "ancestry_provable_integration",
+        "no_local_lifecycle_blocker",
+        "required_ci_success_for_live_integration_oid"
+      ],
+      "result_statuses": [
+        "REMOTE_BRANCH_RETIRED_VERIFIED",
+        "ALREADY_ABSENT_VERIFIED",
+        "RETIREMENT_PREFLIGHT_PASSED",
+        "RETIREMENT_BLOCKED",
+        "REMOTE_DELETE_UNVERIFIED"
+      ]
+    }
+  ],
+  "contract_version": 1,
+  "flags": {
+    "entrypoint": "codex-git-finalize",
+    "metadata": [
+      "--version",
+      "--help"
+    ],
+    "summary": "bounded_deterministic_json"
+  },
+  "host_bridge": {
+    "exposed_options": {
+      "--allow-large-binary": {
+        "arity": 1,
+        "repeatable": true
+      },
+      "--allow-test-fixture": {
+        "arity": 1,
+        "repeatable": true
+      },
+      "--ci-commit-oid": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--ci-required": {
+        "arity": 0,
+        "repeatable": false
+      },
+      "--ci-status": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--ci-verification-source": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--ci-verified-at": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--dry-run": {
+        "arity": 0,
+        "repeatable": false
+      },
+      "--expected-remote-oid": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--initial-branch-publish": {
+        "arity": 0,
+        "repeatable": false
+      },
+      "--initial-publish": {
+        "arity": 0,
+        "repeatable": false
+      },
+      "--integrated-into": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--message": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--mode": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--publish-existing-branch": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--remote": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--remote-branch": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--repo": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--resume-initial-publish": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--resume-publish": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--retire-remote-branch": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--snapshot": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--summary": {
+        "arity": 0,
+        "repeatable": false
+      }
+    },
+    "path_delimiter": "--",
+    "unknown_options": "reject"
+  },
+  "operation_classes": [
+    "read_only",
+    "local_mutation",
+    "remote_mutation"
+  ],
+  "protected_operations": [
+    "force_push",
+    "protected_branch_mutation",
+    "default_branch_retirement",
+    "tag_mutation",
+    "semantic_equivalence_retirement"
+  ],
+  "schema_version": 1,
+  "tool_name": "git-finalizer",
+  "tool_version": "0.7.0"
+}
