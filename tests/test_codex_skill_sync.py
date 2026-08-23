@@ -182,7 +182,7 @@ class SkillSyncTests(unittest.TestCase):
                     "import argparse\n"
                     "parser = argparse.ArgumentParser(prog='codex-skill-sync')\n"
                     "parser.add_argument('--version', action='version', "
-                    "version='codex-skill-sync 1.1.0')\n"
+                    f"version='codex-skill-sync {sync.VERSION}')\n"
                     "parser.parse_args()\n",
                     encoding="utf-8",
                 )
@@ -524,7 +524,56 @@ class SkillSyncTests(unittest.TestCase):
             text=True,
         )
         self.assertEqual(smoke.returncode, 0, smoke.stderr)
-        self.assertIn("1.1.0", smoke.stdout)
+        self.assertIn(sync.VERSION, smoke.stdout)
+
+    def test_activation_accepts_verified_previous_sync_version(self) -> None:
+        implementation = (
+            self.sources_root
+            / "git-finalizer"
+            / "tooling"
+            / "codex_skill_sync.py"
+        )
+        current_source = implementation.read_text(encoding="utf-8")
+        implementation.write_text(
+            current_source.replace(sync.VERSION, "1.0.0"),
+            encoding="utf-8",
+        )
+        sync.install(
+            self.sources,
+            "git-finalizer",
+            self.install_root,
+            allow_dirty_source=True,
+        )
+        legacy = self._current("git-finalizer")
+        legacy_manifest_path = legacy / "tool_skill_manifest.json"
+        legacy_manifest = sync.read_json(legacy_manifest_path)
+        legacy_manifest["schema_version"] = 1
+        legacy_manifest.pop("compatibility_skill")
+        legacy_manifest["canonical_skill"]["path"] = (
+            f"skills/{sync.COMPATIBILITY_SKILL_NAME}/SKILL.md"
+        )
+        legacy_manifest["install_targets"]["skill_directory"] = (
+            sync.COMPATIBILITY_SKILL_NAME
+        )
+        write_json(legacy_manifest_path, legacy_manifest)
+        shutil.rmtree(legacy / "compatibility")
+        legacy_release_path = legacy / "release_manifest.json"
+        legacy_release = sync.read_json(legacy_release_path)
+        legacy_release["manifest_sha"] = sync.sha256_file(legacy_manifest_path)
+        write_json(legacy_release_path, legacy_release)
+
+        implementation.write_text(current_source, encoding="utf-8")
+        installed = self._install_production("git-finalizer")
+
+        self.assertTrue(installed["production_activation"])
+        smoke = subprocess.run(
+            (str(self.bin_dir / "codex-skill-sync"), "--version"),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(smoke.returncode, 0, smoke.stderr)
+        self.assertIn(sync.VERSION, smoke.stdout)
 
     def test_production_verification_failure_restores_active_pair(self) -> None:
         binary = self.bin_dir / "codex-git-finalize"

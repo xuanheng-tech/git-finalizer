@@ -19,7 +19,7 @@ import tomllib
 from typing import Any, Sequence
 
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 SCHEMA_VERSION = 1
 TOOL_SKILL_MANIFEST_SCHEMA_VERSION = 2
 SKILL_NAME = "git-change-delivery"
@@ -530,6 +530,20 @@ def extract_version(output: str) -> str | None:
     return matches[-1] if matches else None
 
 
+def bundled_sync_version(bundle: Path) -> str:
+    implementation = bundle / "executable" / "tooling" / "codex_skill_sync.py"
+    require_regular(implementation, "bundled codex-skill-sync implementation")
+    versions = set(
+        re.findall(
+            r"(?<![0-9])([0-9]+\.[0-9]+\.[0-9]+)(?![0-9])",
+            implementation.read_text(encoding="utf-8"),
+        )
+    )
+    if len(versions) != 1:
+        raise SyncError("bundled codex-skill-sync version is ambiguous")
+    return versions.pop()
+
+
 def resolve_entry(name: str, bin_dir: Path | None) -> Path | None:
     if bin_dir is not None:
         candidate = bin_dir / name
@@ -836,7 +850,8 @@ def smoke_bundle(bundle: Path) -> None:
         result = run((str(sync_entry), "--version"))
         if (
             result.returncode != 0
-            or extract_version(result.stdout + result.stderr) != VERSION
+            or extract_version(result.stdout + result.stderr)
+            != bundled_sync_version(bundle)
         ):
             raise SyncError("bundled codex-skill-sync --version smoke failed")
 
@@ -1016,7 +1031,8 @@ def verify_production_bundle(
             result = run((str(sync_entry), "--version"))
             if (
                 result.returncode != 0
-                or extract_version(result.stdout + result.stderr) != VERSION
+                or extract_version(result.stdout + result.stderr)
+                != bundled_sync_version(bundle)
             ):
                 raise SyncError("active codex-skill-sync smoke failed")
     return {
