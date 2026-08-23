@@ -119,6 +119,22 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 shlex.quote(str(self.repo)),
             )
         )
+        self.publish_existing_history_command = " ".join(
+            (
+                bridge.FINALIZER,
+                "--publish-existing-history",
+                "f" * 40,
+                "--remote",
+                "origin",
+                "--remote-branch",
+                "main",
+                "--repo",
+                shlex.quote(str(self.repo)),
+            )
+        )
+        self.resume_existing_history_command = self.publish_existing_history_command.replace(
+            "--publish-existing-history", "--resume-existing-history-publish", 1
+        )
         self.retirement_command = " ".join(
             (
                 bridge.FINALIZER,
@@ -311,6 +327,19 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         self.assertEqual(
             run.call_args.args[0], shlex.split(self.publish_existing_branch_command)
         )
+
+    def test_existing_history_first_publish_and_resume_are_forwarded(self) -> None:
+        for command in (
+            self.publish_existing_history_command,
+            self.resume_existing_history_command,
+        ):
+            with self.subTest(command=command):
+                output, run = self.invoke_main(self.event(command))
+                self.assertEqual(
+                    output["hookSpecificOutput"]["permissionDecision"], "allow"
+                )
+                run.assert_called_once()
+                self.assertEqual(run.call_args.args[0], shlex.split(command))
 
     def test_summary_is_accepted_and_forwarded_without_rewriting(self) -> None:
         output, run = self.invoke_main(self.event(self.summary_command))
@@ -971,6 +1000,25 @@ class GitFinalizerBridgeTest(unittest.TestCase):
             ),
         )
 
+        for command in commands:
+            with self.subTest(command=command):
+                with self.assertRaises(bridge.BridgeError):
+                    bridge.validate_hook_event(self.event(command))
+
+    def test_existing_history_first_publish_rejects_unsafe_combinations(self) -> None:
+        commands = (
+            self.publish_existing_history_command.replace("f" * 40, "abc", 1),
+            self.publish_existing_history_command.replace(" --remote origin", "", 1),
+            self.publish_existing_history_command.replace(" --remote-branch main", "", 1),
+            self.publish_existing_history_command.replace(
+                " --repo ", " --message unexpected --repo ", 1
+            ),
+            self.resume_existing_history_command.replace(
+                " --resume-existing-history-publish ",
+                " --resume-publish " + "a" * 40 + " --resume-existing-history-publish ",
+                1,
+            ),
+        )
         for command in commands:
             with self.subTest(command=command):
                 with self.assertRaises(bridge.BridgeError):

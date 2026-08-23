@@ -13,6 +13,17 @@ section is invented for it.
 
 ## Unreleased
 
+## 0.9.0 - 2026-08-23
+
+- Add `--publish-existing-history` for normal non-force first publication of one or more existing
+  local commits after explicit Gitea `repo-plan` / `repo-ensure` bootstrap.
+- Verify the entire remote has no user Git refs before first push; existing main, non-main branches,
+  tags, origin mismatch, dirty state, or ambiguous remote results fail closed without a new commit.
+- Add `--resume-existing-history-publish` for the exact interrupted state where the remote remains
+  empty or contains only the expected target OID, followed by live remote and `0/0` verification.
+- Extend the stable JSON, host bridge, workflow Skill, and public CLI contract without exposing
+  credentials or combining bootstrap and publication outcomes.
+
 ## 0.8.0 - 2026-08-23
 
 - Add explicit `--repo-plan` and `--repo-ensure` Gitea repository bootstrap operations.

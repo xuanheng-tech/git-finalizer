@@ -9,6 +9,11 @@ Git Finalizer 只负责适用的本地提交前验证、显式路径暂存、com
 指定 remote 完全缺失时添加精确 origin。credential 仅由 Git credential authority 提供，CLI、
 remote URL、日志和 receipt 均不得携带 token。bootstrap 成功不表示 publication 已运行。
 
+已有一个或多个 local commits 首次发布到上述 bootstrap 后的 verified-empty Gitea repository
+时，使用 `--publish-existing-history`。它与 unborn `--initial-publish`、普通 feature
+`--publish-existing-branch` 和 configured-upstream `--resume-publish` 都是独立接口；中断恢复只
+使用 `--resume-existing-history-publish`。
+
 远端 feature branch retirement 是独立操作，不属于 commit/publish mode。它只在明确授权下用
 expected-OID lease 退役已 ancestry-integrated 的远端 branch，不删除 local worktree/branch。
 
@@ -151,6 +156,40 @@ captured remote heads 尚不可达的 commit objects，仅以 non-force、`--no-
 `--set-upstream` 的精确 branch refspec 发布。成功必须验证 remote OID、upstream、`0/0`、
 clean 状态以及 HEAD/branch/history 不变。若远端目标已存在、push 结果或 post-verify 含糊，
 fail closed，不自动重试、覆盖或切换到 force。
+
+## Existing-history first publication to verified-empty Gitea
+
+完成显式 `--repo-plan` → `--repo-ensure` 后，本地已有 history 且目标 repository 仍完全空时：
+
+```bash
+/home/hsd/bin/codex-git-finalize \
+  --summary \
+  --publish-existing-history <full-head-oid> \
+  --remote <remote-name> \
+  --remote-branch <same-local-branch-name> \
+  --repo <absolute-repo>
+```
+
+该接口要求 attached、clean、至少一个 existing commit，完整 HEAD OID，显式 remote/branch 与
+本地 branch 一致，且 upstream 缺失或精确未解析。它在 fetch 前后和最终 push gate 前读取整个
+remote refs：任一 existing branch、tag 或其他用户 ref 都会阻断，并转回普通 existing-history
+publication 规则；不得 force。它不 add、不 commit，只执行 non-force、`--no-follow-tags`、
+`--set-upstream` 的精确 branch refspec。成功必须证明 local HEAD/history/index/worktree 不变，
+remote 只有目标 branch，且 HEAD、upstream、remote OID 相同、ahead/behind 为 `0/0`。
+
+若 push 中断或结果不确定，使用工具报告的同一完整 OID：
+
+```bash
+/home/hsd/bin/codex-git-finalize \
+  --summary \
+  --resume-existing-history-publish <full-head-oid> \
+  --remote <remote-name> \
+  --remote-branch <same-local-branch-name> \
+  --repo <absolute-repo>
+```
+
+resume 只接受 remote 仍完全空，或只有目标 ref 且其 OID 精确等于 expected HEAD；任何额外 ref、
+目标 OID 不同、upstream 冲突或本地漂移都 fail closed。恢复不创建 commit，也不改变 branch/tag。
 
 ## Resume publish existing commits
 

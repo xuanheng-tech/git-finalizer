@@ -58,6 +58,8 @@ class ToolContractTests(unittest.TestCase):
                 "resume_initial_publish",
                 "resume_publish",
                 "publish_existing_branch",
+                "publish_existing_history",
+                "resume_existing_history_publish",
                 "retire_remote_branch",
             },
         )

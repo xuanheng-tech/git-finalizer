@@ -3,7 +3,7 @@
     "owner": "git-finalizer",
     "path": "skills/three-tool-git-workflow/SKILL.md"
   },
-  "canonical_skill_sha256": "09117d927839a572c76e29c8b3e41b37418e3ab6e4eb266175b27ae8456cb4da",
+  "canonical_skill_sha256": "4bb3155c4a08d34d167e69732d4e6264a03a1b49b25ce158caf1c969c709390d",
   "compatible_toolchain_contract_version": 2,
   "executable": {
     "entrypoints": [
@@ -33,10 +33,10 @@
       "codex-git-finalize"
     ]
   },
-  "public_cli_contract_sha256": "45984175ede9bdeba00e3c8cec13a6f0c02c3c46a556536d1c4a972206db05f2",
+  "public_cli_contract_sha256": "6c367c9145924027250107905796e43fe159820f7ba82b135fb8b40f08718e5d",
   "schema_version": 1,
   "skill_contract_version": 1,
   "tool_commit": "@release",
   "tool_name": "git-finalizer",
-  "tool_version": "0.8.0"
+  "tool_version": "0.9.0"
 }

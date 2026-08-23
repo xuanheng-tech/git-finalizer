@@ -2,7 +2,7 @@
 
 Codex Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`0.8.0`
+当前版本：`0.9.0`
 
 ## Gitea repository bootstrap
 
@@ -171,6 +171,34 @@ heads 尚不可达的 commits 执行既有 commit-range 安全检查，再以 no
 `--set-upstream` 的精确 branch refspec 首次发布。post-verify 要求 HEAD 和 commit history 不变、
 远端 OID 与 HEAD 相同、upstream 精确、ahead/behind 为 `0/0` 且 index/worktree clean。
 
+本地 repository 已有一个或多个 commit、而目标是经 `--repo-plan` / `--repo-ensure` 建立并
+验证的空 Gitea repository 时，使用独立的 existing-history first-publication 入口：
+
+```bash
+codex-git-finalize \
+  --publish-existing-history <full-head-oid> \
+  --remote origin \
+  --remote-branch main \
+  --repo /home/user/projects/example
+```
+
+该入口不创建 commit，允许受保护的初始 branch，但要求 attached、clean、本地 branch 与显式
+target 同名，并在 fetch 前后及 push gate 前验证整个 remote 没有任何用户 Git refs；已有 main、
+其他 branch、tag 或其他 ref 都会 fail closed，并应转回普通 existing-history publication 规则。
+push 仅使用 non-force、`--no-follow-tags`、`--set-upstream` 的精确 branch refspec，成功后验证
+HEAD、history、index、worktree 不变，remote 只有目标 branch，且 local/upstream/remote 为 `0/0`。
+
+若 push 中断或结果不确定，保留工具报告的完整 OID，且只在 remote 仍为空或仅有完全相同的
+target OID 时使用显式恢复入口；不要重跑 first-publication 或创建替代 commit：
+
+```bash
+codex-git-finalize \
+  --resume-existing-history-publish <full-head-oid> \
+  --remote origin \
+  --remote-branch main \
+  --repo /home/user/projects/example
+```
+
 已完成集成的远端 feature branch 使用独立 retirement operation；它不删除本地 branch 或
 worktree，也不复用 commit/publish mode：
 
@@ -260,9 +288,11 @@ Git Finalizer bridge，并为整组回滚保留 production `PREVIOUS`。
 
 正常开发流程是先完成修改、测试和审查，再调用正常模式提交推送。首次发布仅适用于 unborn
 本地仓库和完全空远端；需要同时创建 commit 的已有历史功能分支首次发布使用 initial-branch
-模式，已有 clean committed HEAD 且无 upstream 时使用 publish-existing-branch；恢复模式仅适用于
-干净状态且不会再次创建提交：root 恢复入口处理 initial-publish 的单 root commit，通用恢复入口
-处理 configured upstream 之上的一个或多个既有 commit。commit-only 仅在已有 commit 的
+模式，已有 clean committed HEAD 且无 upstream 时使用 publish-existing-branch；经显式 Gitea
+bootstrap 的 verified-empty repository 接收既有历史时使用 publish-existing-history。恢复模式仅
+适用于干净状态且不会再次创建提交：root 恢复入口处理 initial-publish 的单 root commit，
+existing-history first-publication 使用自己的精确恢复入口，通用恢复入口处理 configured upstream
+之上的一个或多个既有 commit。commit-only 仅在已有 commit 的
 attached branch 上创建本地提交，不接触远端；verify-only 在相同本地 branch 边界内只验证显式
 候选范围，不修改 HEAD、index、worktree、refs、tags 或配置，也不接触远端。
 

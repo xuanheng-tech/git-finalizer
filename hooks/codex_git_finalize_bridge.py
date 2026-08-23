@@ -99,6 +99,7 @@ BRIDGE_OPTION_SPECS: dict[str, tuple[int, bool]] = {
     "--mode": (1, False),
     "--owner": (1, False),
     "--publish-existing-branch": (1, False),
+    "--publish-existing-history": (1, False),
     "--remote": (1, False),
     "--remote-branch": (1, False),
     "--repo": (1, False),
@@ -107,6 +108,7 @@ BRIDGE_OPTION_SPECS: dict[str, tuple[int, bool]] = {
     "--repo-plan": (0, False),
     "--repository-id": (1, False),
     "--resume-initial-publish": (1, False),
+    "--resume-existing-history-publish": (1, False),
     "--resume-publish": (1, False),
     "--retire-remote-branch": (1, False),
     "--snapshot": (1, False),
@@ -507,18 +509,32 @@ def parse_direct_finalizer(
     verify_only = mode == "verify-only"
     resume_initial_oid = parsed.get("--resume-initial-publish")
     resume_publish_oid = parsed.get("--resume-publish")
+    resume_existing_history_oid = parsed.get("--resume-existing-history-publish")
     publish_existing_oid = parsed.get("--publish-existing-branch")
+    publish_existing_history_oid = parsed.get("--publish-existing-history")
     retirement_branch = parsed.get("--retire-remote-branch")
     retirement = retirement_branch is not None
     existing_publish_entries = tuple(
         value
-        for value in (resume_initial_oid, resume_publish_oid, publish_existing_oid)
+        for value in (
+            resume_initial_oid,
+            resume_publish_oid,
+            resume_existing_history_oid,
+            publish_existing_oid,
+            publish_existing_history_oid,
+        )
         if value is not None
     )
     if len(existing_publish_entries) > 1:
         raise BridgeError("Finalizer existing commit 发布入口只能选择一个")
-    resume = resume_initial_oid is not None or resume_publish_oid is not None
-    publish_existing = publish_existing_oid is not None
+    resume = (
+        resume_initial_oid is not None
+        or resume_publish_oid is not None
+        or resume_existing_history_oid is not None
+    )
+    publish_existing = (
+        publish_existing_oid is not None or publish_existing_history_oid is not None
+    )
     if (resume or publish_existing or retirement) and repeated:
         raise BridgeError(
             "Finalizer existing-commit/retirement operation 不接受 fixture 或 binary exception"
@@ -573,7 +589,13 @@ def parse_direct_finalizer(
                 "Finalizer remote retirement 不接受 message、snapshot 或 remote-branch"
             )
     if resume or publish_existing:
-        resume_oid = resume_initial_oid or resume_publish_oid or publish_existing_oid
+        resume_oid = (
+            resume_initial_oid
+            or resume_publish_oid
+            or resume_existing_history_oid
+            or publish_existing_oid
+            or publish_existing_history_oid
+        )
         if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", resume_oid or "") is None:
             raise BridgeError(
                 "Finalizer existing commit 发布要求完整小写十六进制 HEAD OID"
@@ -593,7 +615,7 @@ def parse_direct_finalizer(
             raise BridgeError("Finalizer existing commit 发布不接受 --dry-run")
         if "--snapshot" in parsed:
             raise BridgeError("Finalizer existing commit 发布不接受 snapshot")
-        if resume and "--remote-branch" in parsed:
+        if resume and resume_existing_history_oid is None and "--remote-branch" in parsed:
             raise BridgeError("Finalizer resume 不接受 snapshot 或 remote-branch")
     if sum((initial_commit_only, initial_publish, initial_branch_publish)) > 1:
         raise BridgeError("Finalizer 发布模式只能选择一个")
@@ -686,12 +708,16 @@ def parse_direct_finalizer(
             raise BridgeError(
                 "Finalizer --resume-publish 从 configured upstream 推导目标，不接受 --remote"
             )
-    elif publish_existing_oid is not None:
+    elif (
+        publish_existing_oid is not None
+        or publish_existing_history_oid is not None
+        or resume_existing_history_oid is not None
+    ):
         remote = parsed.get("--remote")
         remote_branch = parsed.get("--remote-branch")
         if remote is None or remote_branch is None:
             raise BridgeError(
-                "Finalizer --publish-existing-branch 必须显式提供 --remote 和 --remote-branch"
+                "Finalizer existing-history first publication 必须显式提供 --remote 和 --remote-branch"
             )
         if (
             not remote

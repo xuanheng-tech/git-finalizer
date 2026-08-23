@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="0.8.0"
+readonly VERSION="0.9.0"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -322,9 +322,14 @@ elif mode == "initial_branch":
         "remote_conclusion": remote_conclusion,
         "post_verify": post_verify,
     }
-elif mode == "publish_existing_branch":
+elif mode in {"publish_existing_branch", "publish_existing_history"}:
+    interface = (
+        "publish-existing-history"
+        if mode == "publish_existing_history"
+        else "publish-existing-branch"
+    )
     result["mode_result"] = {
-        "interface": "publish-existing-branch",
+        "interface": interface,
         "commit_reused": commit_reused,
         "remote_conclusion": remote_conclusion,
         "pre_publish": {
@@ -349,10 +354,13 @@ elif mode == "publish_existing_branch":
             "remote_ref_oid": final_remote_oid or None,
         },
     }
+    if mode == "publish_existing_history":
+        result["mode_result"]["bootstrap_prerequisite"] = "repo-plan/repo-ensure"
 elif mode == "resume":
     resume_interface = {
         "initial_root": "resume-initial-publish",
         "existing_commits": "resume-publish",
+        "existing_history_first": "resume-existing-history-publish",
     }.get(resume_publish_kind)
     result["mode_result"] = {
         "interface": resume_interface,
@@ -520,6 +528,12 @@ Usage:
   codex-git-finalize --publish-existing-branch <full-head-oid>
     --remote <remote-name> --remote-branch <branch-name>
     --repo <absolute-repo> [--summary]
+  codex-git-finalize --publish-existing-history <full-head-oid>
+    --remote <remote-name> --remote-branch <branch-name>
+    --repo <absolute-repo> [--summary]
+  codex-git-finalize --resume-existing-history-publish <full-head-oid>
+    --remote <remote-name> --remote-branch <branch-name>
+    --repo <absolute-repo> [--summary]
   codex-git-finalize --retire-remote-branch <branch-name-or-refs/heads/ref>
     --remote <remote-name>
     --integrated-into <branch-name-or-matching-remote/branch-or-refs/heads/ref>
@@ -555,6 +569,10 @@ Options:
   --resume-publish <oid>         Publish existing commits ahead of configured upstream.
   --publish-existing-branch <oid>
                                  First-publish an existing clean branch without a commit.
+  --publish-existing-history <oid>
+                                 First-publish existing clean history to a verified-empty repository.
+  --resume-existing-history-publish <oid>
+                                 Resume the exact existing-history first publication.
   --retire-remote-branch <branch>
                                  Retire one ancestry-integrated remote feature branch.
   --remote <name>                Required by initial, existing-branch, retirement, and root resume.
@@ -664,6 +682,38 @@ fail_publish_existing_branch() {
         "$resume_expected_oid" >&2
     printf '显式目标: %s/%s\n' "$branch_publish_remote" "$branch_publish_branch" >&2
     printf '当前 upstream: %s\n' "$observed_upstream" >&2
+    exit 1
+}
+
+fail_existing_history_publish() {
+    local observed_upstream
+
+    summary_status='failed'
+    summary_reason=$*
+    summary_next_action='resume_existing_history_publish'
+    summary_commit_reused=true
+    summary_resume_required=true
+    summary_resume_oid=$resume_expected_oid
+    summary_resume_remote=$branch_publish_remote
+    summary_head_after=$(
+        git -C "$repo" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || printf '(unknown)'
+    )
+    if [[ "$summary_head_after" == "$resume_expected_oid" ]]; then
+        summary_head_unchanged=true
+    fi
+    if ! observed_upstream=$(
+        git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null
+    ); then
+        observed_upstream='(none)'
+    fi
+    printf 'ERROR: %s\n' "$*" >&2
+    printf '本地 HEAD %s 未被 Finalizer 创建或改写；未执行 force push。\n' \
+        "$resume_expected_oid" >&2
+    printf '显式目标: %s/%s\n' "$branch_publish_remote" "$branch_publish_branch" >&2
+    printf '当前 upstream: %s\n' "$observed_upstream" >&2
+    printf '若远端仍为空或仅有 expected target，可使用同一 OID 恢复：\n' >&2
+    printf '  codex-git-finalize --resume-existing-history-publish %s --remote %q --remote-branch %q --repo %q\n' \
+        "$resume_expected_oid" "$branch_publish_remote" "$branch_publish_branch" "$repo" >&2
     exit 1
 }
 
@@ -1605,7 +1655,8 @@ resolve_initial_branch_target() {
         branch_publish_target_error='symbolic HEAD 与当前 branch 名不一致'
         return 1
     fi
-    if is_protected_branch "$branch_publish_branch"; then
+    if is_protected_branch "$branch_publish_branch" &&
+        ((publish_existing_history == 0 && resume_existing_history == 0)); then
         branch_publish_target_error="initial-branch-publish 拒绝受保护分支: $branch_publish_branch"
         return 1
     fi
@@ -1712,6 +1763,68 @@ capture_initial_branch_remote_baseline() {
     printf 'remote target absent check: passed\n'
     printf 'remote non-target refs baseline: recorded\n'
     printf 'local tags baseline: recorded\n'
+}
+
+inspect_existing_history_first_remote() {
+    local allow_expected_target=$1
+
+    history_remote_state='unknown'
+    if ! inspect_initial_branch_remote; then
+        return 1
+    fi
+    if [[ -n "$branch_publish_other_refs" ]]; then
+        branch_publish_remote_error='远端包含非目标用户 Git refs；existing-history first publication 已阻断'
+        return 1
+    fi
+    if ((branch_publish_target_present == 0)); then
+        history_remote_state='empty'
+        return 0
+    fi
+    if [[ "$allow_expected_target" == true &&
+        "$branch_publish_target_oid" == "$resume_expected_oid" ]]; then
+        history_remote_state='expected_target_only'
+        return 0
+    fi
+    branch_publish_remote_error='远端不是完全空 repository；请转用普通 existing-history publication 规则'
+    return 1
+}
+
+capture_existing_history_remote_baseline() {
+    local allow_expected_target=$1
+
+    if ! inspect_existing_history_first_remote "$allow_expected_target"; then
+        return 1
+    fi
+    branch_publish_remote_refs_before=''
+    if ! branch_publish_local_tags_before=$(
+        git -C "$repo" for-each-ref --format='%(objectname)%09%(refname)' refs/tags
+    ); then
+        branch_publish_remote_error='无法记录本地 tag 基线'
+        return 1
+    fi
+    printf 'remote user refs state: %s\n' "$history_remote_state"
+    printf 'local tags baseline: recorded\n'
+}
+
+recheck_existing_history_remote_baseline() {
+    local allow_expected_target=$1
+    local local_tags_now
+
+    if ! inspect_existing_history_first_remote "$allow_expected_target"; then
+        return 1
+    fi
+    if ! local_tags_now=$(
+        git -C "$repo" for-each-ref --format='%(objectname)%09%(refname)' refs/tags
+    ); then
+        branch_publish_remote_error='无法复查本地 tags'
+        return 1
+    fi
+    if [[ "$local_tags_now" != "$branch_publish_local_tags_before" ]]; then
+        branch_publish_remote_error='existing-history publication 期间本地 tags 发生变化'
+        return 1
+    fi
+    printf 'remote user refs recheck: %s\n' "$history_remote_state"
+    printf 'local tags unchanged: passed\n'
 }
 
 check_initial_branch_remote_unchanged_absent() {
@@ -2957,6 +3070,195 @@ publish_existing_branch_head() {
     printf 'post-verify: passed; HEAD/index/worktree unchanged\n'
 }
 
+publish_existing_history_head() {
+    local allow_expected_target=false
+    local branch_head
+    local push_state_error=''
+
+    if ((resume_existing_history == 1)); then
+        allow_expected_target=true
+        summary_resume_publish_kind='existing_history_first'
+        summary_recovery_start='existing_history_first_publish'
+    fi
+    paths=()
+    existing_publish_commit_output_override=''
+    summary_phase='preflight'
+    summary_mode_state='preflight'
+    summary_commit_reused=true
+    summary_commit_sha=$resume_expected_oid
+    summary_commit_result='reused'
+    export GIT_OPTIONAL_LOCKS=0
+    print_snapshot
+
+    if ! resolve_initial_branch_target; then
+        fail "$branch_publish_target_error"
+    fi
+    if ! validate_resume_expected_head; then
+        fail "$resume_target_error"
+    fi
+    if ! check_resume_clean_state; then
+        fail "$resume_target_error"
+    fi
+    summary_worktree_before_state='clean'
+    if ! branch_head=$(
+        git -C "$repo" rev-parse --verify "$branch_publish_branch_ref^{commit}" 2>/dev/null
+    ) || [[ "$branch_head" != "$resume_expected_oid" ]]; then
+        fail 'existing-history publication 的本地 branch ref 与 expected HEAD 不一致'
+    fi
+    classify_branch_upstream \
+        "$branch_publish_branch" "$branch_publish_remote" "$branch_publish_branch_ref"
+    if ((resume_existing_history == 0)); then
+        if [[ "$branch_upstream_state" != 'none' &&
+            "$branch_upstream_state" != 'exact_unresolved' ]]; then
+            fail 'existing-history first publication 只接受无 upstream 或精确未解析 upstream'
+        fi
+    elif [[ "$branch_upstream_state" == 'conflicting' ]] ||
+        { [[ "$branch_upstream_state" == 'exact_resolved' ]] &&
+            [[ "$branch_upstream_oid" != "$resume_expected_oid" ]]; }; then
+        fail "${branch_upstream_error:-existing-history resume upstream 与 expected target 不一致}"
+    fi
+
+    publish_existing_head_before=$resume_expected_oid
+    publish_existing_index_before=$(git -C "$repo" ls-files --stage) ||
+        fail '无法记录 existing-history publication 前 index'
+    publish_existing_status_before=$(
+        GIT_OPTIONAL_LOCKS=0 git -C "$repo" status --porcelain=v1 --untracked-files=all
+    ) || fail '无法记录 existing-history publication 前 worktree'
+    publish_existing_commit_count_before=$(git -C "$repo" rev-list --count HEAD) ||
+        fail '无法记录 existing-history publication 前 commit count'
+    summary_head_before=$publish_existing_head_before
+    summary_branch=$branch_publish_branch
+    summary_upstream=$branch_publish_remote/$branch_publish_branch
+    summary_push_target="$branch_publish_remote:$branch_publish_branch_ref"
+
+    printf '\n== Publish existing history to verified-empty repository ==\n'
+    if ((resume_existing_history == 1)); then
+        printf 'mode: resume-existing-history-publish\n'
+    else
+        printf 'mode: publish-existing-history\n'
+    fi
+    printf 'bootstrap prerequisite: repo-plan -> repo-ensure\n'
+    printf 'expected HEAD: %s\n' "$resume_expected_oid"
+    printf 'branch: %s\n' "$branch_publish_branch"
+    printf 'explicit target: %s/%s\n' \
+        "$branch_publish_remote" "$branch_publish_branch"
+
+    summary_phase='remote_preflight'
+    printf '\n== Verified-empty repository preflight ==\n'
+    if ! capture_existing_history_remote_baseline "$allow_expected_target"; then
+        fail "$branch_publish_remote_error；未执行 push"
+    fi
+    if ((resume_existing_history == 0)) && [[ "$history_remote_state" != 'empty' ]]; then
+        fail '远端不是完全空 repository；未执行 push'
+    fi
+    if ! run_git_remote_command 'git fetch <selected remote>' \
+        git -C "$repo" fetch --no-tags --no-recurse-submodules "$branch_publish_remote"; then
+        fail 'existing-history publication 前 git fetch 失败；未执行 push'
+    fi
+    if ! recheck_existing_history_remote_baseline "$allow_expected_target"; then
+        fail "$branch_publish_remote_error；未执行 push"
+    fi
+    if ((resume_existing_history == 0)) && [[ "$history_remote_state" != 'empty' ]]; then
+        fail '远端在 push 前不再为空；未执行 push'
+    fi
+    if ! verify_existing_branch_publish_local_state; then
+        fail "$publish_existing_verify_error；未执行 push"
+    fi
+    classify_branch_upstream \
+        "$branch_publish_branch" "$branch_publish_remote" "$branch_publish_branch_ref"
+    if ((resume_existing_history == 0)); then
+        if [[ "$branch_upstream_state" != 'none' &&
+            "$branch_upstream_state" != 'exact_unresolved' ]]; then
+            fail 'remote preflight 后 upstream 不再满足首次发布条件；未执行 push'
+        fi
+    elif [[ "$branch_upstream_state" == 'conflicting' ]] ||
+        { [[ "$branch_upstream_state" == 'exact_resolved' ]] &&
+            [[ "$branch_upstream_oid" != "$resume_expected_oid" ]]; }; then
+        fail 'remote preflight 后 resume upstream 漂移；未执行 push'
+    fi
+    if ! prepare_existing_branch_publish_range; then
+        fail "$existing_range_error；未执行 push"
+    fi
+    summary_publish_commit_count=$resume_publish_commit_count
+    summary_publish_range=$resume_publish_range
+
+    printf '\n== Existing history safety check ==\n'
+    printf 'commit count: %s\n' "$resume_publish_commit_count"
+    if ((resume_publish_commit_count < 1)); then
+        fail 'existing-history first publication 要求至少一个本地 commit；未执行 push'
+    fi
+    if ! validate_existing_publish_range; then
+        fail "$existing_range_error；未执行 push"
+    fi
+    printf 'validated changed paths: %s\n' "$resume_publish_path_count"
+    printf 'range safety checks: passed\n'
+    if ! recheck_existing_history_remote_baseline "$allow_expected_target"; then
+        fail "$branch_publish_remote_error；未执行 push"
+    fi
+    if ((resume_existing_history == 0)) && [[ "$history_remote_state" != 'empty' ]]; then
+        fail '远端在最终 push gate 前不再为空；未执行 push'
+    fi
+    if ! verify_existing_branch_publish_local_state; then
+        fail "$publish_existing_verify_error；未执行 push"
+    fi
+    summary_completed_through='preflight'
+    if ((resume_existing_history == 1)); then
+        summary_remote_conclusion='empty_or_expected_target_reverified'
+    else
+        summary_remote_conclusion='empty_repository_reverified'
+    fi
+
+    summary_phase='push'
+    summary_default_failure_status='failed'
+    summary_push_executed=true
+    printf '\n== Existing history first push ==\n'
+    if ! run_branch_push \
+        true "$branch_publish_remote" "HEAD:$branch_publish_branch_ref"; then
+        summary_push_result='uncertain'
+        if inspect_existing_history_first_remote true; then
+            if [[ "$history_remote_state" == 'empty' ]]; then
+                summary_remote_conclusion='empty_after_failed_push'
+            else
+                summary_remote_conclusion='expected_target_present_after_failed_push'
+            fi
+        else
+            push_state_error=$branch_publish_remote_error
+            summary_remote_conclusion='conflicting_or_unknown_after_failed_push'
+        fi
+        fail_existing_history_publish \
+            "existing-history push 失败或结果无法确认${push_state_error:+: $push_state_error}"
+    fi
+    summary_push_result='succeeded'
+    summary_completed_through='push'
+    summary_mode_state='pushed'
+
+    summary_phase='post_verify'
+    summary_post_verify='failed'
+    printf '\n== Existing history push 后验证 ==\n'
+    commit_hash=$resume_expected_oid
+    if ! verify_initial_branch_result; then
+        fail_existing_history_publish "$branch_publish_verify_error"
+    fi
+    if ! verify_existing_branch_publish_local_state; then
+        fail_existing_history_publish "$publish_existing_verify_error"
+    fi
+
+    summary_head_after=$publish_existing_head_before
+    summary_head_unchanged=true
+    summary_index_unchanged=true
+    summary_worktree_state='clean'
+    summary_worktree_unchanged=true
+    summary_final_head=$publish_existing_head_before
+    summary_final_remote_oid=$branch_publish_target_oid
+    summary_post_verify='passed'
+    summary_remote_conclusion='published_and_upstream_aligned'
+    summary_completed_through='post_verify'
+    summary_mode_state='verified'
+    summary_status='success'
+    summary_next_action='none'
+    printf 'post-verify: passed; HEAD/history/index/worktree unchanged\n'
+}
+
 normalize_heads_ref() {
     local value=$1
     local label=$2
@@ -3608,6 +3910,8 @@ initial_commit_only=0
 initial_publish=0
 initial_branch_publish=0
 publish_existing_branch=0
+publish_existing_history=0
+resume_existing_history=0
 retire_remote_branch=0
 resume_initial=0
 resume_existing=0
@@ -3724,6 +4028,23 @@ while (($# > 0)); do
             ((resume_seen == 0)) || fail 'existing commit 发布入口只能指定一次'
             resume_expected_oid=$2
             publish_existing_branch=1
+            resume_seen=1
+            shift 2
+            ;;
+        --publish-existing-history)
+            (($# >= 2)) || fail '--publish-existing-history 缺少 expected HEAD OID'
+            ((resume_seen == 0)) || fail 'existing commit 发布入口只能指定一次'
+            resume_expected_oid=$2
+            publish_existing_history=1
+            resume_seen=1
+            shift 2
+            ;;
+        --resume-existing-history-publish)
+            (($# >= 2)) || fail '--resume-existing-history-publish 缺少 expected HEAD OID'
+            ((resume_seen == 0)) || fail 'existing commit 发布入口只能指定一次'
+            resume_expected_oid=$2
+            resume_cli_option='--resume-existing-history-publish'
+            resume_existing_history=1
             resume_seen=1
             shift 2
             ;;
@@ -3879,9 +4200,11 @@ if ((mode_seen == 1)); then
 fi
 if ((retire_remote_branch == 1)); then
     summary_mode='retire_remote_branch'
+elif ((publish_existing_history == 1)); then
+    summary_mode='publish_existing_history'
 elif ((publish_existing_branch == 1)); then
     summary_mode='publish_existing_branch'
-elif ((resume_initial == 1 || resume_existing == 1)); then
+elif ((resume_initial == 1 || resume_existing == 1 || resume_existing_history == 1)); then
     summary_mode='resume'
 elif ((initial_commit_only == 1)); then
     summary_mode='initial-commit-only'
@@ -3899,14 +4222,16 @@ fi
 if ((commit_only == 1 || verify_only == 1)); then
     ((initial_commit_only == 0 && initial_publish == 0 &&
         initial_branch_publish == 0 &&
-        publish_existing_branch == 0 && retire_remote_branch == 0 &&
-        resume_initial == 0 && resume_existing == 0)) ||
+        publish_existing_branch == 0 && publish_existing_history == 0 &&
+        retire_remote_branch == 0 && resume_initial == 0 &&
+        resume_existing == 0 && resume_existing_history == 0)) ||
         fail "--mode $mode_arg 不接受其他发布模式"
 fi
 if ((retire_remote_branch == 1)); then
     ((initial_commit_only == 0 && initial_publish == 0 &&
         initial_branch_publish == 0 &&
-        publish_existing_branch == 0 && resume_initial == 0 && resume_existing == 0)) ||
+        publish_existing_branch == 0 && publish_existing_history == 0 &&
+        resume_initial == 0 && resume_existing == 0 && resume_existing_history == 0)) ||
         fail '--retire-remote-branch 不接受其他发布入口'
     ((mode_seen == 0)) || fail '--retire-remote-branch 不接受 --mode'
     ((message_seen == 0)) || fail '--retire-remote-branch 不接受 --message'
@@ -3933,14 +4258,14 @@ if ((retire_remote_branch == 1)); then
         ci_verification_source_seen == 1 || ci_verified_at_seen == 1)); then
         fail 'CI evidence 参数要求同时指定 --ci-required'
     fi
-elif ((publish_existing_branch == 1)); then
+elif ((publish_existing_branch == 1 || publish_existing_history == 1)); then
     ((initial_commit_only == 0 && initial_publish == 0 &&
         initial_branch_publish == 0 &&
-        resume_initial == 0 && resume_existing == 0)) ||
-        fail '--publish-existing-branch 不接受其他发布入口'
-    ((mode_seen == 0)) || fail '--publish-existing-branch 不接受 --mode'
-    ((message_seen == 0)) || fail '--publish-existing-branch 不接受 --message'
-    ((dry_run == 0)) || fail '--publish-existing-branch 不支持 --dry-run'
+        resume_initial == 0 && resume_existing == 0 && resume_existing_history == 0)) ||
+        fail 'existing-history/branch publication 不接受其他发布入口'
+    ((mode_seen == 0)) || fail 'existing-history/branch publication 不接受 --mode'
+    ((message_seen == 0)) || fail 'existing-history/branch publication 不接受 --message'
+    ((dry_run == 0)) || fail 'existing-history/branch publication 不支持 --dry-run'
     ((${#allow_test_fixture_args[@]} == 0)) ||
         fail '--publish-existing-branch 不接受 --allow-test-fixture'
     ((${#allow_large_binary_args[@]} == 0)) ||
@@ -3951,7 +4276,7 @@ elif ((publish_existing_branch == 1)); then
     ((remote_seen == 1)) || fail '--publish-existing-branch 必须指定 --remote'
     ((remote_branch_seen == 1)) ||
         fail '--publish-existing-branch 必须指定 --remote-branch'
-elif ((resume_initial == 1 || resume_existing == 1)); then
+elif ((resume_initial == 1 || resume_existing == 1 || resume_existing_history == 1)); then
     ((initial_commit_only == 0)) || fail 'resume 模式不接受 --initial-commit-only'
     ((initial_publish == 0)) || fail 'resume 模式不接受 --initial-publish'
     ((initial_branch_publish == 0)) ||
@@ -3963,11 +4288,17 @@ elif ((resume_initial == 1 || resume_existing == 1)); then
     ((${#allow_large_binary_args[@]} == 0)) ||
         fail 'resume 模式不接受 --allow-large-binary'
     ((snapshot_seen == 0)) || fail 'resume 模式不接受 --snapshot'
-    ((remote_branch_seen == 0)) || fail 'resume 模式不接受 --remote-branch'
+    if ((resume_existing_history == 0)); then
+        ((remote_branch_seen == 0)) || fail '普通 resume 模式不接受 --remote-branch'
+    fi
     ((separator_seen == 0 && ${#input_paths[@]} == 0)) ||
         fail 'resume 模式不接受文件列表或 -- 分隔符'
-    if ((resume_initial == 1)); then
+    if ((resume_initial == 1 || resume_existing_history == 1)); then
         ((remote_seen == 1)) || fail 'root resume 模式必须指定 --remote'
+        if ((resume_existing_history == 1)); then
+            ((remote_branch_seen == 1)) ||
+                fail '--resume-existing-history-publish 必须指定 --remote-branch'
+        fi
     else
         ((remote_seen == 0)) ||
             fail '--resume-publish 从 configured upstream 推导目标，不接受 --remote'
@@ -4022,18 +4353,21 @@ if ((retire_remote_branch == 0)); then
         fail 'CI evidence 参数只允许与 --retire-remote-branch 一起使用'
 fi
 if ((initial_publish == 1 || initial_branch_publish == 1 ||
-    publish_existing_branch == 1 || retire_remote_branch == 1 || resume_initial == 1)); then
+    publish_existing_branch == 1 || publish_existing_history == 1 ||
+    resume_existing_history == 1 || retire_remote_branch == 1 || resume_initial == 1)); then
     [[ -n "$remote_arg" && "$remote_arg" != -* &&
         "$remote_arg" != *$'\n'* && "$remote_arg" != *$'\r'* && "$remote_arg" != *$'\t'* ]] ||
         fail '--remote 必须是有效的 remote 名'
 fi
-if ((initial_branch_publish == 1 || publish_existing_branch == 1)); then
+if ((initial_branch_publish == 1 || publish_existing_branch == 1 ||
+    publish_existing_history == 1 || resume_existing_history == 1)); then
     [[ -n "$remote_branch_arg" && "$remote_branch_arg" != -* &&
         "$remote_branch_arg" != *$'\n'* && "$remote_branch_arg" != *$'\r'* &&
         "$remote_branch_arg" != *$'\t'* ]] ||
         fail '--remote-branch 必须是有效的 branch 名'
 fi
-if ((resume_initial == 0 && resume_existing == 0 && publish_existing_branch == 0 &&
+if ((resume_initial == 0 && resume_existing == 0 && resume_existing_history == 0 &&
+    publish_existing_branch == 0 && publish_existing_history == 0 &&
     retire_remote_branch == 0)); then
     if ((verify_only == 0)); then
         [[ -n ${message//[[:space:]]/} ]] || fail 'commit message 不能为空'
@@ -4108,6 +4442,10 @@ if ((retire_remote_branch == 1)); then
 fi
 if ((resume_existing == 1)); then
     resume_existing_publish
+    exit 0
+fi
+if ((resume_existing_history == 1 || publish_existing_history == 1)); then
+    publish_existing_history_head
     exit 0
 fi
 if ((publish_existing_branch == 1)); then

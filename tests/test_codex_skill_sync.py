@@ -21,7 +21,7 @@ TOOLS = {
             "codex-test-triage",
         ),
     ),
-    "git-finalizer": ("0.8.0", ("codex-git-finalize",)),
+    "git-finalizer": ("0.9.0", ("codex-git-finalize",)),
 }
 
 

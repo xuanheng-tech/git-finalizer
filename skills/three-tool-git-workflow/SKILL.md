@@ -58,6 +58,8 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 | 已明确授权 commit 和 push，且任务已达到交付状态 | 默认模式（不传 `--mode`） | commit、push、远端 post-verify |
 | 已存在普通 local commits，已明确授权继续 push | `--resume-publish <full-head-oid> --repo <absolute-repo>` | 不创建 commit；发布 configured upstream 并远端 post-verify |
 | 已存在 clean feature branch、无 upstream、远端同名 branch 不存在，已明确授权首次发布 | `--publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>` | 不创建 commit；non-force 首次发布、设置 upstream 并远端 post-verify |
+| 已有 local history，目标是经 repo-plan/repo-ensure 验证的全空 Gitea repository | `--publish-existing-history <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>` | 不创建 commit；全 remote refs 空检查、normal first push、远端 post-verify |
+| existing-history first push 中断或结果不确定，且 remote 为空或仅有 expected target | `--resume-existing-history-publish <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>` | 不创建 commit；精确恢复并验证 upstream/remote `0/0` |
 | 已完成 ancestry-provable integration，明确授权退役 remote feature ref | `--retire-remote-branch <branch> --remote <name> --integrated-into <branch> --expected-remote-oid <full-oid> --repo <absolute-repo>` | 不创建 commit；expected-OID compare-and-delete、远端 post-verify |
 | 明确要求规划或确保一个空 Gitea repository | `--repo-plan` / `--repo-ensure` | 与 publication 分离；仅显式 ensure 可创建 repository，绝不 commit/push |
 
@@ -68,6 +70,8 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 /home/hsd/bin/codex-git-finalize --summary --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
 /home/hsd/bin/codex-git-finalize --summary --resume-publish <full-head-oid> --repo <absolute-repo>
 /home/hsd/bin/codex-git-finalize --summary --publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
+/home/hsd/bin/codex-git-finalize --summary --publish-existing-history <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
+/home/hsd/bin/codex-git-finalize --summary --resume-existing-history-publish <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
 /home/hsd/bin/codex-git-finalize --summary --retire-remote-branch <branch> --remote <name> --integrated-into <branch> --expected-remote-oid <full-oid> --repo <absolute-repo> --dry-run
 ```
 
@@ -84,6 +88,10 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 - clean attached feature branch 尚无 upstream 且 explicit 同名 remote branch 不存在时，使用
   `--publish-existing-branch`；它绑定完整 HEAD OID，不创建 commit，拒绝受保护分支和任何既有
   upstream，并在 non-force 首次 push 后验证 upstream、remote OID 与 `0/0`。
+- local repository 已有 history 且 Gitea target 已显式 repo-plan/repo-ensure 时，使用
+  `--publish-existing-history`；它允许初始 protected branch，但要求整个 remote 无用户 Git refs。
+  任一 branch/tag/其他 ref 都阻断；中断后只用 `--resume-existing-history-publish` 接受 empty 或
+  expected-target-only 的精确远端形状。
 - remote retirement 是与 publish mode 分离的显式 remote mutation。它只接受非受保护、非
   default 的 `refs/heads/*`，每次重新 fetch，要求 exact expected OID、ancestry、local lifecycle
   与 CI gate 通过，使用 lease-bound compare-and-delete，随后验证 remote 缺失和本地状态不变；

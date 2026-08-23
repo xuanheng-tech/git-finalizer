@@ -282,6 +282,51 @@
     },
     {
       "flags": [
+        "--publish-existing-history",
+        "--remote",
+        "--remote-branch",
+        "--repo",
+        "--summary"
+      ],
+      "name": "publish_existing_history",
+      "operation_class": "remote_mutation",
+      "preconditions": [
+        "repo_plan_and_repo_ensure_completed",
+        "clean_attached_existing_history",
+        "full_expected_head_oid",
+        "verified_empty_entire_remote",
+        "missing_or_exact_unresolved_upstream"
+      ],
+      "result_statuses": [
+        "success",
+        "blocked",
+        "failed"
+      ]
+    },
+    {
+      "flags": [
+        "--resume-existing-history-publish",
+        "--remote",
+        "--remote-branch",
+        "--repo",
+        "--summary"
+      ],
+      "name": "resume_existing_history_publish",
+      "operation_class": "remote_mutation",
+      "preconditions": [
+        "clean_attached_existing_history",
+        "full_expected_head_oid",
+        "empty_or_exact_target_only_remote",
+        "missing_or_exact_upstream"
+      ],
+      "result_statuses": [
+        "success",
+        "blocked",
+        "failed"
+      ]
+    },
+    {
+      "flags": [
         "--retire-remote-branch",
         "--remote",
         "--integrated-into",
@@ -418,6 +463,10 @@
         "arity": 1,
         "repeatable": false
       },
+      "--publish-existing-history": {
+        "arity": 1,
+        "repeatable": false
+      },
       "--remote": {
         "arity": 1,
         "repeatable": false
@@ -443,6 +492,10 @@
         "repeatable": false
       },
       "--repository-id": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--resume-existing-history-publish": {
         "arity": 1,
         "repeatable": false
       },
@@ -500,5 +553,5 @@
   ],
   "schema_version": 1,
   "tool_name": "git-finalizer",
-  "tool_version": "0.8.0"
+  "tool_version": "0.9.0"
 }
