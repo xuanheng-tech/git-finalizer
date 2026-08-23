@@ -13,6 +13,14 @@ section is invented for it.
 
 ## Unreleased
 
+## 0.8.0 - 2026-08-23
+
+- Add explicit `--repo-plan` and `--repo-ensure` Gitea repository bootstrap operations.
+- Resolve API credentials through Git credential authority without accepting or recording tokens.
+- Keep repository bootstrap receipts separate from commit/publication outcomes and reserve optional
+  Worktree Controller linkage fields.
+- Add explicit `--initial-commit-only` for one local root commit without remote access.
+
 ## 0.7.0 - 2026-08-22
 
 - Added: `--retire-remote-branch` performs ancestry-only remote feature-branch retirement with

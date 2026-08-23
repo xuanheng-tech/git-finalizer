@@ -2,11 +2,37 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="0.7.0"
+readonly VERSION="0.8.0"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
 readonly MAX_SUMMARY_WARNINGS=5
+
+repository_bootstrap_requested=0
+for bootstrap_argument in "$@"; do
+    [[ "$bootstrap_argument" != '--' ]] || break
+    if [[ "$bootstrap_argument" == '--repo-plan' ||
+        "$bootstrap_argument" == '--repo-ensure' ]]; then
+        repository_bootstrap_requested=1
+    fi
+done
+if ((repository_bootstrap_requested == 1)); then
+    [[ -x /usr/bin/python3 ]] || {
+        printf 'ERROR: repository bootstrap requires /usr/bin/python3\n' >&2
+        exit 1
+    }
+    finalizer_executable=$(/usr/bin/realpath -e -- "${BASH_SOURCE[0]}") || {
+        printf 'ERROR: cannot resolve Git Finalizer entrypoint\n' >&2
+        exit 1
+    }
+    repository_bootstrap_companion=${finalizer_executable%/*}/codex-git-finalize-repo-bootstrap.py
+    [[ -f "$repository_bootstrap_companion" &&
+        ! -L "$repository_bootstrap_companion" ]] || {
+        printf 'ERROR: repository bootstrap companion is missing\n' >&2
+        exit 1
+    }
+    exec /usr/bin/python3 -B "$repository_bootstrap_companion" "$@"
+fi
 
 summary_requested=0
 for summary_argument in "$@"; do
@@ -21,6 +47,12 @@ summary_status='blocked'
 summary_phase='cli'
 summary_exit_code=0
 summary_repo=''
+summary_repository_id=''
+summary_allocation_id=''
+summary_task_key=''
+summary_authority_key=''
+summary_worktree_path=''
+summary_role=''
 summary_branch=''
 summary_upstream=''
 summary_path_count=0
@@ -104,7 +136,9 @@ record_summary_failure() {
 render_summary() {
     /usr/bin/python3 -B - \
         "$SUMMARY_SCHEMA_VERSION" "$VERSION" "$summary_mode" "$summary_status" "$summary_phase" \
-        "$summary_exit_code" "$summary_repo" "$summary_branch" "$summary_upstream" \
+        "$summary_exit_code" "$summary_repo" "$summary_repository_id" \
+        "$summary_allocation_id" "$summary_task_key" "$summary_authority_key" \
+        "$summary_worktree_path" "$summary_role" "$summary_branch" "$summary_upstream" \
         "$summary_path_count" "$summary_dry_run" "$summary_commit_created" \
         "$summary_commit_sha" "$summary_push_executed" "$summary_push_result" \
         "$summary_push_branch_refspec_only" "$summary_push_follow_tags_disabled" \
@@ -157,6 +191,12 @@ status = take(values)
 phase = take(values)
 exit_code = int(take(values))
 repository = take(values)
+repository_id = take(values)
+allocation_id = take(values)
+task_key = take(values)
+authority_key = take(values)
+worktree_path = take(values)
+role = take(values)
 branch = take(values)
 upstream = take(values)
 path_count = int(take(values))
@@ -244,6 +284,12 @@ result = {
     "final_phase": phase,
     "exit_code": exit_code,
     "repository": repository or None,
+    "repository_id": repository_id or None,
+    "allocation_id": allocation_id or None,
+    "task_key": task_key or None,
+    "authority_key": authority_key or None,
+    "worktree_path": worktree_path or None,
+    "role": role or None,
     "branch": branch or None,
     "upstream": upstream or None,
     "requested_path_count": path_count,
@@ -328,6 +374,13 @@ elif mode == "resume":
             "remote_ref_oid": final_remote_oid or None,
             "worktree": worktree_state or None,
         },
+    }
+elif mode == "initial-commit-only":
+    result["mode_result"] = {
+        "initial_root_commit": mode_state,
+        "remote_verification": remote_conclusion,
+        "post_verify": post_verify,
+        "worktree": worktree_state or None,
     }
 elif mode == "commit-only":
     result["mode_result"] = {
@@ -430,10 +483,22 @@ emit_summary() {
 usage() {
     cat <<'EOF'
 Usage:
+  codex-git-finalize --repo-plan --repo <absolute-repo>
+    --gitea-url <credential-free-url> [--gitea-profile <label>]
+    --owner <user-or-org> --repo-name <name> --visibility <private|public>
+    [--remote <name>] [--add-origin] [--summary]
+  codex-git-finalize --repo-ensure --repo <absolute-repo>
+    --gitea-url <credential-free-url> [--gitea-profile <label>]
+    --owner <user-or-org> --repo-name <name> --visibility <private|public>
+    [--description <text>] [--remote <name>] [--add-origin] [--summary]
   codex-git-finalize --repo <absolute-repo> --message <commit-message> [--dry-run] [--summary]
     [--allow-test-fixture <repo-relative-path>]...
     [--allow-large-binary <repo-relative-path>]... -- <file>...
   codex-git-finalize --mode commit-only --repo <absolute-repo>
+    --message <commit-message> [--dry-run] [--summary]
+    [--allow-test-fixture <repo-relative-path>]...
+    [--allow-large-binary <repo-relative-path>]... -- <file>...
+  codex-git-finalize --initial-commit-only --repo <absolute-repo>
     --message <commit-message> [--dry-run] [--summary]
     [--allow-test-fixture <repo-relative-path>]...
     [--allow-large-binary <repo-relative-path>]... -- <file>...
@@ -464,10 +529,26 @@ Usage:
       [--ci-verified-at <timestamp>]]
 
 Options:
+  --repo-plan                    Read-only Gitea repository/bootstrap decision.
+  --repo-ensure                  Create or verify one empty Gitea repository; never publish.
+  --gitea-url <url>              Credential-free Gitea web root; credentials use Git authority.
+  --gitea-profile <label>        Optional non-secret profile label for the receipt.
+  --owner <name>                 Exact personal or organization owner.
+  --repo-name <name>             Exact Gitea repository name.
+  --visibility <value>           Explicit private or public visibility.
+  --description <text>           Optional repository description for creation.
+  --add-origin                   Add the exact remote URL only when the remote is absent.
+  --repository-id <id>           Optional Worktree Controller repository linkage.
+  --allocation-id <id>           Optional Worktree Controller allocation linkage.
+  --task-key <key>               Optional Worktree Controller task linkage.
+  --authority-key <key>          Optional Worktree Controller authority linkage.
+  --worktree-path <path>         Optional linkage; must equal the Finalizer repo root.
+  --role <role>                  Optional Worktree Controller role linkage.
   --repo <path>                  Absolute path to the Git worktree root.
   --message <text>               Non-empty commit message.
   --mode commit-only             Commit locally without remote checks or push.
   --mode verify-only             Validate locally without Git mutations or remote access.
+  --initial-commit-only          Create one local root commit from an unborn branch.
   --initial-publish              Publish one root commit from an unborn branch.
   --initial-branch-publish       First-publish one existing local history branch.
   --resume-initial-publish <oid> Resume publication of one exact root commit.
@@ -524,6 +605,19 @@ fail_initial_after_commit() {
     printf '恢复入口:\n' >&2
     printf '  codex-git-finalize --resume-initial-publish %s --remote %q --repo %q\n' \
         "$commit_hash" "$initial_remote" "$repo" >&2
+    exit 1
+}
+
+fail_initial_commit_only_after_commit() {
+    summary_status='failed'
+    summary_reason=$*
+    summary_mode_state='commit_retained'
+    summary_next_action='inspect_local_root_commit'
+    summary_push_result='skipped_by_initial_commit_only'
+    summary_post_verify='skipped_by_initial_commit_only'
+    summary_remote_conclusion='skipped_by_initial_commit_only'
+    printf 'ERROR: %s\n' "$*" >&2
+    printf '本地 root commit %s 已保留；未访问或修改远端。\n' "$commit_hash" >&2
     exit 1
 }
 
@@ -1280,6 +1374,7 @@ check_normal_remote_state() {
 }
 
 resolve_initial_target() {
+    local require_remote=${1:-1}
     local symbolic_head
     local show_ref_status
     local existing_commit
@@ -1289,11 +1384,11 @@ resolve_initial_target() {
 
     initial_target_error=''
     if ! symbolic_head=$(git -C "$repo" symbolic-ref --quiet HEAD 2>/dev/null); then
-        initial_target_error='initial-publish 要求 symbolic attached branch'
+        initial_target_error='initial root commit 要求 symbolic attached branch'
         return 1
     fi
     if [[ "$symbolic_head" != refs/heads/* || "$symbolic_head" == 'refs/heads/' ]]; then
-        initial_target_error='initial-publish 的 symbolic HEAD 不是本地 branch'
+        initial_target_error='initial root commit 的 symbolic HEAD 不是本地 branch'
         return 1
     fi
     initial_branch_ref=$symbolic_head
@@ -1304,7 +1399,7 @@ resolve_initial_target() {
     fi
 
     if git -C "$repo" show-ref --verify --quiet "$initial_branch_ref"; then
-        initial_target_error='initial-publish 只接受 branch ref 尚不存在的 unborn 仓库'
+        initial_target_error='initial root commit 只接受 branch ref 尚不存在的 unborn 仓库'
         return 1
     else
         show_ref_status=$?
@@ -1314,7 +1409,7 @@ resolve_initial_target() {
         fi
     fi
     if git -C "$repo" rev-parse --verify 'HEAD^{commit}' >/dev/null 2>&1; then
-        initial_target_error='initial-publish 不接受已有 HEAD commit 的仓库'
+        initial_target_error='initial root commit 不接受已有 HEAD commit 的仓库'
         return 1
     fi
     if ! existing_commit=$(git -C "$repo" rev-list --all --max-count=1 2>/dev/null); then
@@ -1322,8 +1417,13 @@ resolve_initial_target() {
         return 1
     fi
     if [[ -n "$existing_commit" ]]; then
-        initial_target_error='initial-publish 不接受已有可解析 commit 的仓库'
+        initial_target_error='initial root commit 不接受已有可解析 commit 的仓库'
         return 1
+    fi
+
+    if ((require_remote == 0)); then
+        initial_remote=''
+        return 0
     fi
 
     if [[ -z "$remote_arg" || "$remote_arg" == -* ||
@@ -1377,12 +1477,12 @@ check_initial_worktree_scope() {
     initial_scope_error=''
     while IFS= read -r -d '' entry; do
         if ((${#entry} < 4)); then
-            initial_scope_error='无法解析 initial-publish worktree 状态'
+            initial_scope_error='无法解析 initial root worktree 状态'
             return 1
         fi
         path=${entry:3}
         if [[ -z ${allowed_paths[$path]+present} ]]; then
-            initial_scope_error="initial-publish 存在显式范围外改动: $(printf '%q' "$path")"
+            initial_scope_error="initial root 存在显式范围外改动: $(printf '%q' "$path")"
             return 1
         fi
     done < <(
@@ -1424,11 +1524,11 @@ verify_initial_root_commit() {
     fi
     if ! parent_line=$(git -C "$repo" rev-list --parents -n 1 "$commit_hash" 2>/dev/null) ||
         [[ "$parent_line" != "$commit_hash" ]]; then
-        initial_commit_error='initial-publish 创建的 commit 不是 root commit'
+        initial_commit_error='initial 模式创建的 commit 不是 root commit'
         return 1
     fi
     if ((${#committed_paths[@]} == 0)); then
-        initial_commit_error='initial-publish 不允许空 root commit'
+        initial_commit_error='initial 模式不允许空 root commit'
         return 1
     fi
     if ((${#committed_paths[@]} != ${#staged_paths[@]})); then
@@ -3481,6 +3581,12 @@ add_risk() {
 }
 
 repo_arg=''
+repository_id_arg=''
+allocation_id_arg=''
+task_key_arg=''
+authority_key_arg=''
+worktree_path_arg=''
+role_arg=''
 message=''
 mode_arg=''
 remote_arg=''
@@ -3498,6 +3604,7 @@ snapshot_id=''
 dry_run=0
 commit_only=0
 verify_only=0
+initial_commit_only=0
 initial_publish=0
 initial_branch_publish=0
 publish_existing_branch=0
@@ -3506,6 +3613,12 @@ resume_initial=0
 resume_existing=0
 ci_required=0
 repo_seen=0
+repository_id_seen=0
+allocation_id_seen=0
+task_key_seen=0
+authority_key_seen=0
+worktree_path_seen=0
+role_seen=0
 message_seen=0
 mode_seen=0
 remote_seen=0
@@ -3534,6 +3647,48 @@ while (($# > 0)); do
             repo_seen=1
             shift 2
             ;;
+        --repository-id)
+            (($# >= 2)) || fail '--repository-id 缺少参数'
+            ((repository_id_seen == 0)) || fail '--repository-id 只能指定一次'
+            repository_id_arg=$2
+            repository_id_seen=1
+            shift 2
+            ;;
+        --allocation-id)
+            (($# >= 2)) || fail '--allocation-id 缺少参数'
+            ((allocation_id_seen == 0)) || fail '--allocation-id 只能指定一次'
+            allocation_id_arg=$2
+            allocation_id_seen=1
+            shift 2
+            ;;
+        --task-key)
+            (($# >= 2)) || fail '--task-key 缺少参数'
+            ((task_key_seen == 0)) || fail '--task-key 只能指定一次'
+            task_key_arg=$2
+            task_key_seen=1
+            shift 2
+            ;;
+        --authority-key)
+            (($# >= 2)) || fail '--authority-key 缺少参数'
+            ((authority_key_seen == 0)) || fail '--authority-key 只能指定一次'
+            authority_key_arg=$2
+            authority_key_seen=1
+            shift 2
+            ;;
+        --worktree-path)
+            (($# >= 2)) || fail '--worktree-path 缺少参数'
+            ((worktree_path_seen == 0)) || fail '--worktree-path 只能指定一次'
+            worktree_path_arg=$2
+            worktree_path_seen=1
+            shift 2
+            ;;
+        --role)
+            (($# >= 2)) || fail '--role 缺少参数'
+            ((role_seen == 0)) || fail '--role 只能指定一次'
+            role_arg=$2
+            role_seen=1
+            shift 2
+            ;;
         --message)
             (($# >= 2)) || fail '--message 缺少参数'
             ((message_seen == 0)) || fail '--message 只能指定一次'
@@ -3551,6 +3706,11 @@ while (($# > 0)); do
         --initial-publish)
             ((initial_publish == 0)) || fail '--initial-publish 只能指定一次'
             initial_publish=1
+            shift
+            ;;
+        --initial-commit-only)
+            ((initial_commit_only == 0)) || fail '--initial-commit-only 只能指定一次'
+            initial_commit_only=1
             shift
             ;;
         --initial-branch-publish)
@@ -3723,6 +3883,8 @@ elif ((publish_existing_branch == 1)); then
     summary_mode='publish_existing_branch'
 elif ((resume_initial == 1 || resume_existing == 1)); then
     summary_mode='resume'
+elif ((initial_commit_only == 1)); then
+    summary_mode='initial-commit-only'
 elif ((initial_publish == 1)); then
     summary_mode='initial'
 elif ((initial_branch_publish == 1)); then
@@ -3735,13 +3897,15 @@ fi
 
 ((repo_seen == 1)) || fail '必须指定 --repo'
 if ((commit_only == 1 || verify_only == 1)); then
-    ((initial_publish == 0 && initial_branch_publish == 0 &&
+    ((initial_commit_only == 0 && initial_publish == 0 &&
+        initial_branch_publish == 0 &&
         publish_existing_branch == 0 && retire_remote_branch == 0 &&
         resume_initial == 0 && resume_existing == 0)) ||
         fail "--mode $mode_arg 不接受其他发布模式"
 fi
 if ((retire_remote_branch == 1)); then
-    ((initial_publish == 0 && initial_branch_publish == 0 &&
+    ((initial_commit_only == 0 && initial_publish == 0 &&
+        initial_branch_publish == 0 &&
         publish_existing_branch == 0 && resume_initial == 0 && resume_existing == 0)) ||
         fail '--retire-remote-branch 不接受其他发布入口'
     ((mode_seen == 0)) || fail '--retire-remote-branch 不接受 --mode'
@@ -3770,7 +3934,8 @@ if ((retire_remote_branch == 1)); then
         fail 'CI evidence 参数要求同时指定 --ci-required'
     fi
 elif ((publish_existing_branch == 1)); then
-    ((initial_publish == 0 && initial_branch_publish == 0 &&
+    ((initial_commit_only == 0 && initial_publish == 0 &&
+        initial_branch_publish == 0 &&
         resume_initial == 0 && resume_existing == 0)) ||
         fail '--publish-existing-branch 不接受其他发布入口'
     ((mode_seen == 0)) || fail '--publish-existing-branch 不接受 --mode'
@@ -3787,6 +3952,7 @@ elif ((publish_existing_branch == 1)); then
     ((remote_branch_seen == 1)) ||
         fail '--publish-existing-branch 必须指定 --remote-branch'
 elif ((resume_initial == 1 || resume_existing == 1)); then
+    ((initial_commit_only == 0)) || fail 'resume 模式不接受 --initial-commit-only'
     ((initial_publish == 0)) || fail 'resume 模式不接受 --initial-publish'
     ((initial_branch_publish == 0)) ||
         fail 'resume 模式不接受 --initial-branch-publish'
@@ -3806,7 +3972,17 @@ elif ((resume_initial == 1 || resume_existing == 1)); then
         ((remote_seen == 0)) ||
             fail '--resume-publish 从 configured upstream 推导目标，不接受 --remote'
     fi
+elif ((initial_commit_only == 1)); then
+    ((initial_publish == 0 && initial_branch_publish == 0)) ||
+        fail '--initial-commit-only 不接受其他 initial 发布模式'
+    ((separator_seen == 1)) || fail '缺少文件列表分隔符 --'
+    ((message_seen == 1)) || fail '必须指定 --message'
+    ((remote_seen == 0)) || fail '--initial-commit-only 不接受 --remote'
+    ((remote_branch_seen == 0)) || fail '--initial-commit-only 不接受 --remote-branch'
+    ((snapshot_seen == 0)) || fail '--initial-commit-only 不接受 --snapshot'
 elif ((initial_publish == 1)); then
+    ((initial_commit_only == 0)) ||
+        fail '--initial-publish 不接受 --initial-commit-only'
     ((initial_branch_publish == 0)) ||
         fail '--initial-publish 不接受 --initial-branch-publish'
     ((separator_seen == 1)) || fail '缺少文件列表分隔符 --'
@@ -3897,6 +4073,26 @@ summary_repo=$repo
 repo_root=$(git -C "$repo" rev-parse --show-toplevel)
 repo_root=$(realpath -e -- "$repo_root")
 [[ "$repo" == "$repo_root" ]] || fail "--repo 必须指向 worktree 根目录: $repo_root"
+for linkage_value in "$repository_id_arg" "$allocation_id_arg" "$task_key_arg" \
+    "$authority_key_arg" "$role_arg"; do
+    if [[ -n "$linkage_value" ]]; then
+        [[ "$linkage_value" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$ ]] ||
+            fail 'Controller linkage 值格式无效'
+    fi
+done
+if ((worktree_path_seen == 1)); then
+    [[ "$worktree_path_arg" == /* ]] || fail '--worktree-path 必须是绝对路径'
+    resolved_worktree_path=$(realpath -e -- "$worktree_path_arg") ||
+        fail '--worktree-path 无法解析'
+    [[ "$resolved_worktree_path" == "$repo" ]] ||
+        fail '--worktree-path 必须等于 --repo 的 worktree root'
+    summary_worktree_path=$resolved_worktree_path
+fi
+summary_repository_id=$repository_id_arg
+summary_allocation_id=$allocation_id_arg
+summary_task_key=$task_key_arg
+summary_authority_key=$authority_key_arg
+summary_role=$role_arg
 
 if ((verify_only == 1)); then
     export GIT_OPTIONAL_LOCKS=0
@@ -4065,6 +4261,8 @@ if ((verify_only == 1)); then
     printf 'mode: verify-only\n'
 elif ((commit_only == 1)); then
     printf 'mode: commit-only\n'
+elif ((initial_commit_only == 1)); then
+    printf 'mode: initial-commit-only\n'
 elif ((initial_publish == 1)); then
     printf 'mode: initial-publish\n'
     printf 'remote: %s\n' "$remote_arg"
@@ -4092,7 +4290,7 @@ for path in "${large_binary_paths[@]}"; do
 done
 
 collect_staged_paths
-if ((initial_publish == 0)); then
+if ((initial_publish == 0 && initial_commit_only == 0)); then
     for path in "${paths[@]}"; do
         if is_staged_deletion_with_ignored_worktree_copy "$path"; then
             retained_ignored_deletions["$path"]=1
@@ -4105,7 +4303,17 @@ else
 fi
 if ((dry_run == 1)); then
     printf '\n== DRY-RUN 风险 ==\n'
-    if ((initial_publish == 1)); then
+    if ((initial_commit_only == 1)); then
+        if ! resolve_initial_target 0; then
+            add_risk "$initial_target_error；真实运行会在 git add 和 commit 前停止"
+        fi
+        if [[ -n $(git -C "$repo" ls-files --stage) ]]; then
+            add_risk 'initial-commit-only 检测到预先存在的 index 条目'
+        fi
+        if ! check_initial_worktree_scope; then
+            add_risk "$initial_scope_error"
+        fi
+    elif ((initial_publish == 1)); then
         if ! resolve_initial_target; then
             add_risk "$initial_target_error；真实运行会在 git add 和 commit 前停止"
         fi
@@ -4181,7 +4389,19 @@ if ((dry_run == 1)); then
     exit 0
 fi
 
-if ((initial_publish == 1)); then
+if ((initial_commit_only == 1)); then
+    summary_mode_state='preflight'
+    if ! resolve_initial_target 0; then
+        fail "$initial_target_error"
+    fi
+    summary_branch=$initial_branch
+    if [[ -n $(git -C "$repo" ls-files --stage) ]]; then
+        fail 'initial-commit-only 不允许预先存在 index 或 staged 内容'
+    fi
+    if ! check_initial_worktree_scope; then
+        fail "$initial_scope_error"
+    fi
+elif ((initial_publish == 1)); then
     summary_mode_state='preflight'
     if ! resolve_initial_target; then
         fail "$initial_target_error"
@@ -4302,7 +4522,9 @@ if ((verify_only == 1)); then
     exit 0
 fi
 
-if ((initial_publish == 1)); then
+if ((initial_commit_only == 1)); then
+    summary_remote_conclusion='skipped_by_initial_commit_only'
+elif ((initial_publish == 1)); then
     summary_phase='remote_preflight'
     printf '\n== Root commit 前远端空状态检查 ==\n'
     if ! check_initial_remote_empty; then
@@ -4395,7 +4617,7 @@ commit_hash=$(git -C "$repo" rev-parse HEAD)
 summary_commit_created=true
 summary_commit_sha=$commit_hash
 summary_completed_through='commit'
-if ((initial_publish == 1)); then
+if ((initial_publish == 1 || initial_commit_only == 1)); then
     summary_mode_state='commit_created'
 fi
 commit_message=$(git -C "$repo" log -1 --format=%B)
@@ -4407,6 +4629,9 @@ for path in "${committed_paths[@]}"; do
         if ((initial_publish == 1)); then
             fail_initial_after_commit \
                 "root commit 包含超出显式范围的文件: $(printf '%q' "$path")"
+        elif ((initial_commit_only == 1)); then
+            fail_initial_commit_only_after_commit \
+                "root commit 包含超出显式范围的文件: $(printf '%q' "$path")"
         elif ((initial_branch_publish == 1)); then
             fail_initial_branch_after_commit \
                 "commit 包含超出显式范围的文件: $(printf '%q' "$path")"
@@ -4416,8 +4641,13 @@ for path in "${committed_paths[@]}"; do
     fi
 done
 
-if ((initial_publish == 1)) && ! verify_initial_root_commit; then
-    fail_initial_after_commit "$initial_commit_error"
+if ((initial_publish == 1 || initial_commit_only == 1)) &&
+    ! verify_initial_root_commit; then
+    if ((initial_publish == 1)); then
+        fail_initial_after_commit "$initial_commit_error"
+    else
+        fail_initial_commit_only_after_commit "$initial_commit_error"
+    fi
 fi
 if ((initial_branch_publish == 1)) && ! verify_initial_branch_commit; then
     fail_initial_branch_after_commit "$branch_publish_verify_error"
@@ -4435,10 +4665,21 @@ printf 'commit message: %q\n' "$commit_message"
 printf 'changed files:\n'
 git -C "$repo" diff-tree --root --no-commit-id --name-status -r --no-renames "$commit_hash"
 
-if ((commit_only == 1)); then
-    summary_push_result='skipped_by_commit_only'
-    summary_post_verify='skipped_by_commit_only'
-    summary_remote_conclusion='skipped_by_commit_only'
+if ((commit_only == 1 || initial_commit_only == 1)); then
+    if ((initial_commit_only == 1)); then
+        skip_reason='initial_commit_only'
+        skip_display='--initial-commit-only'
+        result_label='Initial-commit-only'
+        result_mode='initial-commit-only'
+    else
+        skip_reason='commit_only'
+        skip_display='--mode commit-only'
+        result_label='Commit-only'
+        result_mode='commit-only'
+    fi
+    summary_push_result="skipped_by_$skip_reason"
+    summary_post_verify="skipped_by_$skip_reason"
+    summary_remote_conclusion="skipped_by_$skip_reason"
     summary_mode_state='committed'
     final_status=$(git -C "$repo" status --short)
     if [[ -z "$final_status" ]]; then
@@ -4446,19 +4687,26 @@ if ((commit_only == 1)); then
     else
         summary_worktree_state='dirty'
     fi
+    if ((initial_commit_only == 1)); then
+        [[ -z "$final_status" ]] ||
+            fail_initial_commit_only_after_commit 'root commit 后 worktree 不干净'
+        git -C "$repo" diff --cached --quiet ||
+            fail_initial_commit_only_after_commit 'root commit 后 index 不干净'
+    fi
 
-    printf '\n== Commit-only 结果 ==\n'
-    printf 'mode: commit-only\n'
+    printf '\n== %s 结果 ==\n' "$result_label"
+    printf 'mode: %s\n' "$result_mode"
     printf 'commit hash: %s\n' "$commit_hash"
-    printf 'push: skipped (--mode commit-only)\n'
-    printf 'remote verification: skipped (--mode commit-only)\n'
+    printf 'push: skipped (%s)\n' "$skip_display"
+    printf 'remote verification: skipped (%s)\n' "$skip_display"
     printf '$ git status --short\n'
     print_value_or "$final_status" '(clean)'
 
     summary_completed_through='commit'
     summary_status='success'
     summary_next_action='none'
-    printf '\nGit Finalizer 完成：本地 commit 已创建；push 与远端验证因 commit-only 模式跳过。\n'
+    printf '\nGit Finalizer 完成：本地 commit 已创建；push 与远端验证因 %s 模式跳过。\n' \
+        "$result_mode"
     exit 0
 elif ((initial_publish == 1)); then
     summary_phase='post_commit_verify'

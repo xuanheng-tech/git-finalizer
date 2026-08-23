@@ -47,8 +47,11 @@ class ToolContractTests(unittest.TestCase):
         self.assertEqual(
             set(commands),
             {
+                "repo_plan",
+                "repo_ensure",
                 "verify_only",
                 "commit_only",
+                "initial_commit_only",
                 "normal_publish",
                 "initial_publish",
                 "initial_branch_publish",
@@ -61,23 +64,25 @@ class ToolContractTests(unittest.TestCase):
         self.assertEqual(
             commands["retire_remote_branch"]["operation_class"], "remote_mutation"
         )
+        self.assertEqual(commands["repo_plan"]["operation_class"], "read_only")
+        self.assertEqual(commands["repo_ensure"]["operation_class"], "remote_mutation")
         self.assertIn(
             "REMOTE_DELETE_UNVERIFIED",
             commands["retire_remote_branch"]["result_statuses"],
         )
 
-    def test_toolchain_compatibility_keeps_worktree_controller_planned(self) -> None:
+    def test_toolchain_compatibility_binds_external_worktree_controller(self) -> None:
         compatibility = json.loads(
             (ROOT / "toolchain_compatibility.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(compatibility["toolchain_contract_version"], 1)
+        self.assertEqual(compatibility["toolchain_contract_version"], 2)
         self.assertEqual(compatibility["context_loader_contract_version"], 1)
         self.assertEqual(compatibility["snapshot_runner_contract_version"], 1)
         self.assertEqual(compatibility["git_finalizer_contract_version"], 1)
-        self.assertIsNone(compatibility["worktree_controller_contract_version"])
+        self.assertEqual(compatibility["worktree_controller_contract_version"], 1)
         self.assertEqual(
             compatibility["worktree_controller_status"],
-            "planned_unavailable",
+            "available_external",
         )
 
     def test_phase_closure_sop_links_existing_template(self) -> None:

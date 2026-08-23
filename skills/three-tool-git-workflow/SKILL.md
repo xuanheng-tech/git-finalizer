@@ -28,15 +28,18 @@ description: "用于实现、修复、重构或其他代码与仓库文件修改
 
 ## 总体流程
 
-Worktree Controller 是计划中的独立第 4 个生命周期工具，当前不可用；不得假装它已经完成
-worktree 创建或清理。当前可执行流程是：
+Worktree Controller 是独立第 4 个生命周期工具；全局 `worktree-lifecycle` Skill 负责四工具的
+端到端编排，本 Skill 不复制其预算、authority、handoff 或 release 算法。流程边界是：
 
-1. 未来由 Worktree Controller 准备隔离 worktree；目前由调用方按现有安全流程准备。
+1. 写任务先由 Worktree Controller 获取 lifecycle 状态，并按 policy plan/reuse/acquire；普通
+   feature 不在 protected canonical 中实施。
 2. 读取适用规则；在正式代码任务开始时按需使用 Context Loader 获取确定性的本地仓库上下文。调用和失败处理见 [references/context-loader.md](references/context-loader.md)。
 3. 在三工具之外实施最小范围变更，并运行从定向到必要完整度的实际测试与检查。记录真实结果；任何工具输出都不能替代测试。
 4. 按风险选择 Snapshot Runner 命令，默认显式使用 `--summary` 作首轮判断；仅在摘要异常、证据不足或任务需要具体内容时读取正式 artifact。命令选择、摘要充分性、展开条件和产物语义见 [references/snapshot-runner.md](references/snapshot-runner.md)。
 5. 需要复用 Finalizer 的本地提交前验证、执行已授权 Git 写入或显式退役远端 feature branch 时，按下表及 reference 选择独立接口；所有模式默认显式启用 `--summary`，结果消费、展开和停止语义见 [references/git-finalizer.md](references/git-finalizer.md)。
-6. 未来由 Worktree Controller 清理 worktree；目前 Git Finalizer 不删除 local worktree 或 branch。
+6. Git Finalizer 只返回 commit/publication evidence；随后由 Worktree Controller 记录 handoff，
+   并在 repository control plane 完成 integration/publication 后独立判断 release。Finalizer 不
+   删除 local worktree 或 branch。
 
 `toolchain_compatibility.json` 是总体 contract version 绑定。任一工具的 public contract 发生
 incompatible change 而未同步更新该文件时，兼容检查必须失败。
@@ -51,14 +54,17 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 | --- | --- | --- |
 | 只验证，不授权 commit/push | `--mode verify-only` | 只读本地验证；不创建 commit，不访问远端 |
 | 已授权本地 commit，未授权或暂不适合 push | `--mode commit-only` | 创建一个本地 commit；不访问远端 |
+| unborn 仓库仅授权本地 root commit，远端未授权或目标有歧义 | `--initial-commit-only` | 创建一个本地 root commit；不配置或访问远端 |
 | 已明确授权 commit 和 push，且任务已达到交付状态 | 默认模式（不传 `--mode`） | commit、push、远端 post-verify |
 | 已存在普通 local commits，已明确授权继续 push | `--resume-publish <full-head-oid> --repo <absolute-repo>` | 不创建 commit；发布 configured upstream 并远端 post-verify |
 | 已存在 clean feature branch、无 upstream、远端同名 branch 不存在，已明确授权首次发布 | `--publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>` | 不创建 commit；non-force 首次发布、设置 upstream 并远端 post-verify |
 | 已完成 ancestry-provable integration，明确授权退役 remote feature ref | `--retire-remote-branch <branch> --remote <name> --integrated-into <branch> --expected-remote-oid <full-oid> --repo <absolute-repo>` | 不创建 commit；expected-OID compare-and-delete、远端 post-verify |
+| 明确要求规划或确保一个空 Gitea repository | `--repo-plan` / `--repo-ensure` | 与 publication 分离；仅显式 ensure 可创建 repository，绝不 commit/push |
 
 ```bash
 /home/hsd/bin/codex-git-finalize --summary --mode verify-only --repo <absolute-repo> -- <repo-relative-file>...
 /home/hsd/bin/codex-git-finalize --summary --mode commit-only --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
+/home/hsd/bin/codex-git-finalize --summary --initial-commit-only --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
 /home/hsd/bin/codex-git-finalize --summary --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
 /home/hsd/bin/codex-git-finalize --summary --resume-publish <full-head-oid> --repo <absolute-repo>
 /home/hsd/bin/codex-git-finalize --summary --publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
@@ -67,6 +73,8 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 
 - 三种模式共用适用于各自执行边界的本地提交前检查；`verify-only` 不实际运行 commit hooks、签名或索引写入，因此不得声称验证了这些能力。
 - `commit-only` 不要求 upstream，不执行 fetch、push、远端验证或其他远端操作。
+- `initial-commit-only` 只接受 attached unborn branch 和空 index，创建一个本地 root commit，
+  不配置或访问 remote；它不接受 `--snapshot` 或其他 publish mode。
 - `verify-only` 不修改 HEAD、index、worktree、refs 或 Git 配置，也不要求 upstream。
 - 三种提交生命周期模式中只有默认模式执行 commit 后的 push 和远端 post-verify；显式
   resume 接口也可发布既有 commit，但不创建 commit。

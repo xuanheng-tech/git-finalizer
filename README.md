@@ -2,7 +2,31 @@
 
 Codex Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`0.7.0`
+当前版本：`0.8.0`
+
+## Gitea repository bootstrap
+
+Repository bootstrap 是独立于 commit/publication 的显式操作。`--repo-plan` 只读检查 target、
+owner capability、repository existence、visibility 和本地 remote；`--repo-ensure` 只创建或验证
+一个空 repository，并可在指定 remote 完全缺失时通过 `--add-origin` 添加精确 URL：
+
+```bash
+codex-git-finalize \
+  --repo-plan \
+  --repo /home/user/projects/example \
+  --gitea-url http://gitea.example.test \
+  --gitea-profile local \
+  --owner example-owner \
+  --repo-name example \
+  --visibility private \
+  --summary
+```
+
+`--repo-ensure` 不 commit、不 push，也不会在 publication 404/失败后被隐式调用。它不覆盖、
+rename、transfer 或 delete 既有 repository，不配置 collaborator/team、webhook、deploy key、
+branch protection 或 mirror，也不初始化 README、LICENSE 或 `.gitignore`。API credential 只从
+Git credential authority 解析；token/password 不能通过普通 CLI 参数传入，也不会进入 remote
+URL、日志或 receipt。bootstrap outcome 与 `publication.executed=false` 分开记录。
 
 ## 使用方式
 
@@ -29,6 +53,20 @@ codex-git-finalize \
 和非-unborn HEAD 检查，但不要求 upstream，不执行 fetch、ls-remote、push 或 post-push
 verification，也不修改 remote、tag 或 Git 配置。成功输出会报告 mode、新 commit hash、因模式
 跳过的 push/远端验证以及最终工作区状态。
+
+尚无任何 commit 且远端目标未获明确授权时，使用显式的本地 root commit 模式：
+
+```bash
+codex-git-finalize \
+  --initial-commit-only \
+  --repo /home/user/projects/example \
+  --message "feat: initialize project locally" \
+  -- README.md
+```
+
+该模式只接受 attached unborn branch、空 index 和完整显式文件范围；它创建并核验一个非空
+root commit，但不要求 remote，也不执行 fetch、`ls-remote`、push 或远端验证。它不能与
+`--initial-publish`、`--snapshot` 或任何 remote 参数组合。
 
 只读验证当前显式文件范围时，使用 `verify-only`；该模式不接受或要求 `--message`：
 
@@ -248,7 +286,8 @@ codex-git-finalize \
   -- Attachments/photo.jpg
 ```
 
-工具不会自动 pull、merge 或 rebase，不会 amend，不会 force push，也不会创建远端仓库。
+工具不会自动 pull、merge 或 rebase，不会 amend 或 force push。远端 repository 仅能通过上述
+显式 `--repo-plan` / `--repo-ensure` 路径创建，绝不会由 commit/push 失败隐式触发。
 
 运行完整检查：
 

@@ -21,7 +21,7 @@ TOOLS = {
             "codex-test-triage",
         ),
     ),
-    "git-finalizer": ("0.7.0", ("codex-git-finalize",)),
+    "git-finalizer": ("0.8.0", ("codex-git-finalize",)),
 }
 
 
@@ -77,7 +77,7 @@ class SkillSyncTests(unittest.TestCase):
 
         compatibility = {
             "schema_version": 1,
-            "toolchain_contract_version": 1,
+            "toolchain_contract_version": 2,
             "workflow_skill": {
                 "name": sync.SKILL_NAME,
                 "contract_version": 1,
@@ -86,8 +86,8 @@ class SkillSyncTests(unittest.TestCase):
             "context_loader_contract_version": 1,
             "snapshot_runner_contract_version": 1,
             "git_finalizer_contract_version": 1,
-            "worktree_controller_contract_version": None,
-            "worktree_controller_status": "planned_unavailable",
+            "worktree_controller_contract_version": 1,
+            "worktree_controller_status": "available_external",
             "tools": {
                 name: {
                     "source_directory": name,
@@ -224,7 +224,7 @@ class SkillSyncTests(unittest.TestCase):
                     repo / "tool_cli_contract.json"
                 ),
                 "canonical_skill_sha256": skill_sha,
-                "compatible_toolchain_contract_version": 1,
+                "compatible_toolchain_contract_version": 2,
                 "canonical_skill": {
                     "owner": "git-finalizer",
                     "path": f"skills/{sync.SKILL_NAME}/SKILL.md",

@@ -2,6 +2,76 @@
   "commands": [
     {
       "flags": [
+        "--repo-plan",
+        "--repo",
+        "--gitea-url",
+        "--gitea-profile",
+        "--owner",
+        "--repo-name",
+        "--visibility",
+        "--remote",
+        "--add-origin",
+        "--repository-id",
+        "--allocation-id",
+        "--task-key",
+        "--authority-key",
+        "--worktree-path",
+        "--role",
+        "--summary"
+      ],
+      "name": "repo_plan",
+      "operation_class": "read_only",
+      "preconditions": [
+        "explicit_gitea_target",
+        "git_credential_authority",
+        "exact_owner_and_visibility"
+      ],
+      "result_statuses": [
+        "CREATE_ALLOWED",
+        "ALREADY_EXISTS_MATCH",
+        "BLOCK_REMOTE_MISMATCH",
+        "BLOCK_PERMISSION",
+        "BLOCK_INVALID_OWNER",
+        "BLOCK_INVALID_CONFIG",
+        "UNKNOWN"
+      ]
+    },
+    {
+      "flags": [
+        "--repo-ensure",
+        "--repo",
+        "--gitea-url",
+        "--gitea-profile",
+        "--owner",
+        "--repo-name",
+        "--visibility",
+        "--description",
+        "--remote",
+        "--add-origin",
+        "--repository-id",
+        "--allocation-id",
+        "--task-key",
+        "--authority-key",
+        "--worktree-path",
+        "--role",
+        "--summary"
+      ],
+      "name": "repo_ensure",
+      "operation_class": "remote_mutation",
+      "preconditions": [
+        "repo_plan_create_allowed_or_existing_match",
+        "git_credential_authority",
+        "no_remote_mismatch"
+      ],
+      "result_statuses": [
+        "created_empty_verified",
+        "already_exists_verified",
+        "blocked",
+        "failed"
+      ]
+    },
+    {
+      "flags": [
         "--mode verify-only",
         "--repo",
         "--allow-test-fixture",
@@ -42,6 +112,31 @@
         "success",
         "blocked",
         "failed"
+      ]
+    },
+    {
+      "flags": [
+        "--initial-commit-only",
+        "--repo",
+        "--message",
+        "--allow-test-fixture",
+        "--allow-large-binary",
+        "--dry-run",
+        "--summary",
+        "--"
+      ],
+      "name": "initial_commit_only",
+      "operation_class": "local_mutation",
+      "preconditions": [
+        "attached_unborn_branch",
+        "explicit_file_scope",
+        "empty_index"
+      ],
+      "result_statuses": [
+        "success",
+        "blocked",
+        "failed",
+        "commit_retained"
       ]
     },
     {
@@ -231,6 +326,14 @@
   },
   "host_bridge": {
     "exposed_options": {
+      "--add-origin": {
+        "arity": 0,
+        "repeatable": false
+      },
+      "--allocation-id": {
+        "arity": 1,
+        "repeatable": false
+      },
       "--allow-large-binary": {
         "arity": 1,
         "repeatable": true
@@ -238,6 +341,10 @@
       "--allow-test-fixture": {
         "arity": 1,
         "repeatable": true
+      },
+      "--authority-key": {
+        "arity": 1,
+        "repeatable": false
       },
       "--ci-commit-oid": {
         "arity": 1,
@@ -259,6 +366,10 @@
         "arity": 1,
         "repeatable": false
       },
+      "--description": {
+        "arity": 1,
+        "repeatable": false
+      },
       "--dry-run": {
         "arity": 0,
         "repeatable": false
@@ -267,7 +378,19 @@
         "arity": 1,
         "repeatable": false
       },
+      "--gitea-profile": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--gitea-url": {
+        "arity": 1,
+        "repeatable": false
+      },
       "--initial-branch-publish": {
+        "arity": 0,
+        "repeatable": false
+      },
+      "--initial-commit-only": {
         "arity": 0,
         "repeatable": false
       },
@@ -287,6 +410,10 @@
         "arity": 1,
         "repeatable": false
       },
+      "--owner": {
+        "arity": 1,
+        "repeatable": false
+      },
       "--publish-existing-branch": {
         "arity": 1,
         "repeatable": false
@@ -303,6 +430,22 @@
         "arity": 1,
         "repeatable": false
       },
+      "--repo-ensure": {
+        "arity": 0,
+        "repeatable": false
+      },
+      "--repo-name": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--repo-plan": {
+        "arity": 0,
+        "repeatable": false
+      },
+      "--repository-id": {
+        "arity": 1,
+        "repeatable": false
+      },
       "--resume-initial-publish": {
         "arity": 1,
         "repeatable": false
@@ -315,12 +458,28 @@
         "arity": 1,
         "repeatable": false
       },
+      "--role": {
+        "arity": 1,
+        "repeatable": false
+      },
       "--snapshot": {
         "arity": 1,
         "repeatable": false
       },
       "--summary": {
         "arity": 0,
+        "repeatable": false
+      },
+      "--task-key": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--visibility": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--worktree-path": {
+        "arity": 1,
         "repeatable": false
       }
     },
@@ -341,5 +500,5 @@
   ],
   "schema_version": 1,
   "tool_name": "git-finalizer",
-  "tool_version": "0.7.0"
+  "tool_version": "0.8.0"
 }

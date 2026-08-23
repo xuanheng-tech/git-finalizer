@@ -606,6 +606,51 @@ test_commit_only_success_without_remote_commands() {
     assert_file_contains "$output" '(clean)' 'commit-only final worktree state is not clean'
 }
 
+test_initial_commit_only_success_without_remote_commands() {
+    local case_dir=$tmp_root/initial-commit-only-success
+    local fake_bin=$case_dir/bin
+    local probe=$case_dir/git-probe.log
+    local output=$case_dir/output.log
+    local config_before remote_before head committed_paths
+
+    make_unborn_repo "$case_dir"
+    git -C "$test_repo" remote remove origin
+    install_git_probe "$fake_bin"
+    config_before=$(git -C "$test_repo" config --local --list)
+    remote_before=$(remote_refs "$test_remote")
+    printf 'local root\n' >"$test_repo/first.txt"
+
+    GIT_PROBE_LOG="$probe" PATH="$fake_bin:$PATH" \
+        expect_success "$output" "$finalizer" --initial-commit-only \
+        --repo "$test_repo" --message 'local root commit' -- first.txt
+
+    head=$(git -C "$test_repo" rev-parse HEAD)
+    assert_root_commit "$test_repo"
+    assert_equal '1' "$(git -C "$test_repo" rev-list --count HEAD)" \
+        'initial-commit-only did not create exactly one root commit'
+    committed_paths=$(
+        git -C "$test_repo" diff-tree --root --no-commit-id --name-only -r HEAD
+    )
+    assert_equal 'first.txt' "$committed_paths" \
+        'initial-commit-only root contains an unexpected path'
+    assert_equal "$remote_before" "$(remote_refs "$test_remote")" \
+        'initial-commit-only changed remote refs'
+    assert_equal "$config_before" "$(git -C "$test_repo" config --local --list)" \
+        'initial-commit-only changed local Git config'
+    assert_file_not_contains "$probe" 'arg=fetch' \
+        'initial-commit-only invoked fetch'
+    assert_file_not_contains "$probe" 'arg=ls-remote' \
+        'initial-commit-only invoked remote verification'
+    assert_file_not_contains "$probe" 'arg=push' \
+        'initial-commit-only invoked push'
+    assert_file_contains "$output" 'mode: initial-commit-only' \
+        'initial-commit-only mode was not reported'
+    assert_file_contains "$output" "commit hash: $head" \
+        'initial-commit-only result omitted the root commit hash'
+    assert_equal '' "$(status_snapshot "$test_repo")" \
+        'initial-commit-only left the worktree dirty'
+}
+
 test_verify_only_success_without_git_side_effects() {
     local case_dir=$tmp_root/verify-only-success
     local fake_bin=$case_dir/bin
@@ -1834,7 +1879,7 @@ test_release_contract() {
     printf '%s\n' '#!/usr/bin/env bash' ": >\"\$GIT_PROBE\"" 'exit 97' \
         >"$fake_bin/git"
     chmod 700 "$fake_bin/git"
-    printf 'codex-git-finalize 0.7.0\n' >"$version_expected"
+    printf 'codex-git-finalize 0.8.0\n' >"$version_expected"
 
     GIT_PROBE="$git_probe" PATH="$fake_bin:$PATH" \
         "$finalizer" --version >"$version_output" 2>"$version_error"
@@ -1848,6 +1893,8 @@ test_release_contract() {
         'codex-git-finalize --repo <absolute-repo>' 'normal mode missing from help'
     assert_file_contains "$help_output" '--mode commit-only' \
         'commit-only mode missing from help'
+    assert_file_contains "$help_output" '--initial-commit-only' \
+        'initial-commit-only mode missing from help'
     assert_file_contains "$help_output" '--mode verify-only' \
         'verify-only mode missing from help'
     assert_file_contains "$help_output" '--initial-publish' \
@@ -1869,8 +1916,8 @@ test_release_contract() {
     assert_file_contains "$help_output" '--snapshot' \
         'snapshot evidence option missing from help'
     assert_file_contains "$project_root/codex-git-finalize" \
-        'readonly VERSION="0.7.0"' 'script version constant drifted'
-    assert_file_contains "$project_root/README.md" "当前版本：\`0.7.0\`" \
+        'readonly VERSION="0.8.0"' 'script version constant drifted'
+    assert_file_contains "$project_root/README.md" "当前版本：\`0.8.0\`" \
         'README version drifted'
     [[ -f "$project_root/codex-git-finalize-snapshot-verify.py" ]] ||
         fail_assertion 'snapshot verifier companion is missing'
@@ -1898,6 +1945,8 @@ run_case 'default mode still pushes and verifies remote state' \
     test_default_mode_still_pushes_and_verifies
 run_case 'commit-only creates one local commit without remote commands' \
     test_commit_only_success_without_remote_commands
+run_case 'initial-commit-only creates one local root without remote commands' \
+    test_initial_commit_only_success_without_remote_commands
 run_case 'verify-only validates without local or remote Git side effects' \
     test_verify_only_success_without_git_side_effects
 run_case 'verify-only validation failure remains non-mutating and nonzero' \

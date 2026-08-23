@@ -4,6 +4,11 @@
 
 Git Finalizer 只负责适用的本地提交前验证、显式路径暂存、commit，以及由默认或显式发布/恢复接口授权的 fast-forward-safe push 和远端 post-verify；它不实施代码、不运行测试、不审查 diff，也不解决冲突。initial、initial-branch 和 resume 仍是独立的首次发布或恢复接口。
 
+`--repo-plan` / `--repo-ensure` 是与 commit/publication 分离的 Gitea repository bootstrap
+接口。plan 只读；ensure 只创建或验证一个显式 owner/name/visibility 的空 repository，并可在
+指定 remote 完全缺失时添加精确 origin。credential 仅由 Git credential authority 提供，CLI、
+remote URL、日志和 receipt 均不得携带 token。bootstrap 成功不表示 publication 已运行。
+
 远端 feature branch retirement 是独立操作，不属于 commit/publish mode。它只在明确授权下用
 expected-OID lease 退役已 ancestry-integrated 的远端 branch，不删除 local worktree/branch。
 
@@ -40,7 +45,12 @@ expected-OID lease 退役已 ancestry-integrated 的远端 branch，不删除 lo
 
 verify-only、commit-only、normal、initial、initial-branch 和 resume 默认显式加入 `--summary`；即使短场景的摘要略长，也不退回非结构化默认输出。摘要是机器消费接口，但不能替代进程退出码、Finalizer 安全判定或所选模式要求的实际 Git 状态。
 
-优先读取实际 JSON 字段：`status`、`final_phase`、`mode`、`repository`、`branch`、`upstream`、`requested_path_count`、`commit`、`push`、`mode_result`、`warnings`、`reason`、`next_action`，以及存在时的 `resume`。所有模式都要求退出码为零、`status=success`、模式与请求一致、没有影响决策的 warning 或恢复引用，且摘要与实际状态一致；另外按模式核对：
+优先读取实际 JSON 字段：`status`、`final_phase`、`mode`、`repository`、可空的
+`repository_id` / `allocation_id` / `task_key` / `authority_key` / `worktree_path` / `role`、
+`branch`、`upstream`、`requested_path_count`、`commit`、`push`、`mode_result`、`warnings`、
+`reason`、`next_action`，以及存在时的 `resume`。Controller linkage 缺失时允许为 null，不得
+伪造。所有模式都要求退出码为零、`status=success`、模式与请求一致、没有影响决策的 warning
+或恢复引用，且摘要与实际状态一致；另外按模式核对：
 
 - verify-only：本地验证通过，`commit.created=false`，push、远端验证和 post-verify 均明确因该模式跳过，HEAD、index 和 worktree 前后不变；不得把成功扩写为已验证 commit hooks、签名、index 写入能力或远端状态。
 - commit-only：`commit.created=true` 且有新 commit OID，`push.executed=false`、push/远端验证/post-verify 均明确因该模式跳过，最终工作区状态已报告。
@@ -87,6 +97,21 @@ verify-only 要求已有 commit 的 attached local branch，但不要求 upstrea
 ```
 
 commit-only 用于已授权创建本地 commit、但未授权或暂不适合 push 的任务。它要求已有 commit 的 attached local branch，不要求 upstream，不执行 fetch、`ls-remote`、push、远端验证或其他远端操作，也不修改 remote、tag 或 Git 配置。成功必须报告新 commit OID、因该模式跳过的 push/远端验证及最终工作区状态。
+
+unborn 仓库仅获本地 commit 授权、remote target 尚未明确时，使用：
+
+```bash
+/home/hsd/bin/codex-git-finalize \
+  --summary \
+  --initial-commit-only \
+  --repo <absolute-repo> \
+  --message <commit-message> \
+  -- <repo-relative-file>...
+```
+
+`initial-commit-only` 要求 attached unborn branch、空 index、非空显式范围，并在 commit 后验证
+唯一 root commit、路径范围和 clean 状态。它不接受 remote、snapshot 或其他 publish mode，
+不执行 fetch、`ls-remote`、push 或远端验证。
 
 ## Normal publish
 

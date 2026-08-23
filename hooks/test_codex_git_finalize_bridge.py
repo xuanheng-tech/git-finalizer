@@ -82,6 +82,9 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         self.commit_only_command = self.command.replace(
             " --repo ", " --mode commit-only --repo ", 1
         )
+        self.initial_commit_only_command = self.command.replace(
+            " --repo ", " --initial-commit-only --repo ", 1
+        )
         self.verify_only_command = " ".join(
             (
                 bridge.FINALIZER,
@@ -149,6 +152,40 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 shlex.quote(str(self.repo)),
             )
         )
+        self.repo_plan_command = " ".join(
+            (
+                bridge.FINALIZER,
+                "--repo-plan",
+                "--repo",
+                shlex.quote(str(self.repo)),
+                "--gitea-url",
+                "http://127.0.0.1:3000",
+                "--gitea-profile",
+                "local",
+                "--owner",
+                "alice",
+                "--repo-name",
+                "example",
+                "--visibility",
+                "private",
+                "--repository-id",
+                "repository-1",
+                "--allocation-id",
+                "allocation-1",
+                "--task-key",
+                "task-1",
+                "--authority-key",
+                "authority-1",
+                "--worktree-path",
+                shlex.quote(str(self.repo)),
+                "--role",
+                "control-plane",
+                "--summary",
+            )
+        )
+        self.repo_ensure_command = self.repo_plan_command.replace(
+            "--repo-plan", "--repo-ensure --add-origin", 1
+        )
 
     def event(self, command: object | None = None) -> dict[str, object]:
         return {
@@ -205,6 +242,17 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         self.assertEqual(command, self.initial_command)
         self.assertIn("--initial-publish", argv)
         self.assertEqual(argv[argv.index("--remote") + 1], "origin")
+        self.assertEqual(repo, self.repo)
+        self.assertFalse(dry_run)
+
+    def test_initial_commit_only_is_accepted_without_remote(self) -> None:
+        command, argv, repo, dry_run = bridge.validate_hook_event(
+            self.event(self.initial_commit_only_command)
+        )
+
+        self.assertEqual(command, self.initial_commit_only_command)
+        self.assertIn("--initial-commit-only", argv)
+        self.assertNotIn("--remote", argv)
         self.assertEqual(repo, self.repo)
         self.assertFalse(dry_run)
 
@@ -341,6 +389,32 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         self.assertEqual(set(expected), command_options)
         self.assertEqual(contract["host_bridge"]["path_delimiter"], "--")
         self.assertEqual(contract["host_bridge"]["unknown_options"], "reject")
+
+    def test_repository_bootstrap_modes_are_forwarded_without_rewriting(self) -> None:
+        for command in (self.repo_plan_command, self.repo_ensure_command):
+            with self.subTest(command=command):
+                output, run = self.invoke_main(self.event(command))
+                self.assertEqual(
+                    output["hookSpecificOutput"]["permissionDecision"], "allow"
+                )
+                run.assert_called_once()
+                self.assertEqual(run.call_args.args[0], shlex.split(command))
+
+    def test_repository_bootstrap_rejects_ambiguous_or_secret_bearing_calls(self) -> None:
+        commands = (
+            self.repo_plan_command.replace("--repo-plan", "--repo-plan --repo-ensure", 1),
+            self.repo_plan_command + " --token secret",
+            self.repo_plan_command.replace(
+                "http://127.0.0.1:3000", "http://alice:secret@127.0.0.1:3000", 1
+            ),
+            self.repo_plan_command.replace("--visibility private", "--visibility internal", 1),
+            self.repo_plan_command + " -- README.md",
+            self.repo_plan_command + " --message unexpected",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                with self.assertRaises(bridge.BridgeError):
+                    bridge.validate_hook_event(self.event(command))
 
     def test_remote_retirement_is_accepted_and_forwarded_without_rewriting(
         self,
@@ -812,6 +886,17 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 " --initial-publish ",
                 " --initial-publish --mode commit-only ",
                 1,
+            ),
+            self.initial_commit_only_command.replace(
+                " --initial-commit-only ",
+                " --initial-commit-only --mode commit-only ",
+                1,
+            ),
+            self.initial_commit_only_command.replace(
+                " --repo ", " --remote origin --repo ", 1
+            ),
+            self.initial_commit_only_command.replace(
+                " --repo ", " --snapshot " + "a" * 64 + " --repo ", 1
             ),
             self.initial_branch_command.replace(
                 " --initial-branch-publish ",

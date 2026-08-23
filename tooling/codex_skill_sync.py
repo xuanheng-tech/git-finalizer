@@ -431,6 +431,8 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
         if manifest.get("canonical_skill_sha256") != skill_sha:
             raise SyncError("canonical Skill payload SHA mismatch")
         compatibility_version = sources.compatibility.get("toolchain_contract_version")
+        if compatibility_version not in {1, 2}:
+            raise SyncError("unsupported toolchain compatibility contract version")
         if (
             manifest.get("compatible_toolchain_contract_version")
             != compatibility_version
@@ -450,18 +452,22 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
             "skill_contract_version"
         ):
             raise SyncError("Skill contract version is incompatible with workflow")
-        if (
-            sources.compatibility.get("worktree_controller_contract_version")
-            is not None
-        ):
+        controller_contract = sources.compatibility.get(
+            "worktree_controller_contract_version"
+        )
+        controller_status = sources.compatibility.get("worktree_controller_status")
+        if compatibility_version == 1:
+            if (
+                controller_contract is not None
+                or controller_status != "planned_unavailable"
+            ):
+                raise SyncError(
+                    "v1 requires Worktree Controller contract to remain null/planned"
+                )
+        elif controller_contract != 1 or controller_status != "available_external":
             raise SyncError(
-                "v1 requires Worktree Controller contract to remain null/planned"
+                "v2 requires external Worktree Controller contract version 1"
             )
-        if (
-            sources.compatibility.get("worktree_controller_status")
-            != "planned_unavailable"
-        ):
-            raise SyncError("Worktree Controller status must be planned_unavailable")
     except SyncError as exc:
         errors.append(str(exc))
         manifest = {}

@@ -77,6 +77,7 @@ FINALIZER_MODE_MARKERS = (
     "选择 Finalizer 模式不得扩大用户原有的 commit/push 授权",
     "`--mode verify-only`",
     "`--mode commit-only`",
+    "`--initial-commit-only`",
     "默认模式（不传 `--mode`）",
     "三种模式共用适用于各自执行边界的本地提交前检查",
     "`commit-only` 不要求 upstream",
@@ -96,7 +97,7 @@ FINALIZER_MODE_MARKERS = (
     "不删除 local branch/worktree",
 )
 TOOLCHAIN_MARKERS = (
-    "Worktree Controller 是计划中的独立第 4 个生命周期工具，当前不可用",
+    "Worktree Controller 是独立第 4 个生命周期工具",
     "`toolchain_compatibility.json`",
     "incompatible change",
 )

@@ -18,6 +18,7 @@ import signal
 import subprocess
 import sys
 from typing import Any
+import urllib.parse
 
 
 FINALIZER = "/home/hsd/bin/codex-git-finalize"
@@ -75,29 +76,45 @@ LIFECYCLE_HELPER_COMMANDS = frozenset(
     {"close", "migration-dry-run", "review", "summary", "upsert", "validate"}
 )
 BRIDGE_OPTION_SPECS: dict[str, tuple[int, bool]] = {
+    "--add-origin": (0, False),
+    "--allocation-id": (1, False),
     "--allow-large-binary": (1, True),
     "--allow-test-fixture": (1, True),
+    "--authority-key": (1, False),
     "--ci-commit-oid": (1, False),
     "--ci-required": (0, False),
     "--ci-status": (1, False),
     "--ci-verification-source": (1, False),
     "--ci-verified-at": (1, False),
     "--dry-run": (0, False),
+    "--description": (1, False),
     "--expected-remote-oid": (1, False),
+    "--gitea-profile": (1, False),
+    "--gitea-url": (1, False),
     "--initial-branch-publish": (0, False),
+    "--initial-commit-only": (0, False),
     "--initial-publish": (0, False),
     "--integrated-into": (1, False),
     "--message": (1, False),
     "--mode": (1, False),
+    "--owner": (1, False),
     "--publish-existing-branch": (1, False),
     "--remote": (1, False),
     "--remote-branch": (1, False),
     "--repo": (1, False),
+    "--repo-ensure": (0, False),
+    "--repo-name": (1, False),
+    "--repo-plan": (0, False),
+    "--repository-id": (1, False),
     "--resume-initial-publish": (1, False),
     "--resume-publish": (1, False),
     "--retire-remote-branch": (1, False),
     "--snapshot": (1, False),
     "--summary": (0, False),
+    "--task-key": (1, False),
+    "--visibility": (1, False),
+    "--worktree-path": (1, False),
+    "--role": (1, False),
 }
 
 
@@ -429,9 +446,60 @@ def parse_direct_finalizer(
         index += 2
 
     dry_run = "--dry-run" in switches
+    repo_plan = "--repo-plan" in switches
+    repo_ensure = "--repo-ensure" in switches
+    initial_commit_only = "--initial-commit-only" in switches
     initial_publish = "--initial-publish" in switches
     initial_branch_publish = "--initial-branch-publish" in switches
     ci_required = "--ci-required" in switches
+
+    if repo_plan or repo_ensure:
+        if repo_plan and repo_ensure:
+            raise BridgeError("Finalizer repository bootstrap mode 只能选择一个")
+        if delimiters or path_values or repeated:
+            raise BridgeError("Finalizer repository bootstrap 不接受文件范围或例外参数")
+        allowed_switches = {"--repo-plan", "--repo-ensure", "--add-origin", "--summary"}
+        if not switches <= allowed_switches:
+            raise BridgeError("Finalizer repository bootstrap 不接受其他 operation switch")
+        allowed_values = {
+            "--repo",
+            "--gitea-url",
+            "--gitea-profile",
+            "--owner",
+            "--repo-name",
+            "--visibility",
+            "--description",
+            "--remote",
+            "--repository-id",
+            "--allocation-id",
+            "--task-key",
+            "--authority-key",
+            "--worktree-path",
+            "--role",
+        }
+        if not set(parsed) <= allowed_values:
+            raise BridgeError("Finalizer repository bootstrap 包含不兼容参数")
+        required_values = {"--repo", "--gitea-url", "--owner", "--repo-name", "--visibility"}
+        if not required_values <= set(parsed):
+            raise BridgeError("Finalizer repository bootstrap 缺少显式 target 参数")
+        if parsed["--visibility"] not in {"private", "public"}:
+            raise BridgeError("Finalizer repository visibility 必须是 private 或 public")
+        gitea_url = urllib.parse.urlsplit(parsed["--gitea-url"])
+        if (
+            gitea_url.scheme not in {"http", "https"}
+            or not gitea_url.hostname
+            or gitea_url.username is not None
+            or gitea_url.password is not None
+            or gitea_url.query
+            or gitea_url.fragment
+        ):
+            raise BridgeError("Finalizer Gitea URL 必须是不含 credential 的 HTTP(S) URL")
+        for option, value in parsed.items():
+            if any(character in value for character in ("\x00", "\n", "\r", "\t")):
+                raise BridgeError(f"Finalizer {option} 不是有效的单行值")
+            if len(value) > 4096:
+                raise BridgeError(f"Finalizer {option} 超出长度上限")
+        return argv, parsed["--repo"], (), False
 
     mode = parsed.get("--mode")
     if mode is not None and mode not in ("commit-only", "verify-only"):
@@ -478,7 +546,7 @@ def parse_direct_finalizer(
             raise BridgeError("Finalizer lifecycle operation 必须显式提供 --repo")
         raise BridgeError("Finalizer 必须显式提供 --repo 和 --message")
     if mode in ("commit-only", "verify-only") and (
-        initial_publish or initial_branch_publish
+        initial_commit_only or initial_publish or initial_branch_publish
     ):
         raise BridgeError(f"Finalizer --mode {mode} 不接受其他发布模式")
     if verify_only:
@@ -489,6 +557,7 @@ def parse_direct_finalizer(
     if retirement:
         if (
             mode is not None
+            or initial_commit_only
             or initial_publish
             or initial_branch_publish
             or resume
@@ -509,7 +578,12 @@ def parse_direct_finalizer(
             raise BridgeError(
                 "Finalizer existing commit 发布要求完整小写十六进制 HEAD OID"
             )
-        if mode is not None or initial_publish or initial_branch_publish:
+        if (
+            mode is not None
+            or initial_commit_only
+            or initial_publish
+            or initial_branch_publish
+        ):
             raise BridgeError(
                 "Finalizer existing commit 发布不接受其他 mode 或发布入口"
             )
@@ -521,7 +595,7 @@ def parse_direct_finalizer(
             raise BridgeError("Finalizer existing commit 发布不接受 snapshot")
         if resume and "--remote-branch" in parsed:
             raise BridgeError("Finalizer resume 不接受 snapshot 或 remote-branch")
-    if initial_publish and initial_branch_publish:
+    if sum((initial_commit_only, initial_publish, initial_branch_publish)) > 1:
         raise BridgeError("Finalizer 发布模式只能选择一个")
     if retirement:
         remote = parsed.get("--remote")
@@ -633,6 +707,13 @@ def parse_direct_finalizer(
             )
         ):
             raise BridgeError("Finalizer --remote-branch 不是有效的 branch 名")
+    elif initial_commit_only:
+        if "--remote" in parsed or "--remote-branch" in parsed:
+            raise BridgeError(
+                "Finalizer --initial-commit-only 不接受 remote 或 remote-branch"
+            )
+        if "--snapshot" in parsed:
+            raise BridgeError("Finalizer --initial-commit-only 不接受 snapshot")
     elif initial_publish:
         remote = parsed.get("--remote")
         if remote is None:

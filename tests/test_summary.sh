@@ -115,6 +115,12 @@ expected_keys = [
     "final_phase",
     "exit_code",
     "repository",
+    "repository_id",
+    "allocation_id",
+    "task_key",
+    "authority_key",
+    "worktree_path",
+    "role",
     "branch",
     "upstream",
     "requested_path_count",
@@ -210,6 +216,9 @@ test_normal_success() {
     git -C "$summary_repo" config push.followTags true
     git -C "$summary_repo" tag -a -m follow-tags-fixture summary-local-only HEAD
     run_capture 0 "$summary_output" "$finalizer" --summary --repo "$summary_repo" \
+        --repository-id repository-1 --allocation-id allocation-1 \
+        --task-key task-1 --authority-key authority-1 \
+        --worktree-path "$summary_repo" --role feature \
         --message SUMMARY_MESSAGE_SENTINEL -- wanted.txt
 
     assert_file_contains "$default_output" 'Git Finalizer 完成' \
@@ -219,6 +228,12 @@ test_normal_success() {
     assert_summary_contract "$summary_output"
     assert_json_value "$summary_output" status '"success"'
     assert_json_value "$summary_output" mode '"normal"'
+    assert_json_value "$summary_output" repository_id '"repository-1"'
+    assert_json_value "$summary_output" allocation_id '"allocation-1"'
+    assert_json_value "$summary_output" task_key '"task-1"'
+    assert_json_value "$summary_output" authority_key '"authority-1"'
+    assert_json_value "$summary_output" worktree_path "\"$summary_repo\""
+    assert_json_value "$summary_output" role '"feature"'
     assert_json_value "$summary_output" commit.created 'true'
     assert_json_value "$summary_output" push.result '"succeeded"'
     assert_json_value "$summary_output" push.branch_refspec_only 'true'
@@ -278,6 +293,37 @@ test_commit_only_success() {
     assert_json_value "$summary_output" mode_result.worktree '"clean"'
     assert_equal "$remote_before" "$(remote_refs "$test_remote")" \
         'commit-only summary changed remote refs'
+}
+
+test_initial_commit_only_success() {
+    local case_dir=$tmp_root/initial-commit-only-success
+    local summary_output=$case_dir/output.log
+    local remote_before commit_sha
+
+    make_unborn_repo "$case_dir"
+    git -C "$test_repo" remote remove origin
+    remote_before=$(remote_refs "$test_remote")
+    run_capture 0 "$summary_output" "$finalizer" --summary \
+        --initial-commit-only --repo "$test_repo" \
+        --message local-root-only -- first.txt
+    commit_sha=$(git -C "$test_repo" rev-parse HEAD)
+
+    assert_summary_contract "$summary_output"
+    assert_json_value "$summary_output" mode '"initial-commit-only"'
+    assert_json_value "$summary_output" status '"success"'
+    assert_json_value "$summary_output" commit.created 'true'
+    assert_json_value "$summary_output" commit.sha "\"$commit_sha\""
+    assert_json_value "$summary_output" push.executed 'false'
+    assert_json_value "$summary_output" push.result \
+        '"skipped_by_initial_commit_only"'
+    assert_json_value "$summary_output" mode_result.initial_root_commit '"committed"'
+    assert_json_value "$summary_output" mode_result.remote_verification \
+        '"skipped_by_initial_commit_only"'
+    assert_json_value "$summary_output" mode_result.post_verify \
+        '"skipped_by_initial_commit_only"'
+    assert_json_value "$summary_output" mode_result.worktree '"clean"'
+    assert_equal "$remote_before" "$(remote_refs "$test_remote")" \
+        'initial-commit-only summary changed remote refs'
 }
 
 test_verify_only_success() {
@@ -662,6 +708,8 @@ run_case() {
 
 run_case 'normal summary preserves commit and push results' test_normal_success
 run_case 'commit-only summary reports the local-only result' test_commit_only_success
+run_case 'initial-commit-only summary reports one local root commit' \
+    test_initial_commit_only_success
 run_case 'verify-only summary proves validation and state preservation' \
     test_verify_only_success
 run_case 'initial summary preserves root publication results' test_initial_success
