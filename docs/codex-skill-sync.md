@@ -2,9 +2,10 @@
 
 ## Owner and authority
 
-`git-finalizer` 是最窄的共同 owner：它已经拥有唯一 active canonical
-`three-tool-git-workflow` Skill 及其安装 helper，而 Context Loader 与 Snapshot Runner 仍只拥有
-各自实现。这里新增的是 release infrastructure，不是第 4 个编排工具。
+`git-finalizer` 是最窄的共同 owner：它拥有唯一 active canonical `git-change-delivery` Skill
+及其安装 helper，而 Context Loader 与 Snapshot Runner 仍只拥有各自实现。旧名称
+`three-tool-git-workflow` 只保留一个 deprecated compatibility shim，不是第二个 authority。
+这里的 release infrastructure 也不是 worktree lifecycle 编排工具。
 
 每个工具仓库只保存自己的 `tool_cli_contract.json` 与 `tool_skill_manifest.json`。三个 manifest
 都绑定同一个 canonical Skill payload；installed Skill 是同步副本，不能人工编辑。
@@ -14,13 +15,15 @@ canonical manifest 的 `tool_commit` 固定为 `@release`，因为被跟踪文�
 `--allow-dirty-source` 的隔离验收 bundle 使用 `worktree:<HEAD>` 并标记
 `source_state=dirty_test_only`，不得作为正式 release。
 
-`canonical_skill_sha256` 是以下有序 payload 行的 SHA-256：
+`canonical_skill_sha256` 是 canonical Skill 以下有序 payload 行的 SHA-256：
 
 ```text
 <file-sha256><two spaces><relative-path>\n
 ```
 
-范围为 `SKILL.md`、`quick_validate.py`、`unpublished_queue.py` 与四个 active references。
+范围为 `SKILL.md`、`quick_validate.py`、`unpublished_queue.py` 与四个 active references；
+compatibility shim 的独立 SHA-256 由 ToolSkillManifest v2 绑定，并随 bundle/production pair 一起
+验证和安装。
 
 ## Commands
 
@@ -44,6 +47,7 @@ canonical manifest 的 `tool_commit` 固定为 `@release`，因为被跟踪文�
 ```text
 SKILL.md
 references/ and Skill helpers
+compatibility/three-tool-git-workflow/SKILL.md
 executable/ or executable_identity.json
 tool_cli_contract.json
 tool_skill_manifest.json

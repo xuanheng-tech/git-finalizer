@@ -625,7 +625,7 @@ class GitFinalizerBridgeTest(unittest.TestCase):
             (
                 "/usr/bin/python3",
                 "-B",
-                "/home/hsd/.agents/skills/three-tool-git-workflow/unpublished_queue.py",
+                "/home/hsd/.agents/skills/git-change-delivery/unpublished_queue.py",
                 "upsert",
                 "--repo",
                 shlex.quote(str(self.repo)),
@@ -663,7 +663,7 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 (
                     "/usr/bin/python3",
                     "-B",
-                    "/home/hsd/.agents/skills/three-tool-git-workflow/unpublished_queue.py",
+                    "/home/hsd/.agents/skills/git-change-delivery/unpublished_queue.py",
                     *state_arguments,
                     "upsert",
                     "--repo",

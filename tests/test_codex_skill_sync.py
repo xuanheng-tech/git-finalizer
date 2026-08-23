@@ -74,14 +74,28 @@ class SkillSyncTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(f"fixture {relative}\n", encoding="utf-8")
         skill_sha = sync.tree_sha256(skill, sync.SKILL_PAYLOAD)
+        compatibility_skill = (
+            owner / "skills" / sync.COMPATIBILITY_SKILL_NAME / "SKILL.md"
+        )
+        compatibility_skill.parent.mkdir(parents=True)
+        compatibility_skill.write_text(
+            "---\n"
+            f"name: {sync.COMPATIBILITY_SKILL_NAME}\n"
+            "description: Deprecated compatibility entry.\n"
+            "---\n\n"
+            "Use $git-change-delivery.\n",
+            encoding="utf-8",
+        )
+        compatibility_sha = sync.sha256_file(compatibility_skill)
 
         compatibility = {
             "schema_version": 1,
-            "toolchain_contract_version": 2,
+            "toolchain_contract_version": 3,
             "workflow_skill": {
                 "name": sync.SKILL_NAME,
                 "contract_version": 1,
                 "canonical_owner": "git-finalizer",
+                "compatibility_shims": [sync.COMPATIBILITY_SKILL_NAME],
             },
             "context_loader_contract_version": 1,
             "snapshot_runner_contract_version": 1,
@@ -168,7 +182,7 @@ class SkillSyncTests(unittest.TestCase):
                     "import argparse\n"
                     "parser = argparse.ArgumentParser(prog='codex-skill-sync')\n"
                     "parser.add_argument('--version', action='version', "
-                    "version='codex-skill-sync 1.0.0')\n"
+                    "version='codex-skill-sync 1.1.0')\n"
                     "parser.parse_args()\n",
                     encoding="utf-8",
                 )
@@ -215,7 +229,7 @@ class SkillSyncTests(unittest.TestCase):
                     "entrypoints": list(entrypoints),
                 }
             manifest = {
-                "schema_version": 1,
+                "schema_version": sync.TOOL_SKILL_MANIFEST_SCHEMA_VERSION,
                 "tool_name": name,
                 "tool_version": version,
                 "tool_commit": "@release",
@@ -224,10 +238,17 @@ class SkillSyncTests(unittest.TestCase):
                     repo / "tool_cli_contract.json"
                 ),
                 "canonical_skill_sha256": skill_sha,
-                "compatible_toolchain_contract_version": 2,
+                "compatible_toolchain_contract_version": 3,
                 "canonical_skill": {
                     "owner": "git-finalizer",
                     "path": f"skills/{sync.SKILL_NAME}/SKILL.md",
+                },
+                "compatibility_skill": {
+                    "name": sync.COMPATIBILITY_SKILL_NAME,
+                    "path": (
+                        f"skills/{sync.COMPATIBILITY_SKILL_NAME}/SKILL.md"
+                    ),
+                    "sha256": compatibility_sha,
                 },
                 "executable": executable_definition,
                 "install_targets": {
@@ -246,6 +267,21 @@ class SkillSyncTests(unittest.TestCase):
             target = installed_skill / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source_skill / relative, target)
+        compatibility_source = (
+            self.sources_root
+            / "git-finalizer"
+            / "skills"
+            / sync.COMPATIBILITY_SKILL_NAME
+            / "SKILL.md"
+        )
+        compatibility_target = (
+            self.agents_root
+            / "skills"
+            / sync.COMPATIBILITY_SKILL_NAME
+            / "SKILL.md"
+        )
+        compatibility_target.parent.mkdir(parents=True)
+        shutil.copyfile(compatibility_source, compatibility_target)
         for _, (version, entrypoints) in TOOLS.items():
             for entrypoint in entrypoints:
                 path = self.bin_dir / entrypoint
@@ -269,10 +305,19 @@ class SkillSyncTests(unittest.TestCase):
     def _update_skill_manifest_hashes(self) -> None:
         skill = self.sources_root / "git-finalizer" / "skills" / sync.SKILL_NAME
         digest = sync.tree_sha256(skill, sync.SKILL_PAYLOAD)
+        compatibility = (
+            self.sources_root
+            / "git-finalizer"
+            / "skills"
+            / sync.COMPATIBILITY_SKILL_NAME
+            / "SKILL.md"
+        )
+        compatibility_digest = sync.sha256_file(compatibility)
         for tool in TOOLS:
             path = self.sources_root / tool / "tool_skill_manifest.json"
             manifest = sync.read_json(path)
             manifest["canonical_skill_sha256"] = digest
+            manifest["compatibility_skill"]["sha256"] = compatibility_digest
             write_json(path, manifest)
 
     def _install_production(
@@ -409,6 +454,36 @@ class SkillSyncTests(unittest.TestCase):
                 )
         self.assertEqual(self._current("git-finalizer"), before)
 
+    def test_pre_rename_bundle_remains_verifiable_for_migration(self) -> None:
+        sync.install(
+            self.sources,
+            "git-finalizer",
+            self.install_root,
+            allow_dirty_source=False,
+        )
+        legacy = self.root / "legacy-bundle"
+        shutil.copytree(self._current("git-finalizer"), legacy)
+        manifest_path = legacy / "tool_skill_manifest.json"
+        manifest = sync.read_json(manifest_path)
+        manifest["schema_version"] = 1
+        manifest.pop("compatibility_skill")
+        manifest["canonical_skill"]["path"] = (
+            f"skills/{sync.COMPATIBILITY_SKILL_NAME}/SKILL.md"
+        )
+        manifest["install_targets"]["skill_directory"] = (
+            sync.COMPATIBILITY_SKILL_NAME
+        )
+        write_json(manifest_path, manifest)
+        shutil.rmtree(legacy / "compatibility")
+        release_path = legacy / "release_manifest.json"
+        release = sync.read_json(release_path)
+        release["manifest_sha"] = sync.sha256_file(manifest_path)
+        write_json(release_path, release)
+
+        verified = sync.verify_bundle(legacy, "git-finalizer")
+
+        self.assertEqual(verified["tool_name"], "git-finalizer")
+
     def test_production_activation_installs_verified_binary_hook_and_skill(
         self,
     ) -> None:
@@ -433,6 +508,15 @@ class SkillSyncTests(unittest.TestCase):
             ),
             sync.read_json(current / "release_manifest.json")["skill_sha"],
         )
+        self.assertEqual(
+            (
+                self.agents_root
+                / "skills"
+                / sync.COMPATIBILITY_SKILL_NAME
+                / "SKILL.md"
+            ).read_bytes(),
+            (current / sync.COMPATIBILITY_BUNDLE_PATH).read_bytes(),
+        )
         smoke = subprocess.run(
             (str(self.bin_dir / "codex-skill-sync"), "--version"),
             check=False,
@@ -440,7 +524,7 @@ class SkillSyncTests(unittest.TestCase):
             text=True,
         )
         self.assertEqual(smoke.returncode, 0, smoke.stderr)
-        self.assertIn("1.0.0", smoke.stdout)
+        self.assertIn("1.1.0", smoke.stdout)
 
     def test_production_verification_failure_restores_active_pair(self) -> None:
         binary = self.bin_dir / "codex-git-finalize"

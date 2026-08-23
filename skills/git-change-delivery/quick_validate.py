@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the versioned Three-tool Git workflow Skill and its decision contract."""
+"""Validate the versioned Git change delivery Skill and its decision contract."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Sequence
 
 
-SKILL_NAME = "three-tool-git-workflow"
+SKILL_NAME = "git-change-delivery"
 REQUIRED_STATES = (
     "not_applicable",
     "publication_blocked",
@@ -97,7 +97,9 @@ FINALIZER_MODE_MARKERS = (
     "不删除 local branch/worktree",
 )
 TOOLCHAIN_MARKERS = (
-    "Worktree Controller 是独立第 4 个生命周期工具",
+    "`worktree-lifecycle` 是上层 lifecycle orchestration",
+    "不属于本 Skill 的内部实现",
+    "也不创建或移除 worktree",
     "`toolchain_compatibility.json`",
     "incompatible change",
 )

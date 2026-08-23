@@ -37,14 +37,17 @@ class SkillDeploymentTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.source = self.root / "source" / "three-tool-git-workflow"
+        self.source = self.root / "source" / "git-change-delivery"
         shutil.copytree(VERSIONED_SOURCE, self.source)
+        self.compatibility_source = self.root / "source" / "three-tool-git-workflow"
+        shutil.copytree(VERSIONED_SOURCE.parent / "three-tool-git-workflow", self.compatibility_source)
         for path in self.source.rglob("*"):
             if path.is_file():
                 path.chmod(0o644)
         self.skills_root = self.root / ".agents" / "skills"
         self.skills_root.mkdir(parents=True)
-        self.live = self.skills_root / "three-tool-git-workflow"
+        self.live = self.skills_root / "git-change-delivery"
+        self.compatibility_live = self.skills_root / "three-tool-git-workflow"
 
     def run_main(self, action: str) -> tuple[int, str, str]:
         stdout = io.StringIO()
@@ -57,6 +60,10 @@ class SkillDeploymentTest(unittest.TestCase):
                     str(self.source),
                     "--live-dir",
                     str(self.live),
+                    "--compatibility-source-dir",
+                    str(self.compatibility_source),
+                    "--compatibility-live-dir",
+                    str(self.compatibility_live),
                 )
             )
         return status, stdout.getvalue(), stderr.getvalue()
@@ -69,6 +76,10 @@ class SkillDeploymentTest(unittest.TestCase):
             target.parent.mkdir(mode=0o700, exist_ok=True)
             target.write_bytes((self.source / name).read_bytes())
             target.chmod(0o600)
+        self.compatibility_live.mkdir(mode=0o700)
+        target = self.compatibility_live / "SKILL.md"
+        target.write_bytes((self.compatibility_source / "SKILL.md").read_bytes())
+        target.chmod(0o600)
 
     def test_check_reports_matching_payload_hashes_and_permissions(self) -> None:
         self.populate_live()
@@ -77,7 +88,11 @@ class SkillDeploymentTest(unittest.TestCase):
 
         self.assertEqual(status, 0)
         self.assertEqual(stderr, "")
-        self.assertEqual(stdout.count("ok "), len(deploy.MANAGED_FILES))
+        self.assertEqual(
+            sum(line.startswith("ok ") for line in stdout.splitlines()),
+            len(deploy.MANAGED_FILES),
+        )
+        self.assertIn("compatibility-ok SKILL.md", stdout)
         self.assertNotIn("drift ", stdout)
         self.assertNotIn("unknown-live ", stdout)
 
@@ -117,6 +132,18 @@ class SkillDeploymentTest(unittest.TestCase):
             self.assertEqual(deploy.sha256(target), deploy.sha256(self.source / name))
             self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
         self.assertEqual(hashlib.sha256(other_skill.read_bytes()).hexdigest(), other_before)
+        self.assertEqual(
+            deploy.sha256(self.compatibility_live / "SKILL.md"),
+            deploy.sha256(self.compatibility_source / "SKILL.md"),
+        )
+        self.assertEqual(
+            {
+                path.relative_to(self.compatibility_live).as_posix()
+                for path in self.compatibility_live.rglob("*")
+                if path.is_file()
+            },
+            {"SKILL.md"},
+        )
         self.assertFalse(
             any(path.name.startswith(".") for path in self.live.rglob("*"))
         )
@@ -166,6 +193,19 @@ class SkillDeploymentTest(unittest.TestCase):
         self.assertEqual(status, 2)
         self.assertEqual(stdout, "")
         self.assertIn("versioned source is not a regular file", stderr)
+
+    def test_compatibility_source_cannot_copy_canonical_payload(self) -> None:
+        self.populate_live()
+        (self.compatibility_source / "references").mkdir()
+        (self.compatibility_source / "references" / "copied.md").write_text(
+            "duplicate\n", encoding="utf-8"
+        )
+
+        status, stdout, stderr = self.run_main("check")
+
+        self.assertEqual(status, 2)
+        self.assertIn("source-files", stdout)
+        self.assertIn("must contain only SKILL.md", stderr)
 
 
 class SkillContractTest(unittest.TestCase):

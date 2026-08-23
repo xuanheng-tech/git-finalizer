@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check or explicitly install the versioned Three-tool Git workflow Skill."""
+"""Check or explicitly install Git change delivery and its deprecated shim."""
 
 from __future__ import annotations
 
@@ -16,7 +16,10 @@ import quick_validate
 
 
 SOURCE_DIR = Path(__file__).resolve().parent
-LIVE_DIR = Path.home() / ".agents" / "skills" / "three-tool-git-workflow"
+LIVE_DIR = Path.home() / ".agents" / "skills" / "git-change-delivery"
+COMPATIBILITY_SKILL_NAME = "three-tool-git-workflow"
+COMPATIBILITY_SOURCE_DIR = SOURCE_DIR.parent / COMPATIBILITY_SKILL_NAME
+COMPATIBILITY_LIVE_DIR = Path.home() / ".agents" / "skills" / COMPATIBILITY_SKILL_NAME
 MANAGED_FILES = {
     "SKILL.md": 0o600,
     "quick_validate.py": 0o600,
@@ -33,6 +36,7 @@ SOURCE_ONLY_FILES = (
     "test_unpublished_queue.py",
 )
 EXPECTED_LIVE_DIRS = {"references"}
+COMPATIBILITY_FILES = {"SKILL.md": 0o600}
 
 
 class DeploymentError(Exception):
@@ -74,6 +78,41 @@ def validate_source(source_dir: Path) -> None:
     errors = quick_validate.validation_errors(source_dir)
     if errors:
         raise DeploymentError("Skill validation failed: " + "; ".join(errors))
+
+
+def validate_compatibility_source(source_dir: Path) -> None:
+    if source_dir.is_symlink() or not source_dir.is_dir():
+        raise DeploymentError(f"compatibility Skill source is not a directory: {source_dir}")
+    if source_dir.stat().st_uid != os.getuid():
+        raise DeploymentError(
+            f"compatibility Skill source is not owned by the current user: {source_dir}"
+        )
+    paths = {
+        path.relative_to(source_dir).as_posix()
+        for path in source_dir.rglob("*")
+        if path.is_file() or path.is_symlink()
+    }
+    if paths != set(COMPATIBILITY_FILES):
+        raise DeploymentError(
+            "compatibility Skill must contain only SKILL.md; found: "
+            + ", ".join(sorted(paths))
+        )
+    skill = source_dir / "SKILL.md"
+    regular_owned_file(skill, "compatibility source")
+    content = skill.read_text(encoding="utf-8")
+    required = (
+        "name: three-tool-git-workflow",
+        "Deprecated compatibility entry",
+        "$git-change-delivery",
+        "no copied workflow",
+    )
+    if any(marker not in content for marker in required):
+        raise DeploymentError("compatibility Skill does not point exclusively to canonical Skill")
+    source_mode = mode(skill)
+    if source_mode & 0o111 or source_mode & 0o002:
+        raise DeploymentError(
+            f"compatibility source permissions are not reasonable: {skill} mode={source_mode:#05o}"
+        )
 
 
 def expected_live_paths() -> set[str]:
@@ -130,7 +169,48 @@ def validate_existing_live_structure(live_dir: Path) -> None:
             regular_owned_file(target, "live target")
 
 
-def check(source_dir: Path, live_dir: Path) -> bool:
+def check_compatibility(source_dir: Path, live_dir: Path) -> bool:
+    validate_compatibility_source(source_dir)
+    validate_live_container(live_dir, allow_missing=False)
+    consistent = True
+    actual = live_paths(live_dir)
+    if actual != set(COMPATIBILITY_FILES):
+        consistent = False
+        for name in sorted(actual - set(COMPATIBILITY_FILES)):
+            print(f"compatibility-unknown-live {name}")
+        for name in sorted(set(COMPATIBILITY_FILES) - actual):
+            print(f"compatibility-missing-live {name}")
+    live_root_mode = mode(live_dir)
+    print(f"compatibility-live-directory . mode={live_root_mode:#05o}")
+    if live_root_mode != 0o700:
+        consistent = False
+    for name, expected_mode in COMPATIBILITY_FILES.items():
+        source = source_dir / name
+        target = live_dir / name
+        if target.is_symlink() or not target.is_file() or target.stat().st_uid != os.getuid():
+            live_digest = "missing-or-unsafe"
+            live_mode = None
+            matches = False
+        else:
+            live_digest = sha256(target)
+            live_mode = mode(target)
+            matches = live_digest == sha256(source) and live_mode == expected_mode
+        mode_text = "missing" if live_mode is None else f"{live_mode:#05o}"
+        prefix = "compatibility-ok" if matches else "compatibility-drift"
+        print(
+            f"{prefix} {name} source_sha256={sha256(source)} live={live_digest} "
+            f"live_mode={mode_text}"
+        )
+        consistent = consistent and matches
+    return consistent
+
+
+def check(
+    source_dir: Path,
+    live_dir: Path,
+    compatibility_source_dir: Path = COMPATIBILITY_SOURCE_DIR,
+    compatibility_live_dir: Path = COMPATIBILITY_LIVE_DIR,
+) -> bool:
     validate_source(source_dir)
     validate_live_container(live_dir, allow_missing=False)
     consistent = True
@@ -198,7 +278,7 @@ def check(source_dir: Path, live_dir: Path) -> bool:
                 f"drift {name} source_sha256={source_digest} live={live_state} "
                 f"source_mode={source_mode:#05o} live_mode={mode_text}"
             )
-    return consistent
+    return check_compatibility(compatibility_source_dir, compatibility_live_dir) and consistent
 
 
 def ensure_live_directory(path: Path) -> None:
@@ -246,10 +326,33 @@ def install_one(source: Path, target: Path, target_mode: int) -> str:
     return f"installed {target.name} sha256={live_digest} mode={target_mode:#05o}"
 
 
-def install(source_dir: Path, live_dir: Path) -> None:
+def validate_existing_compatibility_structure(live_dir: Path) -> None:
+    if not live_dir.exists():
+        return
+    unknown = sorted(live_paths(live_dir) - set(COMPATIBILITY_FILES))
+    if unknown:
+        raise DeploymentError(
+            "compatibility live Skill contains non-shim paths; migrate them first: "
+            + ", ".join(unknown)
+        )
+    for name in COMPATIBILITY_FILES:
+        target = live_dir / name
+        if target.exists() or target.is_symlink():
+            regular_owned_file(target, "compatibility live target")
+
+
+def install(
+    source_dir: Path,
+    live_dir: Path,
+    compatibility_source_dir: Path = COMPATIBILITY_SOURCE_DIR,
+    compatibility_live_dir: Path = COMPATIBILITY_LIVE_DIR,
+) -> None:
     validate_source(source_dir)
+    validate_compatibility_source(compatibility_source_dir)
     validate_live_container(live_dir, allow_missing=True)
+    validate_live_container(compatibility_live_dir, allow_missing=True)
     validate_existing_live_structure(live_dir)
+    validate_existing_compatibility_structure(compatibility_live_dir)
 
     parent = live_dir.parent
     if parent.is_symlink() or not parent.is_dir() or parent.stat().st_uid != os.getuid():
@@ -259,17 +362,32 @@ def install(source_dir: Path, live_dir: Path) -> None:
         ensure_live_directory(live_dir / name)
     for name, target_mode in MANAGED_FILES.items():
         print(install_one(source_dir / name, live_dir / name, target_mode))
-    if not check(source_dir, live_dir):
+    ensure_live_directory(compatibility_live_dir)
+    for name, target_mode in COMPATIBILITY_FILES.items():
+        print(
+            install_one(
+                compatibility_source_dir / name,
+                compatibility_live_dir / name,
+                target_mode,
+            )
+        )
+    if not check(source_dir, live_dir, compatibility_source_dir, compatibility_live_dir):
         raise DeploymentError("post-install source/live check failed")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Check or install only the versioned Three-tool Git workflow Skill."
+        description="Check or install Git change delivery and its deprecated compatibility shim."
     )
     parser.add_argument("action", choices=("check", "install"))
     parser.add_argument("--source-dir", type=Path, default=SOURCE_DIR)
     parser.add_argument("--live-dir", type=Path, default=LIVE_DIR)
+    parser.add_argument(
+        "--compatibility-source-dir", type=Path, default=COMPATIBILITY_SOURCE_DIR
+    )
+    parser.add_argument(
+        "--compatibility-live-dir", type=Path, default=COMPATIBILITY_LIVE_DIR
+    )
     return parser
 
 
@@ -277,9 +395,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     try:
         if arguments.action == "install":
-            install(arguments.source_dir, arguments.live_dir)
+            install(
+                arguments.source_dir,
+                arguments.live_dir,
+                arguments.compatibility_source_dir,
+                arguments.compatibility_live_dir,
+            )
             return 0
-        return 0 if check(arguments.source_dir, arguments.live_dir) else 1
+        return (
+            0
+            if check(
+                arguments.source_dir,
+                arguments.live_dir,
+                arguments.compatibility_source_dir,
+                arguments.compatibility_live_dir,
+            )
+            else 1
+        )
     except (DeploymentError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

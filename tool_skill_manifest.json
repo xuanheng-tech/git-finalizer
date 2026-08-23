@@ -1,10 +1,15 @@
 {
   "canonical_skill": {
     "owner": "git-finalizer",
-    "path": "skills/three-tool-git-workflow/SKILL.md"
+    "path": "skills/git-change-delivery/SKILL.md"
   },
-  "canonical_skill_sha256": "4bb3155c4a08d34d167e69732d4e6264a03a1b49b25ce158caf1c969c709390d",
-  "compatible_toolchain_contract_version": 2,
+  "canonical_skill_sha256": "ff3326d0ad276a720452ea29967da787119797c968c163590782457abd1797d8",
+  "compatibility_skill": {
+    "name": "three-tool-git-workflow",
+    "path": "skills/three-tool-git-workflow/SKILL.md",
+    "sha256": "68503da0ffb2e94e487afc8bbc8320390da9bdf7a8e6e7e902f6f6ab426dd8cd"
+  },
+  "compatible_toolchain_contract_version": 3,
   "executable": {
     "entrypoints": [
       "codex-git-finalize"
@@ -28,13 +33,13 @@
     }
   },
   "install_targets": {
-    "skill_directory": "three-tool-git-workflow",
+    "skill_directory": "git-change-delivery",
     "stable_entries": [
       "codex-git-finalize"
     ]
   },
   "public_cli_contract_sha256": "6c367c9145924027250107905796e43fe159820f7ba82b135fb8b40f08718e5d",
-  "schema_version": 1,
+  "schema_version": 2,
   "skill_contract_version": 1,
   "tool_commit": "@release",
   "tool_name": "git-finalizer",

@@ -6,7 +6,7 @@
 
 ```bash
 python3 -B <skill-source>/unpublished_queue.py ...
-python3 -B /home/hsd/.agents/skills/three-tool-git-workflow/unpublished_queue.py ...
+python3 -B /home/hsd/.agents/skills/git-change-delivery/unpublished_queue.py ...
 ```
 
 它只管理本地 control-plane metadata，不执行 Snapshot、commit、push、fetch、stash、reset、
@@ -63,7 +63,7 @@ file/symlink/deletion、mode 和内容 SHA-256（不保存内容）；更多路�
 典型调用：
 
 ```bash
-python3 -B /home/hsd/.agents/skills/three-tool-git-workflow/unpublished_queue.py \
+python3 -B /home/hsd/.agents/skills/git-change-delivery/unpublished_queue.py \
   upsert \
   --repo /absolute/repo \
   --workstream "short stable label" \
@@ -92,7 +92,7 @@ scope 静默新增 active record。
 ## Repo-entry summary
 
 ```bash
-python3 -B /home/hsd/.agents/skills/three-tool-git-workflow/unpublished_queue.py \
+python3 -B /home/hsd/.agents/skills/git-change-delivery/unpublished_queue.py \
   summary --repo /absolute/repo
 ```
 
@@ -108,7 +108,7 @@ Unpublished backlog: 2 pending, 1 blocked. Oldest: 2026-08-09. Run queue review 
 ## Bounded review 与关闭
 
 ```bash
-python3 -B /home/hsd/.agents/skills/three-tool-git-workflow/unpublished_queue.py \
+python3 -B /home/hsd/.agents/skills/git-change-delivery/unpublished_queue.py \
   review --repo /absolute/repo [--record cuq_...] \
   [--remote-verified-oid <full-oid>]
 ```
@@ -138,7 +138,7 @@ needs_human_review
 显式人工关闭：
 
 ```bash
-python3 -B /home/hsd/.agents/skills/three-tool-git-workflow/unpublished_queue.py \
+python3 -B /home/hsd/.agents/skills/git-change-delivery/unpublished_queue.py \
   close --record cuq_... --state <published|superseded|dismissed> \
   --evidence-kind <fixed-kind> [--oid <full-oid>]
 ```
@@ -150,8 +150,8 @@ python3 -B /home/hsd/.agents/skills/three-tool-git-workflow/unpublished_queue.py
 ## Validate 与 migration dry-run
 
 ```bash
-python3 -B /home/hsd/.agents/skills/three-tool-git-workflow/unpublished_queue.py validate
-python3 -B /home/hsd/.agents/skills/three-tool-git-workflow/unpublished_queue.py \
+python3 -B /home/hsd/.agents/skills/git-change-delivery/unpublished_queue.py validate
+python3 -B /home/hsd/.agents/skills/git-change-delivery/unpublished_queue.py \
   migration-dry-run --source <frozen-candidate.json> [--output <state-dir/file.json>]
 ```
 

@@ -13,6 +13,11 @@ section is invented for it.
 
 ## Unreleased
 
+- Rename the canonical workflow Skill to `git-change-delivery`, retain the former name only as a
+  deprecated shim, and bind both through ToolSkillManifest v2/toolchain contract v3.
+- Update `codex-skill-sync` to 1.1.0 so bundles and production activation install and verify the new
+  canonical Skill plus its shim while accepting pre-rename bundles for fail-closed migration.
+
 ## 0.9.0 - 2026-08-23
 
 - Add `--publish-existing-history` for normal non-force first publication of one or more existing

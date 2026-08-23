@@ -19,9 +19,14 @@ import tomllib
 from typing import Any, Sequence
 
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 SCHEMA_VERSION = 1
-SKILL_NAME = "three-tool-git-workflow"
+TOOL_SKILL_MANIFEST_SCHEMA_VERSION = 2
+SKILL_NAME = "git-change-delivery"
+COMPATIBILITY_SKILL_NAME = "three-tool-git-workflow"
+COMPATIBILITY_BUNDLE_PATH = (
+    Path("compatibility") / COMPATIBILITY_SKILL_NAME / "SKILL.md"
+)
 SKILL_PAYLOAD = (
     "SKILL.md",
     "quick_validate.py",
@@ -184,6 +189,7 @@ class Sources:
             "name": SKILL_NAME,
             "contract_version": 1,
             "canonical_owner": "git-finalizer",
+            "compatibility_shims": [COMPATIBILITY_SKILL_NAME],
         }:
             raise SyncError("toolchain workflow Skill binding is unrecognized")
         tools = self.compatibility.get("tools")
@@ -191,6 +197,9 @@ class Sources:
             raise SyncError("toolchain compatibility contract has no tools")
         self.tool_config = tools
         self.skill_root = self.owner_repo / "skills" / SKILL_NAME
+        self.compatibility_skill_root = (
+            self.owner_repo / "skills" / COMPATIBILITY_SKILL_NAME
+        )
 
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self.tool_config))
@@ -211,7 +220,9 @@ class Sources:
         return repo
 
 
-def validate_install_targets(manifest: dict[str, Any]) -> tuple[str, ...]:
+def validate_install_targets(
+    manifest: dict[str, Any], *, allow_legacy: bool = False
+) -> tuple[str, ...]:
     executable = manifest.get("executable")
     install_targets = manifest.get("install_targets")
     if not isinstance(executable, dict) or not isinstance(install_targets, dict):
@@ -233,7 +244,10 @@ def validate_install_targets(manifest: dict[str, Any]) -> tuple[str, ...]:
         for name in entrypoints
     ):
         raise SyncError("manifest contains unsafe entrypoint")
-    if install_targets.get("skill_directory") != SKILL_NAME:
+    expected_skill = SKILL_NAME
+    if allow_legacy and manifest.get("schema_version") == 1:
+        expected_skill = COMPATIBILITY_SKILL_NAME
+    if install_targets.get("skill_directory") != expected_skill:
         raise SyncError("manifest has unrecognized Skill install target")
     if kind == "source_files":
         paths = executable.get("paths")
@@ -363,7 +377,9 @@ def validate_bridge_contract(contract: dict[str, Any], bridge_path: Path) -> Non
         raise SyncError("Git Finalizer host bridge and CLI contract differ")
 
 
-def validate_manifest_static_fields(manifest: dict[str, Any]) -> None:
+def validate_manifest_static_fields(
+    manifest: dict[str, Any], *, allow_legacy: bool = False
+) -> None:
     required = {
         "schema_version",
         "tool_name",
@@ -377,19 +393,37 @@ def validate_manifest_static_fields(manifest: dict[str, Any]) -> None:
         "executable",
         "install_targets",
     }
+    legacy = allow_legacy and manifest.get("schema_version") == 1
+    if not legacy:
+        required.add("compatibility_skill")
     if set(manifest) != required:
-        raise SyncError("ToolSkillManifest fields do not match schema v1")
+        raise SyncError("ToolSkillManifest fields do not match its schema")
     for key in ("public_cli_contract_sha256", "canonical_skill_sha256"):
         if not isinstance(manifest.get(key), str) or not HEX_SHA256.fullmatch(
             manifest[key]
         ):
             raise SyncError(f"ToolSkillManifest {key} is not SHA-256")
+    expected_name = COMPATIBILITY_SKILL_NAME if legacy else SKILL_NAME
     canonical_skill = manifest.get("canonical_skill")
     if canonical_skill != {
         "owner": "git-finalizer",
-        "path": f"skills/{SKILL_NAME}/SKILL.md",
+        "path": f"skills/{expected_name}/SKILL.md",
     }:
         raise SyncError("ToolSkillManifest canonical Skill authority is unrecognized")
+    if legacy:
+        return
+    compatibility_skill = manifest.get("compatibility_skill")
+    if (
+        not isinstance(compatibility_skill, dict)
+        or set(compatibility_skill) != {"name", "path", "sha256"}
+        or compatibility_skill.get("name") != COMPATIBILITY_SKILL_NAME
+        or compatibility_skill.get("path")
+        != f"skills/{COMPATIBILITY_SKILL_NAME}/SKILL.md"
+    ):
+        raise SyncError("ToolSkillManifest compatibility Skill binding is invalid")
+    digest = compatibility_skill.get("sha256")
+    if not isinstance(digest, str) or not HEX_SHA256.fullmatch(digest):
+        raise SyncError("ToolSkillManifest compatibility Skill SHA is invalid")
 
 
 def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
@@ -400,7 +434,7 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
     try:
         manifest = read_json(manifest_path)
         contract = read_json(contract_path)
-        if manifest.get("schema_version") != SCHEMA_VERSION:
+        if manifest.get("schema_version") != TOOL_SKILL_MANIFEST_SCHEMA_VERSION:
             raise SyncError("unsupported ToolSkillManifest schema_version")
         if contract.get("schema_version") != SCHEMA_VERSION:
             raise SyncError("unsupported public CLI contract schema_version")
@@ -430,8 +464,13 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
         skill_sha = tree_sha256(sources.skill_root, SKILL_PAYLOAD)
         if manifest.get("canonical_skill_sha256") != skill_sha:
             raise SyncError("canonical Skill payload SHA mismatch")
+        compatibility_sha = sha256_file(
+            sources.compatibility_skill_root / "SKILL.md"
+        )
+        if manifest["compatibility_skill"]["sha256"] != compatibility_sha:
+            raise SyncError("compatibility Skill SHA mismatch")
         compatibility_version = sources.compatibility.get("toolchain_contract_version")
-        if compatibility_version not in {1, 2}:
+        if compatibility_version not in {1, 2, 3}:
             raise SyncError("unsupported toolchain compatibility contract version")
         if (
             manifest.get("compatible_toolchain_contract_version")
@@ -466,7 +505,7 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
                 )
         elif controller_contract != 1 or controller_status != "available_external":
             raise SyncError(
-                "v2 requires external Worktree Controller contract version 1"
+                "v2+ requires external Worktree Controller contract version 1"
             )
     except SyncError as exc:
         errors.append(str(exc))
@@ -553,6 +592,14 @@ def status(sources: Sources, agents_root: Path, bin_dir: Path | None) -> dict[st
         installed_skill_sha = tree_sha256(installed_skill_root, SKILL_PAYLOAD)
     except SyncError:
         installed_skill_sha = None
+    installed_compatibility = (
+        agents_root / "skills" / COMPATIBILITY_SKILL_NAME / "SKILL.md"
+    )
+    try:
+        require_regular(installed_compatibility, "installed compatibility Skill")
+        installed_compatibility_sha = sha256_file(installed_compatibility)
+    except SyncError:
+        installed_compatibility_sha = None
 
     for tool in sources.names():
         checked = check_tool(sources, tool)
@@ -573,13 +620,20 @@ def status(sources: Sources, agents_root: Path, bin_dir: Path | None) -> dict[st
                     "installed_binary_sha256": None,
                     "installed_binaries": {},
                     "installed_skill_sha256": installed_skill_sha,
+                    "installed_compatibility_skill_sha256": (
+                        installed_compatibility_sha
+                    ),
                     "drift": "incompatible",
                 }
             )
             continue
         binary = installed_binary_state(entrypoints, bin_dir)
         binary_matches = binary["version"] == manifest.get("tool_version")
-        skill_matches = installed_skill_sha == manifest.get("canonical_skill_sha256")
+        skill_matches = (
+            installed_skill_sha == manifest.get("canonical_skill_sha256")
+            and installed_compatibility_sha
+            == manifest.get("compatibility_skill", {}).get("sha256")
+        )
         if checked["status"] != "PASS" or (not binary_matches and not skill_matches):
             drift = "incompatible"
         elif binary_matches and skill_matches:
@@ -602,6 +656,7 @@ def status(sources: Sources, agents_root: Path, bin_dir: Path | None) -> dict[st
                 "installed_binary_sha256": binary["sha256"],
                 "installed_binaries": binary["entries"],
                 "installed_skill_sha256": installed_skill_sha,
+                "installed_compatibility_skill_sha256": installed_compatibility_sha,
                 "drift": drift,
             }
         )
@@ -615,6 +670,15 @@ def copy_skill_payload(source: Path, target: Path) -> None:
         target_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         shutil.copyfile(source_path, target_path)
         target_path.chmod(0o600)
+
+
+def copy_compatibility_skill(source: Path, target: Path) -> None:
+    source_path = source / "SKILL.md"
+    require_regular(source_path, "compatibility Skill source")
+    target_path = target / COMPATIBILITY_BUNDLE_PATH
+    target_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    shutil.copyfile(source_path, target_path)
+    target_path.chmod(0o600)
 
 
 def source_executable_payload(
@@ -674,11 +738,13 @@ def verify_bundle(bundle: Path, expected_tool: str | None = None) -> dict[str, A
         raise SyncError(
             "ToolReleaseBundle release manifest fields do not match schema v1"
         )
-    if manifest.get("schema_version") != SCHEMA_VERSION:
+    manifest_schema = manifest.get("schema_version")
+    if manifest_schema not in {1, TOOL_SKILL_MANIFEST_SCHEMA_VERSION}:
         raise SyncError("unsupported bundled ToolSkillManifest schema_version")
     if contract.get("schema_version") != SCHEMA_VERSION:
         raise SyncError("unsupported bundled CLI contract schema_version")
-    validate_install_targets(manifest)
+    validate_manifest_static_fields(manifest, allow_legacy=True)
+    validate_install_targets(manifest, allow_legacy=True)
     validate_contract_shape(contract)
     tool = release.get("tool_name")
     if expected_tool is not None and tool != expected_tool:
@@ -717,6 +783,16 @@ def verify_bundle(bundle: Path, expected_tool: str | None = None) -> dict[str, A
             raise SyncError(f"ToolReleaseBundle {key} mismatch")
     if manifest.get("canonical_skill_sha256") != hashes["skill_sha"]:
         raise SyncError("bundle Skill does not match ToolSkillManifest")
+    if manifest_schema == TOOL_SKILL_MANIFEST_SCHEMA_VERSION:
+        compatibility_path = bundle / COMPATIBILITY_BUNDLE_PATH
+        require_regular(compatibility_path, "bundled compatibility Skill")
+        if (
+            sha256_file(compatibility_path)
+            != manifest["compatibility_skill"]["sha256"]
+        ):
+            raise SyncError(
+                "bundle compatibility Skill does not match ToolSkillManifest"
+            )
     if manifest.get("public_cli_contract_sha256") != hashes["cli_contract_sha"]:
         raise SyncError("bundle CLI contract does not match ToolSkillManifest")
     if release.get("tool_name") == "git-finalizer":
@@ -825,15 +901,25 @@ def production_target_sources(
     hooks_dir: Path,
 ) -> tuple[dict[Path, Path], Path | None]:
     manifest = read_json(bundle / "tool_skill_manifest.json")
-    entrypoints = validate_install_targets(manifest)
+    entrypoints = validate_install_targets(manifest, allow_legacy=True)
     require_owned_directory(agents_root)
     skill_parent = ensure_owned_subdirectory(agents_root, Path("skills"))
-    skill_root = ensure_owned_subdirectory(skill_parent, Path(SKILL_NAME))
+    manifest_schema = manifest.get("schema_version")
+    installed_skill_name = (
+        COMPATIBILITY_SKILL_NAME if manifest_schema == 1 else SKILL_NAME
+    )
+    skill_root = ensure_owned_subdirectory(skill_parent, Path(installed_skill_name))
     targets: dict[Path, Path] = {}
     for skill_relative in SKILL_PAYLOAD:
         target = skill_root / skill_relative
         ensure_owned_subdirectory(skill_root, Path(skill_relative).parent)
         targets[target] = bundle / skill_relative
+    if manifest_schema == TOOL_SKILL_MANIFEST_SCHEMA_VERSION:
+        compatibility_root = ensure_owned_subdirectory(
+            skill_parent, Path(COMPATIBILITY_SKILL_NAME)
+        )
+        compatibility_target = compatibility_root / "SKILL.md"
+        targets[compatibility_target] = bundle / COMPATIBILITY_BUNDLE_PATH
 
     executable = manifest["executable"]
     if executable["kind"] == "python_console_scripts":
@@ -888,13 +974,30 @@ def verify_production_bundle(
         require_owned_regular(target, "active production target")
         if sha256_file(target) != sha256_file(source):
             raise SyncError(f"active production target SHA mismatch: {target}")
+    manifest_schema = manifest.get("schema_version")
+    installed_skill_name = (
+        COMPATIBILITY_SKILL_NAME if manifest_schema == 1 else SKILL_NAME
+    )
     if (
-        tree_sha256(agents_root / "skills" / SKILL_NAME, SKILL_PAYLOAD)
+        tree_sha256(
+            agents_root / "skills" / installed_skill_name,
+            SKILL_PAYLOAD,
+        )
         != release["skill_sha"]
     ):
         raise SyncError("active Skill SHA does not match ToolReleaseBundle")
+    if manifest_schema == TOOL_SKILL_MANIFEST_SCHEMA_VERSION:
+        compatibility_path = (
+            agents_root / "skills" / COMPATIBILITY_SKILL_NAME / "SKILL.md"
+        )
+        require_owned_regular(compatibility_path, "active compatibility Skill")
+        if (
+            sha256_file(compatibility_path)
+            != manifest["compatibility_skill"]["sha256"]
+        ):
+            raise SyncError("active compatibility Skill SHA does not match bundle")
 
-    entrypoints = validate_install_targets(manifest)
+    entrypoints = validate_install_targets(manifest, allow_legacy=True)
     binary = installed_binary_state(entrypoints, live_bin_dir)
     if binary["version"] != release["tool_version"]:
         raise SyncError("active stable entry version does not match ToolReleaseBundle")
@@ -1207,6 +1310,7 @@ def build_bundle(
     staging.chmod(0o700)
     try:
         copy_skill_payload(sources.skill_root, staging)
+        copy_compatibility_skill(sources.compatibility_skill_root, staging)
         shutil.copyfile(
             repo / "tool_cli_contract.json", staging / "tool_cli_contract.json"
         )

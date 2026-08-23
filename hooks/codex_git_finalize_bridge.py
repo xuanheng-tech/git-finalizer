@@ -68,8 +68,8 @@ INERT_GIT_SUBCOMMANDS = frozenset(
 )
 LIFECYCLE_HELPERS = frozenset(
     {
-        "/home/hsd/.agents/skills/three-tool-git-workflow/unpublished_queue.py",
-        "/home/hsd/projects/git-finalizer/skills/three-tool-git-workflow/unpublished_queue.py",
+        "/home/hsd/.agents/skills/git-change-delivery/unpublished_queue.py",
+        "/home/hsd/projects/git-finalizer/skills/git-change-delivery/unpublished_queue.py",
     }
 )
 LIFECYCLE_HELPER_COMMANDS = frozenset(

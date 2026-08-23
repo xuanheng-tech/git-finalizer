@@ -27,6 +27,7 @@ class ToolContractTests(unittest.TestCase):
         self.assertIsNotNone(version_match)
         assert version_match is not None
         self.assertEqual(contract["schema_version"], 1)
+        self.assertEqual(manifest["schema_version"], 2)
         self.assertEqual(contract["contract_version"], 1)
         self.assertEqual(contract["tool_name"], "git-finalizer")
         self.assertEqual(contract["tool_version"], manifest["tool_version"])
@@ -41,6 +42,15 @@ class ToolContractTests(unittest.TestCase):
             sync.tree_sha256(
                 ROOT / "skills" / sync.SKILL_NAME,
                 sync.SKILL_PAYLOAD,
+            ),
+        )
+        self.assertEqual(
+            manifest["compatibility_skill"]["sha256"],
+            sync.sha256_file(
+                ROOT
+                / "skills"
+                / sync.COMPATIBILITY_SKILL_NAME
+                / "SKILL.md"
             ),
         )
         commands = {command["name"]: command for command in contract["commands"]}
@@ -77,7 +87,7 @@ class ToolContractTests(unittest.TestCase):
         compatibility = json.loads(
             (ROOT / "toolchain_compatibility.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(compatibility["toolchain_contract_version"], 2)
+        self.assertEqual(compatibility["toolchain_contract_version"], 3)
         self.assertEqual(compatibility["context_loader_contract_version"], 1)
         self.assertEqual(compatibility["snapshot_runner_contract_version"], 1)
         self.assertEqual(compatibility["git_finalizer_contract_version"], 1)
@@ -85,6 +95,15 @@ class ToolContractTests(unittest.TestCase):
         self.assertEqual(
             compatibility["worktree_controller_status"],
             "available_external",
+        )
+        self.assertEqual(
+            compatibility["workflow_skill"],
+            {
+                "canonical_owner": "git-finalizer",
+                "compatibility_shims": ["three-tool-git-workflow"],
+                "contract_version": 1,
+                "name": "git-change-delivery",
+            },
         )
 
     def test_phase_closure_sop_links_existing_template(self) -> None:
