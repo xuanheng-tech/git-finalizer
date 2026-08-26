@@ -135,6 +135,14 @@ needs_human_review
 不变。没有显式 remote verification evidence 时，即使 tracking tree 相同也只返回
 `needs_human_review`。
 
+`review` 还提供派生的 `effective_state` 与 overlap 投影。`superseded_candidate` 投影为
+`stale`，依据 fingerprint/commit/remote facts，而不是记录年龄；其他未关闭记录继续保持
+`pending|blocked`。同一 repository 的 active exact scopes 通过 HMAC path refs 显示 confirmed
+overlap；bounded scope 无法证明完整 path-set 不相交时显示 `potential_bounded`。输出包含对方
+record/workstream owner，但不泄漏 raw path，也不自动合并或重新归属 scope。隐私 pseudonym
+无法反查 repository 的未知 record 继续由 `validate` 保留并计数，不静默删除；人工确认前不把它
+伪装成 published。
+
 显式人工关闭：
 
 ```bash

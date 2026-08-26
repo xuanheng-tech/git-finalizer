@@ -874,6 +874,63 @@ def _fingerprint_matches(expected: Mapping[str, object], actual: Mapping[str, ob
     return all(expected.get(name) == actual.get(name) for name in ("state", "mode", "sha256"))
 
 
+def _scope_overlap_projection(
+    record: Mapping[str, object],
+    active_records: Sequence[Mapping[str, object]],
+) -> tuple[str, list[dict[str, object]]]:
+    scope = record["path_scope"]
+    assert isinstance(scope, dict)
+    items = scope["items"]
+    assert isinstance(items, list)
+    path_refs = {
+        str(item["path_ref"])
+        for item in items
+        if isinstance(item, dict) and isinstance(item.get("path_ref"), str)
+    }
+    overlaps: list[dict[str, object]] = []
+    projection = "none"
+    for other in active_records:
+        if other["record_id"] == record["record_id"]:
+            continue
+        other_scope = other["path_scope"]
+        assert isinstance(other_scope, dict)
+        other_items = other_scope["items"]
+        assert isinstance(other_items, list)
+        other_refs = {
+            str(item["path_ref"])
+            for item in other_items
+            if isinstance(item, dict) and isinstance(item.get("path_ref"), str)
+        }
+        shared = sorted(path_refs & other_refs)
+        if shared:
+            relation = "confirmed"
+            projection = "confirmed"
+        elif "bounded" in {scope["kind"], other_scope["kind"]}:
+            relation = "potential_bounded"
+            if projection == "none":
+                projection = "potential_bounded"
+        else:
+            continue
+        overlaps.append(
+            {
+                "record_id": other["record_id"],
+                "workstream": other["workstream"],
+                "relation": relation,
+                "overlapping_path_refs": shared,
+            }
+        )
+    overlaps.sort(key=lambda item: str(item["record_id"]))
+    return projection, overlaps
+
+
+def _effective_state(record: Mapping[str, object], classification: str) -> str:
+    if classification == "already_published_equivalent":
+        return "published"
+    if classification == "superseded_candidate":
+        return "stale"
+    return str(record["queue_state"])
+
+
 def review(
     *,
     state_dir: Path,
@@ -904,6 +961,12 @@ def review(
         ]
         if record_id is not None and not selected:
             raise QueueError("active record was not found in the specified repository")
+        active_records = [
+            value
+            for value in records.values()
+            if value["repo_ref"] == repo_facts.repo_ref
+            and value["queue_state"] in ACTIVE_STATES
+        ]
         results: list[dict[str, object]] = []
         changed = False
         for record in selected:
@@ -962,11 +1025,18 @@ def review(
                 }
             records[str(record["record_id"])] = validate_record(updated)
             changed = True
+            overlap_state, overlaps = _scope_overlap_projection(
+                record,
+                active_records,
+            )
             results.append(
                 {
                     "record_id": record["record_id"],
                     "result": classification,
                     "queue_state": updated["queue_state"],
+                    "effective_state": _effective_state(record, classification),
+                    "overlap_state": overlap_state,
+                    "overlaps": overlaps,
                     "head": repo_facts.head,
                     "upstream": repo_facts.upstream_ref,
                     "upstream_oid": repo_facts.upstream_oid,

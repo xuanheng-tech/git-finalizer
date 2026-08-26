@@ -278,6 +278,7 @@ class QueueTest(unittest.TestCase):
 
         self.assertEqual(results[0]["result"], "already_published_equivalent")
         self.assertEqual(results[0]["queue_state"], "published")
+        self.assertEqual(results[0]["effective_state"], "published")
         self.assertEqual(results[0]["behind"], 1)
         closed = self._records()[str(record["record_id"])]
         self.assertEqual(
@@ -353,6 +354,30 @@ class QueueTest(unittest.TestCase):
         self.assertEqual(by_id[pending["record_id"]], "still_pending")
         self.assertEqual(by_id[blocked["record_id"]], "still_blocked")
         self.assertEqual(by_id[superseded["record_id"]], "superseded_candidate")
+        by_effective_state = {
+            result["record_id"]: result["effective_state"] for result in results
+        }
+        self.assertEqual(by_effective_state[pending["record_id"]], "pending")
+        self.assertEqual(by_effective_state[blocked["record_id"]], "blocked")
+        self.assertEqual(by_effective_state[superseded["record_id"]], "stale")
+
+    def test_review_reports_scope_overlap_without_raw_paths(self) -> None:
+        _, first = self._upsert(task_id="first", workstream="first owner")
+        _, second = self._upsert(task_id="second", workstream="second owner")
+        assert first is not None and second is not None
+
+        results = queue.review(
+            state_dir=self.state,
+            repo=self.repo,
+            record_id=str(first["record_id"]),
+            now=NOW_2,
+        )
+
+        self.assertEqual(results[0]["overlap_state"], "confirmed")
+        self.assertEqual(results[0]["overlaps"][0]["record_id"], second["record_id"])
+        self.assertEqual(results[0]["overlaps"][0]["workstream"], "second owner")
+        self.assertTrue(results[0]["overlaps"][0]["overlapping_path_refs"])
+        self.assertNotIn("task.txt", json.dumps(results[0], sort_keys=True))
 
     def test_invalid_jsonl_and_schema_fail_closed(self) -> None:
         self._upsert()
