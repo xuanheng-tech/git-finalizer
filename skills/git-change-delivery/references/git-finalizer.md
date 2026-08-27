@@ -30,9 +30,9 @@ expected-OID lease 退役已 ancestry-integrated 的远端 branch，不删除 lo
 对 verify-only、commit-only、normal、initial 和 resume 的所有非 `--dry-run` 调用：
 
 1. 使用当前会话的原生 shell 执行工具，把从 `/home/hsd/bin/codex-git-finalize` 到最后一个显式文件参数的完整命令放在同一个 `cmd` 中。
-2. 同一次工具调用必须设置 `sandbox_permissions: "require_escalated"`、仓库 `workdir` 和清晰且与所选模式一致的 `justification`；verify-only 或 commit-only 的理由不得请求或暗示远端权限。若工具支持持久审批前缀，可使用 `prefix_rule: ["/home/hsd/bin/codex-git-finalize"]`；该前缀不改变 sandbox，不能替代 `require_escalated`。
+2. `permission_mode=default` 的旧式路径在同一次工具调用中设置 `sandbox_permissions: "require_escalated"`、仓库 `workdir` 和与所选模式一致的 `justification`。若当前运行时已经以 `approval_policy=never` 的当前 Linux 用户 direct execution 产生 `permission_mode=bypassPermissions`，则只传完整命令与精确 `workdir`，不添加该工具合同拒绝的本地 escalation 字段。bridge 在 direct 路径拒绝 root、transcript escalation marker、其他 permission mode、wrapper 和未知参数；不得由 caller 自行切换 permission profile。
 3. 不得使用 PATH 简写、`bash -lc`、`sh -c`、其他 wrapper 或多个工具调用拼接 Finalizer 生命周期。
-4. 不得先在沙箱内执行一次再根据失败申请 escalation；Finalizer 的首次真实调用就必须在沙箱外。
+4. 不得先在另一个权限边界执行一次再重试；Finalizer 的首次真实调用就必须走适用于当前会话的同一正式 bridge boundary。
 
 原生工具参数示例：
 
@@ -45,6 +45,18 @@ expected-OID lease 退役已 ancestry-integrated 的远端 branch，不删除 lo
   "prefix_rule": ["/home/hsd/bin/codex-git-finalize"]
 }
 ```
+
+Codex 已经以 current-user direct mode 运行时，对应调用只保留相同完整命令和精确工作目录：
+
+```json
+{
+  "cmd": "/home/hsd/bin/codex-git-finalize --summary --repo /absolute/repo --message 'message' -- path/to/file",
+  "workdir": "/absolute/repo"
+}
+```
+
+是否属于该路径由运行时产生的 `permission_mode=bypassPermissions` 和 bridge 验证决定，caller
+不得通过参数或配置自行声明。
 
 ### `--summary` 结果消费
 
@@ -63,12 +75,12 @@ verify-only、commit-only、normal、initial、initial-branch 和 resume 默认�
 
 出现非零退出码，`status` 为 `blocked`、`failed` 或 `partial`，结果不满足所选模式合同，warning 影响范围、安全或发布，存在 `resume`，摘要与实际状态不一致，或用户要求详细证据时必须展开。展开时保留 `final_phase`、`reason`、恢复引用和 `next_action`，并按现有停止或恢复流程处理；不得把模式约定的跳过描述为已执行，也不得把失败、不确定结果或未执行操作描述为成功。
 
-如果当前工具没有单命令 `require_escalated` 能力，或 approval policy 拒绝提出该申请，停止发布并报告；不得切换到 `codex-admin`、全局 `danger-full-access` 或通用网络权限。
+如果当前工具没有单命令 `require_escalated` 能力且运行时也未提供合法的 current-user direct `bypassPermissions`，停止发布并报告；不得切换到 `codex-admin`、sudo、root、伪造 permission mode 或通用网络权限。
 
 ### 本机 Git remote 与失败分流
 
 - 可先用 `git remote get-url --all <remote>` 和 `git remote get-url --push --all <remote>` 读取本地配置。若 endpoint host 是 `localhost`、`127.0.0.0/8` 或 `::1`，把它视为宿主机 loopback remote；不要修改 endpoint。
-- 对 loopback remote，`git ls-remote`、`git fetch`、`git push` 等实际接触远端的命令必须在第一次调用时使用单命令 `require_escalated`。只读验收可直接对完整 `git ls-remote origin` 调用申请 escalation。
+- 对 loopback remote，旧式 `default` 路径的独立 `git ls-remote`、`git fetch`、`git push` 等命令必须在第一次调用时使用单命令 `require_escalated`；current-user direct 路径不得用原始 Git 远端命令绕过 Finalizer，应由完整 Finalizer 调用执行获授权的远端检查、push 与 post-verify。
 - 沙箱内出现 `connection refused`、systemd bus 不可见、`ss` 看不到宿主机监听端口或类似结果时，只能判定为沙箱证据，不得判定 SSH/Gitea 已停止。不要启动、停止或修改 `ssh.service`、`gitea.service`，也不要改 remote、SSH key、防火墙或监听地址。
 - 只有同一条 Git 远端命令在沙箱外仍失败，才进入真实服务诊断；先进行只读的 endpoint、进程和日志核对，任何服务或系统变更仍需另行明确授权。
 

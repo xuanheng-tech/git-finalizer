@@ -33,6 +33,10 @@ MAX_CONTEXT_CHARS = 12_000
 TOOL_USE_ID_PATTERN = re.compile(
     r"^exec-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
+KNOWN_PERMISSION_MODES = frozenset(
+    {"default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"}
+)
+SUPPORTED_PERMISSION_MODES = frozenset({"default", "bypassPermissions"})
 SHELL_CONTROL_TOKENS = {"&", "&&", "(", ")", ";", "<", "<<", ">", ">>", "|", "||"}
 SHELL_SEGMENT_SEPARATORS = {"&&", ";", "|", "||"}
 INERT_REFERENCE_COMMANDS = frozenset(
@@ -122,6 +126,21 @@ BRIDGE_OPTION_SPECS: dict[str, tuple[int, bool]] = {
 
 class BridgeError(Exception):
     """An invariant failed before the Finalizer could run."""
+
+
+def validate_permission_mode(raw_mode: object) -> str:
+    """Return one explicitly supported Codex hook permission mode."""
+
+    if not isinstance(raw_mode, str) or raw_mode not in KNOWN_PERMISSION_MODES:
+        raise BridgeError("PreToolUse permission_mode 缺失或不属于已知协议枚举")
+    if raw_mode not in SUPPORTED_PERMISSION_MODES:
+        raise BridgeError(
+            "PreToolUse permission_mode 不属于 Git Finalizer 支持的执行边界："
+            f"actual={raw_mode}"
+        )
+    if raw_mode == "bypassPermissions" and os.geteuid() == 0:
+        raise BridgeError("Git Finalizer current-user direct execution 不接受 root")
+    return raw_mode
 
 
 def _shell_segments(raw_command: str) -> list[list[str]] | None:
@@ -819,8 +838,7 @@ def validate_hook_event(event: object) -> tuple[str, list[str], Path, bool]:
         raise BridgeError("hook event 不是 PreToolUse")
     if event.get("tool_name") != "Bash":
         raise BridgeError("Finalizer 只能从真实观测到的 Bash hook 工具调用")
-    if event.get("permission_mode") != "default":
-        raise BridgeError("PreToolUse permission_mode 与已验证结构不一致")
+    validate_permission_mode(event.get("permission_mode"))
     tool_use_id = event.get("tool_use_id")
     if (
         not isinstance(tool_use_id, str)
@@ -842,9 +860,11 @@ def validate_hook_event(event: object) -> tuple[str, list[str], Path, bool]:
 def cross_check_transcript(
     raw_arguments: dict[str, Any] | None,
     *,
+    permission_mode: object,
     public_command: str,
     repo: Path,
 ) -> None:
+    validated_mode = validate_permission_mode(permission_mode)
     if raw_arguments is None:
         return
     if raw_arguments.get("cmd") != public_command:
@@ -858,8 +878,13 @@ def cross_check_transcript(
         raise BridgeError("transcript workdir 无法解析") from exc
     if transcript_workdir != repo:
         raise BridgeError("transcript workdir 与 Finalizer --repo 不一致")
-    if raw_arguments.get("sandbox_permissions") != "require_escalated":
-        raise BridgeError("transcript 中的 Finalizer 调用未请求 require_escalated")
+    if validated_mode == "default":
+        if raw_arguments.get("sandbox_permissions") != "require_escalated":
+            raise BridgeError("transcript 中的 Finalizer 调用未请求 require_escalated")
+    elif "sandbox_permissions" in raw_arguments:
+        raise BridgeError(
+            "current-user direct Finalizer transcript 不得请求 sandbox escalation"
+        )
 
 
 def require_existing_allow_rule() -> None:
@@ -959,6 +984,7 @@ def main() -> None:
         )
         cross_check_transcript(
             raw_arguments,
+            permission_mode=event.get("permission_mode"),
             public_command=public_command,
             repo=repo,
         )

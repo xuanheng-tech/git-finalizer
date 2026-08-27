@@ -25,8 +25,13 @@ verify-only 还禁止 message 和 dry-run。
 mutation options 继续 fail closed。ToolReleaseBundle 校验也拒绝 CLI contract 与 bundled bridge
 不匹配的组合。
 bridge 将严格解析并规范化的绝对 `--repo` 作为 Finalizer 子进程 cwd；PreToolUse 的会话 cwd
-不是目标仓库权限来源。若本次调用已出现在 transcript，bridge 还会要求其中的原命令、
-`workdir=<repo>` 和 `sandbox_permissions=require_escalated` 精确匹配；任何冲突均拒绝。
+不是目标仓库权限来源。bridge 同时支持两条明确执行边界：旧式
+`permission_mode=default` 仍要求 transcript 中的原命令、`workdir=<repo>` 与
+`sandbox_permissions=require_escalated` 精确匹配；Codex 0.149.1 在
+`approval_policy=never` 的当前用户 direct execution 中产生的
+`permission_mode=bypassPermissions` 只允许非 root 进程，且 transcript 不得伪造 sandbox
+escalation。`acceptEdits`、`plan`、`dontAsk`、未知值和未知结构继续 fail closed。两条路径均继续
+执行同一固定入口、参数、显式路径、allow rule 与 Finalizer 自身安全门；任何冲突均拒绝。
 命令仅把 Finalizer 名称或路径作为保守只读检查器的数据，或以固定入口精确查询 `--help`、
 `--version` 时，bridge 不作 allow/deny 决定，而是交回原生 sandbox、approval、execpolicy 和
 其他 Hook。shell wrapper、解释器、`find -exec`、可执行预处理器、带其他参数的元数据查询，

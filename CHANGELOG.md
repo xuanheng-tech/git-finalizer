@@ -13,6 +13,9 @@ section is invented for it.
 
 ## Unreleased
 
+- Accept Codex 0.149.1 current-user direct `permission_mode=bypassPermissions` in the fail-closed
+  PreToolUse bridge while retaining the legacy escalated `default` contract, rejecting root,
+  unsupported modes, unknown structures, and transcript permission mismatches.
 - Rename the canonical workflow Skill to `git-change-delivery`, retain the former name only as a
   deprecated shim, and bind both through ToolSkillManifest v2/toolchain contract v3.
 - Update `codex-skill-sync` to 1.1.1 so bundles and production activation install and verify the new

@@ -250,6 +250,41 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         self.assertEqual(repo, self.repo)
         self.assertFalse(dry_run)
 
+    def test_current_user_direct_permission_mode_is_accepted(self) -> None:
+        event = self.event()
+        event["permission_mode"] = "bypassPermissions"
+        with mock.patch.object(bridge.os, "geteuid", return_value=1000):
+            command, argv, repo, dry_run = bridge.validate_hook_event(event)
+
+        self.assertEqual(command, self.command)
+        self.assertEqual(argv[0], bridge.FINALIZER)
+        self.assertEqual(repo, self.repo)
+        self.assertFalse(dry_run)
+
+    def test_other_known_and_unknown_permission_modes_fail_closed(self) -> None:
+        for value in (
+            "acceptEdits",
+            "plan",
+            "dontAsk",
+            "future-unknown-mode",
+            None,
+            {"mode": "bypassPermissions"},
+        ):
+            with self.subTest(value=value):
+                event = self.event()
+                event["permission_mode"] = value
+                with self.assertRaises(bridge.BridgeError):
+                    bridge.validate_hook_event(event)
+
+    def test_current_user_direct_permission_mode_rejects_root(self) -> None:
+        event = self.event()
+        event["permission_mode"] = "bypassPermissions"
+        with (
+            mock.patch.object(bridge.os, "geteuid", return_value=0),
+            self.assertRaisesRegex(bridge.BridgeError, "不接受 root"),
+        ):
+            bridge.validate_hook_event(event)
+
     def test_initial_publish_and_remote_are_accepted_together(self) -> None:
         command, argv, repo, dry_run = bridge.validate_hook_event(
             self.event(self.initial_command)
@@ -541,6 +576,48 @@ class GitFinalizerBridgeTest(unittest.TestCase):
 
         self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
         run.assert_called_once()
+
+    def test_current_user_direct_transcript_without_escalation_is_cross_checked(
+        self,
+    ) -> None:
+        self.write_transcript_call(
+            {
+                "cmd": self.command,
+                "workdir": str(self.repo),
+            }
+        )
+        event = self.event()
+        event["permission_mode"] = "bypassPermissions"
+
+        output, run = self.invoke_main(event)
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+
+    def test_current_user_direct_transcript_rejects_escalation_marker(self) -> None:
+        self.write_transcript_call(
+            {
+                "cmd": self.command,
+                "sandbox_permissions": "require_escalated",
+                "workdir": str(self.repo),
+            }
+        )
+        event = self.event()
+        event["permission_mode"] = "bypassPermissions"
+
+        output, run = self.invoke_main(event)
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
+        run.assert_not_called()
+
+    def test_current_user_direct_mode_does_not_weaken_direct_command_parser(
+        self,
+    ) -> None:
+        event = self.event("/usr/bin/sudo " + self.command)
+        event["permission_mode"] = "bypassPermissions"
+
+        with self.assertRaises(bridge.BridgeError):
+            bridge.validate_hook_event(event)
 
     def test_conflicting_direct_transcript_call_is_denied(self) -> None:
         self.write_transcript_call(

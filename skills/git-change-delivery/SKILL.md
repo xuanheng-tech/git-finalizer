@@ -255,13 +255,14 @@ commit、push、stash、reset、restore 或 clean；最终回复应简短报告 
 - Snapshot Runner 只收集并发布供人工检查的只读快照；不修改目标仓库 Git 状态、不运行测试、不自动调用模型、不 commit/push。
 - Git Finalizer 只做适用的本地提交前验证、显式路径暂存、commit，以及由默认或显式发布/恢复接口授权的 fast-forward-safe push 和发布后验证；不加载上下文、不实施、不测试、不审查。
 
-### Git Finalizer 命令级 escalation（强制）
+### Git Finalizer 命令级 host boundary（强制）
 
-- 普通 Codex 调用 `/home/hsd/bin/codex-git-finalize` 的任何非 `--dry-run` 模式时，第一次调用就必须把完整 Finalizer 命令作为一次原生 shell 工具调用提交，并显式设置 `sandbox_permissions: "require_escalated"` 和面向用户的 `justification`。可选的 `prefix_rule` 只能限定同类审批范围，不能替代 `sandbox_permissions`。
-- 不得先在沙箱内试运行 Finalizer，也不得把它拆成沙箱内的 `git add`、`commit`、`fetch` 或 `push`。完整 Finalizer 进程必须在同一次获批的沙箱外调用中完成。
-- 若 remote host 是 `localhost`、`127.0.0.0/8` 或 `::1`，任何实际接触远端的只读探测（如 `git ls-remote`）也必须直接申请单命令 escalation；读取 `git remote get-url` 等纯本地配置不需要 escalation。具体调用格式见 [Git Finalizer reference](references/git-finalizer.md)。
-- 沙箱内的 `connection refused`、无法访问 systemd bus、看不到宿主机监听端口等结果只说明沙箱边界，不能证明宿主机 SSH/Gitea 服务故障。不得据此启动、停止或修改服务，不得修改 remote、密钥、防火墙或监听地址。只有同一 Git 远端命令在沙箱外仍失败，才可进入真实服务诊断，并先保持只读。
-- 若当前 shell 工具不支持单命令 escalation，或当前 approval policy 不允许提出该申请，停止并报告能力缺口；不得改用 `codex-admin`、全局 `danger-full-access` 或通用网络放行绕过。
+- 普通 Codex 调用 `/home/hsd/bin/codex-git-finalize` 的任何非 `--dry-run` 模式时，第一次调用就必须把完整 Finalizer 命令作为一次原生 shell 工具调用提交。`permission_mode=default` 的旧式调用继续显式设置 `sandbox_permissions: "require_escalated"` 和面向用户的 `justification`；可选 `prefix_rule` 不能替代 escalation。
+- 当当前会话已经由 Codex 以 `approval_policy=never`、当前 Linux 用户 direct execution 运行，且 PreToolUse 明确产生 `permission_mode=bypassPermissions` 时，不得再添加当前工具合同不接受的本地 escalation 字段；直接提交同一完整 Finalizer 命令和精确 `workdir`。这不是通用 `danger-full-access` 放行：bridge 仍要求非 root、固定入口、直接命令、既有 allow rule、受支持参数和显式路径，并继续执行 Finalizer 全部门槛。不得自行切换 permission profile 来获得该模式。
+- 不得先在另一个权限边界试运行 Finalizer，也不得把它拆成 `git add`、`commit`、`fetch` 或 `push`。完整 Finalizer 进程必须在同一次 bridge-validated 调用中完成。
+- 若 remote host 是 `localhost`、`127.0.0.0/8` 或 `::1`，不得用原始 Git 远端命令绕过 Finalizer。只有旧式 `default` 路径的独立只读远端探测才申请单命令 escalation；direct 路径应让 Finalizer 自身完成获授权的远端检查和发布。读取 `git remote get-url` 等纯本地配置不需要 escalation。具体调用格式见 [Git Finalizer reference](references/git-finalizer.md)。
+- 沙箱内的 `connection refused`、无法访问 systemd bus、看不到宿主机监听端口等结果只说明沙箱边界，不能证明宿主机 SSH/Gitea 服务故障。不得据此启动、停止或修改服务，不得修改 remote、密钥、防火墙或监听地址。只有同一正式边界内的远端操作仍失败，才可进入真实服务诊断，并先保持只读。
+- 若既不能使用旧式单命令 escalation，也没有运行时提供的合法 current-user direct mode，停止并报告能力缺口；不得改用 `codex-admin`、sudo、root、伪造 `bypassPermissions` 或通用网络放行绕过。
 
 Context Loader 与 Snapshot Runner 仍保持各自的只读及原有权限边界。
 
