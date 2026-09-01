@@ -19,6 +19,7 @@ import subprocess
 import sys
 from typing import Any
 import urllib.parse
+import uuid
 
 
 FINALIZER = "/home/hsd/bin/codex-git-finalize"
@@ -99,11 +100,13 @@ BRIDGE_OPTION_SPECS: dict[str, tuple[int, bool]] = {
     "--initial-commit-only": (0, False),
     "--initial-publish": (0, False),
     "--integrated-into": (1, False),
+    "--lease-id": (1, False),
     "--message": (1, False),
     "--mode": (1, False),
     "--owner": (1, False),
     "--publish-existing-branch": (1, False),
     "--publish-existing-history": (1, False),
+    "--publish-integration-candidate": (1, False),
     "--remote": (1, False),
     "--remote-branch": (1, False),
     "--repo": (1, False),
@@ -121,6 +124,7 @@ BRIDGE_OPTION_SPECS: dict[str, tuple[int, bool]] = {
     "--visibility": (1, False),
     "--worktree-path": (1, False),
     "--role": (1, False),
+    "--run-id": (1, False),
 }
 
 
@@ -526,6 +530,34 @@ def parse_direct_finalizer(
     if mode is not None and mode not in ("commit-only", "verify-only"):
         raise BridgeError("Finalizer --mode 仅支持 commit-only 或 verify-only")
     verify_only = mode == "verify-only"
+    integration_candidate_oid = parsed.get("--publish-integration-candidate")
+    if integration_candidate_oid is not None:
+        if delimiters or path_values or repeated:
+            raise BridgeError("Finalizer integration publication 不接受文件范围或例外参数")
+        if switches - {"--summary"}:
+            raise BridgeError("Finalizer integration publication 不接受其他 operation switch")
+        required_integration = {
+            "--publish-integration-candidate",
+            "--repo",
+            "--lease-id",
+            "--run-id",
+        }
+        if set(parsed) != required_integration:
+            raise BridgeError("Finalizer integration publication 参数不完整或含额外参数")
+        if re.fullmatch(r"[0-9a-f]{40}", integration_candidate_oid) is None:
+            raise BridgeError("Finalizer integration candidate 必须是完整 SHA-1 OID")
+        try:
+            uuid.UUID(parsed["--lease-id"])
+        except ValueError as exc:
+            raise BridgeError("Finalizer integration lease ID 必须是 UUID") from exc
+        run_id = parsed["--run-id"]
+        if (
+            not run_id
+            or len(run_id) > 256
+            or any(character in run_id for character in ("\x00", "\n", "\r", "\t"))
+        ):
+            raise BridgeError("Finalizer integration run ID 无效")
+        return argv, parsed["--repo"], (), False
     resume_initial_oid = parsed.get("--resume-initial-publish")
     resume_publish_oid = parsed.get("--resume-publish")
     resume_existing_history_oid = parsed.get("--resume-existing-history-publish")

@@ -13,6 +13,16 @@ section is invented for it.
 
 ## Unreleased
 
+## 0.9.1 - 2026-09-01
+
+- Add Git Finalizer `0.9.1` integration-candidate publication: consume one Controller schema v2
+  lease, bind repository/target/holder/run/expected-main/candidate/validation identity, serialize
+  through the existing Controller repository lock, and push only the exact non-force branch refspec.
+- Recover an interrupted successful push from the live remote OID without a second mutation; reject
+  expired or replaced writers before the mutation gate and leave canonical files, index, local branch,
+  tags, and candidate branch unchanged.
+- Extend the fail-closed host bridge, deterministic summary, public contract, release bundle, workflow
+  Skill, and bare-remote tests for exact publication and duplicate-executor fencing.
 - Accept Codex 0.149.1 current-user direct `permission_mode=bypassPermissions` in the fail-closed
   PreToolUse bridge while retaining the legacy escalated `default` contract, rejecting root,
   unsupported modes, unknown structures, and transcript permission mismatches.

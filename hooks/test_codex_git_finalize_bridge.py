@@ -157,6 +157,20 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 shlex.quote(str(self.repo)),
             )
         )
+        self.integration_publish_command = " ".join(
+            (
+                bridge.FINALIZER,
+                "--publish-integration-candidate",
+                "1" * 40,
+                "--repo",
+                shlex.quote(str(self.repo)),
+                "--lease-id",
+                "11111111-1111-4111-8111-111111111111",
+                "--run-id",
+                "integration-run-1",
+                "--summary",
+            )
+        )
         self.resume_initial_command = " ".join(
             (
                 bridge.FINALIZER,
@@ -488,6 +502,28 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0], shlex.split(self.retirement_command))
+
+    def test_integration_candidate_publish_is_accepted_and_forwarded(self) -> None:
+        output, run = self.invoke_main(self.event(self.integration_publish_command))
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once()
+        self.assertEqual(
+            run.call_args.args[0], shlex.split(self.integration_publish_command)
+        )
+
+    def test_integration_candidate_publish_rejects_ambiguous_identity(self) -> None:
+        commands = (
+            self.integration_publish_command.replace(" --lease-id ", " --remote origin --lease-id "),
+            self.integration_publish_command.replace("1" * 40, "short", 1),
+            self.integration_publish_command.replace(
+                "11111111-1111-4111-8111-111111111111", "not-a-uuid", 1
+            ),
+            self.integration_publish_command + " -- README.md",
+        )
+        for command in commands:
+            with self.subTest(command=command), self.assertRaises(bridge.BridgeError):
+                bridge.validate_hook_event(self.event(command))
 
     def test_remote_retirement_contract_rejects_incomplete_or_unsafe_calls(
         self,

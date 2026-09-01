@@ -17,6 +17,10 @@ remote URL、日志和 receipt 均不得携带 token。bootstrap 成功不表示
 远端 feature branch retirement 是独立操作，不属于 commit/publish mode。它只在明确授权下用
 expected-OID lease 退役已 ancestry-integrated 的远端 branch，不删除 local worktree/branch。
 
+Controller schema v2 integration candidate publication 也是独立接口。它不创建 commit，不从
+canonical checkout 发布，也不由 caller 另行选择 remote/main；只消费 Controller 已签发的同一
+publication lease，并把 verified receipt 交回 Controller 完成 lifecycle。
+
 选择模式不得扩大用户原有的 commit/push 授权：只验证使用 `--mode verify-only`，只授权本地 commit 使用 `--mode commit-only`，只有明确授权 commit 和 push 且任务达到交付状态才使用默认模式。调用绝对入口 `/home/hsd/bin/codex-git-finalize` 前，还必须满足：
 
 - 实现已完成，相关测试和检查实际通过；
@@ -72,6 +76,10 @@ verify-only、commit-only、normal、initial、initial-branch 和 resume 默认�
 - verify-only：本地验证通过，`commit.created=false`，push、远端验证和 post-verify 均明确因该模式跳过，HEAD、index 和 worktree 前后不变；不得把成功扩写为已验证 commit hooks、签名、index 写入能力或远端状态。
 - commit-only：`commit.created=true` 且有新 commit OID，`push.executed=false`、push/远端验证/post-verify 均明确因该模式跳过，最终工作区状态已报告。
 - 默认、initial、initial-branch 和 resume：按各模式合同核对实际 push 与远端 post-verify；需要 push 的成功结果必须包含 `push.executed=true`、`push.result=succeeded`、显式 branch refspec、`push.branch_refspec_only=true` 和 `push.follow_tags_requested=false`。
+- integration candidate publish：要求 `mode=integration_candidate_publish`、`status=success`、
+  `remote_verify.status=verified` 且 remote OID 等于 candidate；首次执行为
+  `push.result=published`，中断恢复可为 `already_published_recovered` 且
+  `push.executed=false`。两者都必须返回同一 lease/run/candidate identity 和 `record_id`。
 
 出现非零退出码，`status` 为 `blocked`、`failed` 或 `partial`，结果不满足所选模式合同，warning 影响范围、安全或发布，存在 `resume`，摘要与实际状态不一致，或用户要求详细证据时必须展开。展开时保留 `final_phase`、`reason`、恢复引用和 `next_action`，并按现有停止或恢复流程处理；不得把模式约定的跳过描述为已执行，也不得把失败、不确定结果或未执行操作描述为成功。
 
@@ -227,6 +235,32 @@ whitespace 检查。它不执行 add 或 commit，不修改 tag 或 Git 配置�
 成功后 remote target ref 必须等于 HEAD，ahead/behind 必须为 `0/0`，index/worktree 保持
 clean，HEAD、local branch、tag 和 Git 配置保持不变。push 或 post-verify 失败时保留原 commits，
 只按摘要给出的同一完整 OID 恢复入口重试；不得创建替代 commit 或改写历史。
+
+## Controller-leased integration candidate publication
+
+上层 Controller 已完成 frozen intent claim、exact candidate validation 和 lease-acquire 后使用：
+
+```bash
+/home/hsd/bin/codex-git-finalize \
+  --summary \
+  --publish-integration-candidate <full-candidate-oid> \
+  --repo <absolute-candidate-worktree> \
+  --lease-id <controller-lease-uuid> \
+  --run-id <controller-run-id>
+```
+
+该接口要求 candidate 是 clean attached integration checkout，并由唯一 frozen intent、
+`INTEGRATING` allocation、exact validation evidence 和 schema v2 lease 共同绑定。repository ID、
+allocation、holder、run、remote、target ref、expected main、candidate 和 expiry 任一不匹配都停止。
+
+Finalizer 使用 Controller 现有 `repo.lock` 的 exclusive flock，先读取 live target；remote 已等于
+candidate 时只返回 `already_published_recovered`，不再 push。否则 lease 必须仍未过期且 live
+target 精确等于 expected main，随后只执行 non-force、`--no-follow-tags` 的
+`candidate:refs/heads/<target>` push 并 live verify。它不 fetch、不切换分支、不 add/commit，不修改
+canonical files/index/local branch，也不释放 lease 或 worktree。成功 receipt 的 `record_id` 必须
+传给 Controller `lease-complete --run-id ...`；Controller 才拥有 receipt persistence、lease
+release、registered disposable cleanup 和 guarded release。若进程中断，先以同一 lease/run/OID
+重入本接口读取 remote fact；不得改走 normal mode、创建新 commit 或原始 `git push`。
 
 ## Initial publish
 

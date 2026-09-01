@@ -23,15 +23,25 @@ class ToolContractTests(unittest.TestCase):
             (ROOT / "codex-git-finalize").read_text(encoding="utf-8"),
             re.MULTILINE,
         )
+        companion_version_match = re.search(
+            r'^VERSION = "([0-9]+\.[0-9]+\.[0-9]+)"$',
+            (ROOT / "codex-git-finalize-integration-publish.py").read_text(
+                encoding="utf-8"
+            ),
+            re.MULTILINE,
+        )
 
         self.assertIsNotNone(version_match)
+        self.assertIsNotNone(companion_version_match)
         assert version_match is not None
+        assert companion_version_match is not None
         self.assertEqual(contract["schema_version"], 1)
         self.assertEqual(manifest["schema_version"], 2)
-        self.assertEqual(contract["contract_version"], 1)
+        self.assertEqual(contract["contract_version"], 2)
         self.assertEqual(contract["tool_name"], "git-finalizer")
         self.assertEqual(contract["tool_version"], manifest["tool_version"])
         self.assertEqual(contract["tool_version"], version_match.group(1))
+        self.assertEqual(contract["tool_version"], companion_version_match.group(1))
         self.assertEqual(manifest["tool_commit"], "@release")
         self.assertEqual(
             manifest["public_cli_contract_sha256"],
@@ -70,11 +80,16 @@ class ToolContractTests(unittest.TestCase):
                 "publish_existing_branch",
                 "publish_existing_history",
                 "resume_existing_history_publish",
+                "integration_candidate_publish",
                 "retire_remote_branch",
             },
         )
         self.assertEqual(
             commands["retire_remote_branch"]["operation_class"], "remote_mutation"
+        )
+        self.assertEqual(
+            commands["integration_candidate_publish"]["operation_class"],
+            "remote_mutation",
         )
         self.assertEqual(commands["repo_plan"]["operation_class"], "read_only")
         self.assertEqual(commands["repo_ensure"]["operation_class"], "remote_mutation")
@@ -90,7 +105,7 @@ class ToolContractTests(unittest.TestCase):
         self.assertEqual(compatibility["toolchain_contract_version"], 3)
         self.assertEqual(compatibility["context_loader_contract_version"], 1)
         self.assertEqual(compatibility["snapshot_runner_contract_version"], 1)
-        self.assertEqual(compatibility["git_finalizer_contract_version"], 1)
+        self.assertEqual(compatibility["git_finalizer_contract_version"], 2)
         self.assertEqual(compatibility["worktree_controller_contract_version"], 1)
         self.assertEqual(
             compatibility["worktree_controller_status"],

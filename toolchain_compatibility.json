@@ -1,6 +1,6 @@
 {
   "context_loader_contract_version": 1,
-  "git_finalizer_contract_version": 1,
+  "git_finalizer_contract_version": 2,
   "schema_version": 1,
   "snapshot_runner_contract_version": 1,
   "toolchain_contract_version": 3,
@@ -11,7 +11,7 @@
       "source_directory": "context-loader"
     },
     "git-finalizer": {
-      "public_cli_contract_version": 1,
+      "public_cli_contract_version": 2,
       "skill_contract_version": 1,
       "source_directory": "git-finalizer"
     },

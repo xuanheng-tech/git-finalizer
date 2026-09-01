@@ -2,7 +2,7 @@
 
 Codex Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`0.9.0`
+当前版本：`0.9.1`
 
 ## Gitea repository bootstrap
 
@@ -153,6 +153,27 @@ ignored 文件、大二进制及异常对象检查；随后仅执行显式 branc
 `--no-follow-tags` push。post-verify 要求远端目标等于原 HEAD、ahead/behind 为 `0/0`、工作区与
 index 仍 clean，并确认 HEAD、本地 branch、tags 和 Git 配置均未改变。旧的
 `--resume-initial-publish` 继续只处理单 root commit 和 initial-publish 的空远端恢复状态。
+
+Worktree Controller schema v2 已为 validated integration candidate 签发 publication lease 时，
+使用独立的精确发布入口；remote、target ref、expected main OID、candidate OID、holder/run 与
+validation evidence 全部从同一 lease 读取，不由 caller 重复声明：
+
+```bash
+codex-git-finalize \
+  --publish-integration-candidate <full-candidate-oid> \
+  --repo /absolute/integration-candidate \
+  --lease-id <controller-lease-uuid> \
+  --run-id <controller-run-id> \
+  --summary
+```
+
+该入口要求 candidate clean、attached、绑定 frozen integration intent，且 Controller allocation
+处于 `INTEGRATING`。它在 Controller 现有 repository lock 下串行执行 live expected-main 检查、
+non-force `candidate:refs/heads/<target>` push 和 remote verify；不修改 canonical files、index 或
+local checked-out branch。若中断后 remote 已精确等于 candidate，则返回
+`already_published_recovered` 而不重复 push；过期、被替换或 identity 漂移的 lease fail closed。
+Finalizer receipt 交回 Controller 后，由 Controller 持久化 publication receipt、释放 lease 并
+执行 guarded cleanup/release。
 
 若已有 clean attached feature branch 和既有 committed HEAD，但尚未配置 upstream，且同名远端
 branch 不存在，使用显式首次发布入口；该入口不创建 commit：

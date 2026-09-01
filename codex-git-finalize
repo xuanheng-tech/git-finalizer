@@ -2,11 +2,35 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="0.9.0"
+readonly VERSION="0.9.1"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
 readonly MAX_SUMMARY_WARNINGS=5
+
+integration_publish_requested=0
+for integration_publish_argument in "$@"; do
+    [[ "$integration_publish_argument" != '--' ]] || break
+    if [[ "$integration_publish_argument" == '--publish-integration-candidate' ]]; then
+        integration_publish_requested=1
+    fi
+done
+if ((integration_publish_requested == 1)); then
+    [[ -x /usr/bin/python3 ]] || {
+        printf 'ERROR: integration publication requires /usr/bin/python3\n' >&2
+        exit 1
+    }
+    finalizer_executable=$(/usr/bin/realpath -e -- "${BASH_SOURCE[0]}") || {
+        printf 'ERROR: cannot resolve Git Finalizer entrypoint\n' >&2
+        exit 1
+    }
+    integration_publish_companion=${finalizer_executable%/*}/codex-git-finalize-integration-publish.py
+    [[ -f "$integration_publish_companion" && ! -L "$integration_publish_companion" ]] || {
+        printf 'ERROR: integration publication companion is missing\n' >&2
+        exit 1
+    }
+    exec /usr/bin/python3 -B "$integration_publish_companion" "$@"
+fi
 
 repository_bootstrap_requested=0
 for bootstrap_argument in "$@"; do
@@ -534,6 +558,9 @@ Usage:
   codex-git-finalize --resume-existing-history-publish <full-head-oid>
     --remote <remote-name> --remote-branch <branch-name>
     --repo <absolute-repo> [--summary]
+  codex-git-finalize --publish-integration-candidate <full-candidate-oid>
+    --repo <absolute-candidate-worktree> --lease-id <controller-lease-uuid>
+    --run-id <controller-run-id> [--summary]
   codex-git-finalize --retire-remote-branch <branch-name-or-refs/heads/ref>
     --remote <remote-name>
     --integrated-into <branch-name-or-matching-remote/branch-or-refs/heads/ref>
@@ -573,6 +600,10 @@ Options:
                                  First-publish existing clean history to a verified-empty repository.
   --resume-existing-history-publish <oid>
                                  Resume the exact existing-history first publication.
+  --publish-integration-candidate <oid>
+                                 Publish the exact Controller-leased candidate to its target ref.
+  --lease-id <uuid>             Exact Controller publication lease identity.
+  --run-id <id>                 Exact Controller publication executor identity.
   --retire-remote-branch <branch>
                                  Retire one ancestry-integrated remote feature branch.
   --remote <name>                Required by initial, existing-branch, retirement, and root resume.
