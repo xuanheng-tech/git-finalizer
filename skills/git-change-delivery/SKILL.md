@@ -60,7 +60,7 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 | 已存在 clean feature branch、无 upstream、远端同名 branch 不存在，已明确授权首次发布 | `--publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>` | 不创建 commit；non-force 首次发布、设置 upstream 并远端 post-verify |
 | 已有 local history，目标是经 repo-plan/repo-ensure 验证的全空 Gitea repository | `--publish-existing-history <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>` | 不创建 commit；全 remote refs 空检查、normal first push、远端 post-verify |
 | existing-history first push 中断或结果不确定，且 remote 为空或仅有 expected target | `--resume-existing-history-publish <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>` | 不创建 commit；精确恢复并验证 upstream/remote `0/0` |
-| Controller schema v2 已签发 integration publication lease | `--publish-integration-candidate <candidate-oid> --repo <candidate-worktree> --lease-id <uuid> --run-id <run>` | 不创建 commit；消费同一 lease，单锁精确 main push、remote verify、中断幂等恢复 |
+| Controller schema v2 已签发 integration publication lease，且 V1 intent 为 `VALIDATED` 或 V2 intent 为 lease-bound `PUBLISHING` | `--publish-integration-candidate <candidate-oid> --repo <candidate-worktree> --lease-id <uuid> --run-id <run>` | 不创建 commit；消费同一 lease，单锁精确 main push、remote verify、中断幂等恢复 |
 | 已完成 ancestry-provable integration，明确授权退役 remote feature ref | `--retire-remote-branch <branch> --remote <name> --integrated-into <branch> --expected-remote-oid <full-oid> --repo <absolute-repo>` | 不创建 commit；expected-OID compare-and-delete、远端 post-verify |
 | 明确要求规划或确保一个空 Gitea repository | `--repo-plan` / `--repo-ensure` | 与 publication 分离；仅显式 ensure 可创建 repository，绝不 commit/push |
 

@@ -2,7 +2,7 @@
 
 Codex Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`0.9.1`
+当前版本：`0.9.2`
 
 ## Gitea repository bootstrap
 
@@ -167,8 +167,10 @@ codex-git-finalize \
   --summary
 ```
 
-该入口要求 candidate clean、attached、绑定 frozen integration intent，且 Controller allocation
-处于 `INTEGRATING`。它在 Controller 现有 repository lock 下串行执行 live expected-main 检查、
+该入口要求 candidate clean、attached，并绑定 pre-0.6 `VALIDATED` intent 或 Controller 0.6+
+`PUBLISHING` V2 intent；V2 还必须精确匹配 publication identity 与完整 prepared receipt。
+Controller allocation 必须处于 `INTEGRATING`。它在 Controller 现有 repository lock 下串行执行
+live expected-main 检查、
 non-force `candidate:refs/heads/<target>` push 和 remote verify；不修改 canonical files、index 或
 local checked-out branch。若中断后 remote 已精确等于 candidate，则返回
 `already_published_recovered` 而不重复 push；过期、被替换或 identity 漂移的 lease fail closed。

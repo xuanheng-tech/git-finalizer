@@ -300,7 +300,7 @@ class RepositoryBootstrapTests(unittest.TestCase):
             code, receipt = self.execute(self.arguments(server), password=marker)
             self.assertEqual(code, 0)
             self.assertEqual(receipt["summary_schema_version"], 1)
-            self.assertEqual(receipt["finalizer_version"], "0.9.1")
+            self.assertEqual(receipt["finalizer_version"], "0.9.2")
             self.assertEqual(receipt["repository_id"], "controller-repository")
             self.assertEqual(receipt["allocation_id"], "allocation")
             self.assertEqual(receipt["task_key"], "task")

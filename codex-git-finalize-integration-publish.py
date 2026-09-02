@@ -16,8 +16,9 @@ from typing import Any, NoReturn, Sequence
 import uuid
 
 
-VERSION = "0.9.1"
+VERSION = "0.9.2"
 OID = re.compile(r"[0-9a-f]{40}\Z")
+SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 SAFE_REMOTE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
@@ -89,6 +90,18 @@ def require_oid(value: object, label: str) -> str:
     return value
 
 
+def require_sha256(value: object, label: str) -> str:
+    if not isinstance(value, str) or SHA256.fullmatch(value) is None:
+        raise PublishError(f"{label} must be a SHA-256 digest")
+    return value
+
+
+def require_positive_int(value: object, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise PublishError(f"{label} must be a positive integer")
+    return value
+
+
 def require_text(value: object, label: str, *, maximum: int = 512) -> str:
     if (
         not isinstance(value, str)
@@ -98,6 +111,119 @@ def require_text(value: object, label: str, *, maximum: int = 512) -> str:
     ):
         raise PublishError(f"{label} must be a bounded single-line value")
     return value
+
+
+def validate_integration_intent(
+    *,
+    repo: Path,
+    metadata_root: Path,
+    intent: dict[str, Any],
+    repository_id: str,
+    allocation_id: str,
+    lease_id: str,
+    candidate: str,
+    expected_main: str,
+    evidence: str,
+) -> None:
+    if (
+        intent.get("allocation_id") != allocation_id
+        or intent.get("candidate_oid") != candidate
+        or intent.get("validated_oid") != candidate
+        or intent.get("validation_evidence_id") != evidence
+    ):
+        raise PublishError("integration intent validation differs from the lease")
+
+    # Pre-0.6 Controller intents are frozen in VALIDATED. Controller 0.6 V2 moves the
+    # same exact candidate to PUBLISHING while the lease is live and binds that state
+    # to the lease UUID. Do not accept either state outside its own contract.
+    if intent.get("state") == "VALIDATED":
+        if intent.get("schema_version") not in {None, 1, 2} or intent.get(
+            "contract_version"
+        ) not in {None, 1}:
+            raise PublishError("legacy integration intent contract is inconsistent")
+        return
+
+    if (
+        intent.get("schema_version") != 3
+        or intent.get("contract_version") != 2
+        or intent.get("state") != "PUBLISHING"
+        or require_uuid(intent.get("publication_identity"), "publication identity")
+        != lease_id
+        or intent.get("base_main_oid") != expected_main
+        or intent.get("prepared_base_origin_main_oid") != expected_main
+        or intent.get("prepared_commit_oid") != candidate
+    ):
+        raise PublishError("Controller V2 publishing intent differs from the lease")
+
+    intent_id = require_uuid(intent.get("intent_id"), "intent_id")
+    prepared_receipt_id = require_uuid(
+        intent.get("prepared_receipt_id"), "prepared receipt ID"
+    )
+    prepare_identity = require_sha256(
+        intent.get("prepare_identity"), "prepare identity"
+    )
+    scope_digest = require_sha256(intent.get("scope_digest"), "scope digest")
+    prepared_scope_digest = require_sha256(
+        intent.get("prepared_scope_digest"), "prepared scope digest"
+    )
+    if prepared_scope_digest != scope_digest:
+        raise PublishError("prepared scope digest differs from the integration intent")
+    prepared_tree = require_oid(intent.get("prepared_tree_oid"), "prepared tree OID")
+    live_tree = require_oid(
+        git_text(repo, "rev-parse", f"{candidate}^{{tree}}"), "candidate tree OID"
+    )
+    if prepared_tree != live_tree:
+        raise PublishError("prepared tree differs from the leased candidate")
+    tests_receipt_id = require_text(intent.get("tests_receipt_id"), "tests receipt ID")
+    snapshot_receipt_id = require_text(
+        intent.get("snapshot_receipt_id"), "snapshot receipt ID"
+    )
+    attempt = require_positive_int(intent.get("attempt"), "integration attempt")
+
+    prepared = read_object(
+        metadata_root
+        / "prepared-candidate-receipts"
+        / f"{prepared_receipt_id}.json",
+        "prepared candidate receipt",
+    )
+    expected_fields = {
+        "schema_version",
+        "receipt_id",
+        "repository_id",
+        "intent_id",
+        "allocation_id",
+        "attempt",
+        "base_origin_main_oid",
+        "candidate_oid",
+        "tree_oid",
+        "scope_digest",
+        "prepare_identity",
+        "validation_evidence_id",
+        "tests_receipt_id",
+        "snapshot_receipt_id",
+        "created_at",
+    }
+    if set(prepared) != expected_fields or prepared.get("schema_version") != 1:
+        raise PublishError("prepared candidate receipt schema is invalid")
+    if (
+        require_uuid(prepared.get("receipt_id"), "prepared receipt ID")
+        != prepared_receipt_id
+        or require_uuid(prepared.get("repository_id"), "prepared repository ID")
+        != repository_id
+        or require_uuid(prepared.get("intent_id"), "prepared intent ID") != intent_id
+        or require_uuid(prepared.get("allocation_id"), "prepared allocation ID")
+        != allocation_id
+        or require_positive_int(prepared.get("attempt"), "prepared attempt") != attempt
+        or prepared.get("base_origin_main_oid") != expected_main
+        or prepared.get("candidate_oid") != candidate
+        or prepared.get("tree_oid") != prepared_tree
+        or prepared.get("scope_digest") != scope_digest
+        or prepared.get("prepare_identity") != prepare_identity
+        or prepared.get("validation_evidence_id") != evidence
+        or prepared.get("tests_receipt_id") != tests_receipt_id
+        or prepared.get("snapshot_receipt_id") != snapshot_receipt_id
+    ):
+        raise PublishError("prepared candidate receipt differs from the publishing intent")
 
 
 def resolve_repo(raw: Path) -> tuple[Path, Path, Path]:
@@ -237,14 +363,17 @@ def validate_lease(
             if intent.get("allocation_id") == allocation_id:
                 matching_intents.append(intent)
     if len(matching_intents) == 1:
-        intent = matching_intents[0]
-        if (
-            intent.get("state") != "VALIDATED"
-            or intent.get("candidate_oid") != candidate
-            or intent.get("validated_oid") != candidate
-            or intent.get("validation_evidence_id") != evidence
-        ):
-            raise PublishError("integration intent validation differs from the lease")
+        validate_integration_intent(
+            repo=repo,
+            metadata_root=metadata_root,
+            intent=matching_intents[0],
+            repository_id=repository_id,
+            allocation_id=allocation_id,
+            lease_id=lease_id_argument,
+            candidate=candidate,
+            expected_main=expected_main,
+            evidence=evidence,
+        )
     else:
         raise PublishError("exactly one frozen integration intent must bind the lease")
 

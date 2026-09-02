@@ -13,6 +13,13 @@ section is invented for it.
 
 ## Unreleased
 
+## 0.9.2 - 2026-09-03
+
+- Accept Controller 0.6 IntegrationIntentV2 only in the lease-bound `PUBLISHING` state while
+  retaining the pre-0.6 `VALIDATED` contract.
+- Bind V2 publication to the exact lease UUID, prepared base/commit/tree/scope identity, tests and
+  Snapshot evidence, and immutable prepared-candidate receipt; mismatches fail before remote mutation.
+
 ## 0.9.1 - 2026-09-01
 
 - Add Git Finalizer `0.9.1` integration-candidate publication: consume one Controller schema v2

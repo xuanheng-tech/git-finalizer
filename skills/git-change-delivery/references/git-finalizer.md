@@ -249,9 +249,11 @@ clean，HEAD、local branch、tag 和 Git 配置保持不变。push 或 post-ver
   --run-id <controller-run-id>
 ```
 
-该接口要求 candidate 是 clean attached integration checkout，并由唯一 frozen intent、
-`INTEGRATING` allocation、exact validation evidence 和 schema v2 lease 共同绑定。repository ID、
-allocation、holder、run、remote、target ref、expected main、candidate 和 expiry 任一不匹配都停止。
+该接口要求 candidate 是 clean attached integration checkout，并由唯一 pre-0.6 `VALIDATED`
+intent 或 Controller 0.6+ lease-bound `PUBLISHING` V2 intent、`INTEGRATING` allocation、exact
+validation evidence 和 schema v2 lease 共同绑定。V2 还必须匹配 prepared base/commit/tree/scope、
+tests/Snapshot evidence 与 immutable prepared-candidate receipt。repository ID、allocation、holder、
+run、remote、target ref、expected main、candidate 和 expiry 任一不匹配都停止。
 
 Finalizer 使用 Controller 现有 `repo.lock` 的 exclusive flock，先读取 live target；remote 已等于
 candidate 时只返回 `already_published_recovered`，不再 push。否则 lease 必须仍未过期且 live

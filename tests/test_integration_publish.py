@@ -152,6 +152,67 @@ class IntegrationPublishFixture:
             },
         )
 
+    def use_v2_publishing_intent(
+        self,
+        *,
+        state: str = "PUBLISHING",
+        publication_identity: str | None = None,
+    ) -> None:
+        created_at = datetime.now(timezone.utc).isoformat()
+        scope_digest = hashlib.sha256(b'["backend/src"]').hexdigest()
+        prepare_identity = hashlib.sha256(b"prepare-identity").hexdigest()
+        prepared_receipt_id = str(uuid.uuid4())
+        tree_oid = git(self.candidate, "rev-parse", f"{self.candidate_oid}^{{tree}}")
+        tests_receipt_id = "tests-receipt"
+        snapshot_receipt_id = "snapshot-receipt"
+        self._write(
+            self.metadata / "integration-intents" / f"{self.intent_id}.json",
+            {
+                "schema_version": 3,
+                "contract_version": 2,
+                "intent_id": self.intent_id,
+                "allocation_id": self.allocation_id,
+                "state": state,
+                "attempt": 1,
+                "base_main_oid": self.expected_main,
+                "candidate_oid": self.candidate_oid,
+                "validated_oid": self.candidate_oid,
+                "validation_evidence_id": self.validation_evidence,
+                "publication_identity": publication_identity or self.lease_id,
+                "prepared_receipt_id": prepared_receipt_id,
+                "prepared_base_origin_main_oid": self.expected_main,
+                "prepared_commit_oid": self.candidate_oid,
+                "prepared_tree_oid": tree_oid,
+                "scope_digest": scope_digest,
+                "prepared_scope_digest": scope_digest,
+                "prepare_identity": prepare_identity,
+                "tests_receipt_id": tests_receipt_id,
+                "snapshot_receipt_id": snapshot_receipt_id,
+            },
+        )
+        self._write(
+            self.metadata
+            / "prepared-candidate-receipts"
+            / f"{prepared_receipt_id}.json",
+            {
+                "schema_version": 1,
+                "receipt_id": prepared_receipt_id,
+                "repository_id": self.repository_id,
+                "intent_id": self.intent_id,
+                "allocation_id": self.allocation_id,
+                "attempt": 1,
+                "base_origin_main_oid": self.expected_main,
+                "candidate_oid": self.candidate_oid,
+                "tree_oid": tree_oid,
+                "scope_digest": scope_digest,
+                "prepare_identity": prepare_identity,
+                "validation_evidence_id": self.validation_evidence,
+                "tests_receipt_id": tests_receipt_id,
+                "snapshot_receipt_id": snapshot_receipt_id,
+                "created_at": created_at,
+            },
+        )
+
     def command(self) -> tuple[str, ...]:
         return (
             str(FINALIZER),
@@ -251,6 +312,105 @@ class IntegrationPublishTests(unittest.TestCase):
         self.assertEqual(summary["remote_verify"]["oid"], self.fixture.candidate_oid)
         self.assertEqual(self.fixture.remote_reflog_count(), before_reflog + 1)
         self.assertEqual(self.fixture.canonical_state(), before_canonical)
+
+    def test_controller_v2_publishing_intent_publishes_exact_prepared_candidate(
+        self,
+    ) -> None:
+        self.fixture.use_v2_publishing_intent()
+
+        result = subprocess.run(
+            self.fixture.command(), check=False, capture_output=True, text=True
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        summary = json.loads(result.stdout)
+        self.assertEqual(summary["push"]["result"], "published")
+        self.assertEqual(summary["remote_verify"]["oid"], self.fixture.candidate_oid)
+
+    def test_controller_v2_interrupted_publish_recovers_idempotently(self) -> None:
+        self.fixture.use_v2_publishing_intent()
+        before_reflog = self.fixture.remote_reflog_count()
+
+        interrupted = subprocess.run(
+            self.fixture.command(),
+            check=False,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "CODEX_GIT_FINALIZER_TEST_CRASH_AFTER_PUSH": "1",
+            },
+        )
+        self.assertEqual(interrupted.returncode, 97)
+
+        recovered = subprocess.run(
+            self.fixture.command(), check=False, capture_output=True, text=True
+        )
+
+        self.assertEqual(recovered.returncode, 0, recovered.stderr)
+        summary = json.loads(recovered.stdout)
+        self.assertEqual(summary["push"]["result"], "already_published_recovered")
+        self.assertFalse(summary["push"]["executed"])
+        self.assertEqual(self.fixture.remote_reflog_count(), before_reflog + 1)
+
+    def test_controller_v2_publication_identity_drift_fails_closed(self) -> None:
+        self.fixture.use_v2_publishing_intent(
+            publication_identity=str(uuid.uuid4())
+        )
+        before_reflog = self.fixture.remote_reflog_count()
+
+        result = subprocess.run(
+            self.fixture.command(), check=False, capture_output=True, text=True
+        )
+
+        self.assertEqual(result.returncode, 1)
+        summary = json.loads(result.stdout)
+        self.assertEqual(summary["status"], "blocked")
+        self.assertIn("publishing intent", summary["reason"])
+        self.assertEqual(self.fixture.remote_reflog_count(), before_reflog)
+
+    def test_controller_v2_prepared_receipt_drift_fails_closed(self) -> None:
+        self.fixture.use_v2_publishing_intent()
+        intent = json.loads(
+            (
+                self.fixture.metadata
+                / "integration-intents"
+                / f"{self.fixture.intent_id}.json"
+            ).read_text(encoding="utf-8")
+        )
+        receipt_path = (
+            self.fixture.metadata
+            / "prepared-candidate-receipts"
+            / f"{intent['prepared_receipt_id']}.json"
+        )
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt["tests_receipt_id"] = "drifted-tests-receipt"
+        self.fixture._write(receipt_path, receipt)
+        before_reflog = self.fixture.remote_reflog_count()
+
+        result = subprocess.run(
+            self.fixture.command(), check=False, capture_output=True, text=True
+        )
+
+        self.assertEqual(result.returncode, 1)
+        summary = json.loads(result.stdout)
+        self.assertEqual(summary["status"], "blocked")
+        self.assertIn("prepared candidate receipt", summary["reason"])
+        self.assertEqual(self.fixture.remote_reflog_count(), before_reflog)
+
+    def test_controller_v2_ready_without_live_lease_state_fails_closed(self) -> None:
+        self.fixture.use_v2_publishing_intent(state="READY_TO_PUBLISH")
+        before_reflog = self.fixture.remote_reflog_count()
+
+        result = subprocess.run(
+            self.fixture.command(), check=False, capture_output=True, text=True
+        )
+
+        self.assertEqual(result.returncode, 1)
+        summary = json.loads(result.stdout)
+        self.assertEqual(summary["status"], "blocked")
+        self.assertIn("publishing intent", summary["reason"])
+        self.assertEqual(self.fixture.remote_reflog_count(), before_reflog)
 
     def test_concurrent_duplicate_executor_performs_one_remote_update(self) -> None:
         before_reflog = self.fixture.remote_reflog_count()
