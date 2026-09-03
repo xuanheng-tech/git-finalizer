@@ -1,0 +1,31 @@
+{
+  "canonical_skill": {
+    "owner": "git-finalizer",
+    "path": "skills/git-change-delivery/SKILL.md"
+  },
+  "canonical_skill_sha256": "0582894543468d8e8623c6366cf638fb846a2502608204bcda62376c4ede2ace",
+  "compatibility_skill": {
+    "name": "three-tool-git-workflow",
+    "path": "skills/three-tool-git-workflow/SKILL.md",
+    "sha256": "68503da0ffb2e94e487afc8bbc8320390da9bdf7a8e6e7e902f6f6ab426dd8cd"
+  },
+  "compatible_toolchain_contract_version": 3,
+  "executable": {
+    "entrypoints": [
+      "codex-project-context"
+    ],
+    "kind": "python_console_scripts"
+  },
+  "install_targets": {
+    "skill_directory": "git-change-delivery",
+    "stable_entries": [
+      "codex-project-context"
+    ]
+  },
+  "public_cli_contract_sha256": "1d34d347ed3ce2b49d39272d7009f7e5f4883b9fe1267dbcd4ed1fce8fcbc7c1",
+  "schema_version": 2,
+  "skill_contract_version": 1,
+  "tool_commit": "@release",
+  "tool_name": "context-loader",
+  "tool_version": "0.1.6"
+}

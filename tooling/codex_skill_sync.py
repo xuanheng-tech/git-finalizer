@@ -219,6 +219,22 @@ class Sources:
         require_owned_directory(repo)
         return repo
 
+    def manifest_path(self, tool: str) -> Path:
+        config = self.tool_config.get(tool, {})
+        manifest_rel = config.get("skill_manifest")
+        if manifest_rel:
+            return (self.owner_repo / manifest_rel).resolve()
+        repo = self.repo(tool)
+        repo_manifest = repo / "tool_skill_manifest.json"
+        if repo_manifest.exists():
+            return repo_manifest
+        internal_manifest = (
+            self.owner_repo / "manifests" / tool / "tool_skill_manifest.json"
+        )
+        if internal_manifest.exists():
+            return internal_manifest
+        return repo_manifest
+
 
 def validate_install_targets(
     manifest: dict[str, Any], *, allow_legacy: bool = False
@@ -429,7 +445,7 @@ def validate_manifest_static_fields(
 def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
     errors: list[str] = []
     repo = sources.repo(tool)
-    manifest_path = repo / "tool_skill_manifest.json"
+    manifest_path = sources.manifest_path(tool)
     contract_path = repo / "tool_cli_contract.json"
     try:
         manifest = read_json(manifest_path)
@@ -619,7 +635,7 @@ def status(sources: Sources, agents_root: Path, bin_dir: Path | None) -> dict[st
         checked = check_tool(sources, tool)
         repo = sources.repo(tool)
         try:
-            manifest = read_json(repo / "tool_skill_manifest.json")
+            manifest = read_json(sources.manifest_path(tool))
             entrypoints = validate_install_targets(manifest)
         except SyncError:
             result["tools"].append(
@@ -1318,7 +1334,7 @@ def build_bundle(
             "source repositories are dirty; release bundle requires committed sources"
         )
     tool_commit = f"worktree:{head}" if dirty else head
-    manifest = read_json(repo / "tool_skill_manifest.json")
+    manifest = read_json(sources.manifest_path(tool))
     manifest["tool_commit"] = tool_commit
     tool_root = bundles_root / tool
     require_owned_directory(tool_root, create=True)

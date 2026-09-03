@@ -8,6 +8,7 @@
     "context-loader": {
       "public_cli_contract_version": 1,
       "skill_contract_version": 1,
+      "skill_manifest": "manifests/context-loader/tool_skill_manifest.json",
       "source_directory": "context-loader"
     },
     "git-finalizer": {
