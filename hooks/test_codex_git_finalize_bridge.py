@@ -625,7 +625,8 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         event = self.event()
         event["permission_mode"] = "bypassPermissions"
 
-        output, run = self.invoke_main(event)
+        with mock.patch.object(bridge.os, "geteuid", return_value=1000):
+            output, run = self.invoke_main(event)
 
         self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
         run.assert_called_once()
@@ -641,7 +642,8 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         event = self.event()
         event["permission_mode"] = "bypassPermissions"
 
-        output, run = self.invoke_main(event)
+        with mock.patch.object(bridge.os, "geteuid", return_value=1000):
+            output, run = self.invoke_main(event)
 
         self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
         run.assert_not_called()
@@ -652,7 +654,10 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         event = self.event("/usr/bin/sudo " + self.command)
         event["permission_mode"] = "bypassPermissions"
 
-        with self.assertRaises(bridge.BridgeError):
+        with (
+            mock.patch.object(bridge.os, "geteuid", return_value=1000),
+            self.assertRaises(bridge.BridgeError),
+        ):
             bridge.validate_hook_event(event)
 
     def test_conflicting_direct_transcript_call_is_denied(self) -> None:
