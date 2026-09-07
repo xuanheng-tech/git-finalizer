@@ -27,7 +27,9 @@ current-state record；写入在 advisory lock 内原子替换。单条（含换
 `repo_ref`、`task_ref`、`thread_ref`、`record_id` 和 `path_ref` 使用 queue 私有 32-byte key
 计算 HMAC-SHA256 pseudonym。raw remote URL、task/thread ID 不落盘。task ID 未显式传入时，
 helper 只从 `CODEX_THREAD_ID` 对应的一个 root rollout 中读取结构化 lifecycle envelope，要求恰有
-一个 unmatched `task_started.turn_id`；它不读取或保存 message 正文，歧义时 fail closed。
+一个 unmatched `task_started.turn_id`；`task_complete` 与带同一 turn ID 的 `turn_aborted`
+都是正式终态。helper 不读取或保存 message 正文，不修改 rollout；真正存在多个未结束 turn
+时仍 fail closed。
 
 record schema 固定包含：
 

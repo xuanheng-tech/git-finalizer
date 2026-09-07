@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="0.9.1"
+readonly VERSION="0.9.3"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -2195,8 +2195,11 @@ validate_existing_publish_range() {
     fi
 
     for commit_oid in "${commit_oids[@]}"; do
+        # Every unpublished parent is checked separately. Compare merge changes
+        # to the first parent so an older side branch does not reintroduce the
+        # already-published baseline into this range's validation scope.
         if whitespace_output=$(
-            git -C "$repo" diff-tree --root -m --no-commit-id --no-renames \
+            git -C "$repo" diff-tree --root --diff-merges=first-parent --no-commit-id --no-renames \
                 -r --check "$commit_oid" 2>&1
         ); then
             whitespace_status=0
@@ -2267,7 +2270,7 @@ validate_existing_publish_range() {
             fi
             publish_paths["$path"]=1
         done < <(
-            git -C "$repo" diff-tree --root -m --no-commit-id --no-renames \
+            git -C "$repo" diff-tree --root --diff-merges=first-parent --no-commit-id --no-renames \
                 -r --name-only -z "$commit_oid"
         )
     done

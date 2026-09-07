@@ -708,7 +708,7 @@ def resolve_current_task_id(codex_home: Path, thread_id: str) -> str:
                     subtype = payload.get("type")
                     if subtype == "task_started":
                         pending[turn] = pending.get(turn, 0) + 1
-                    elif subtype == "task_complete" and pending.get(turn, 0) > 0:
+                    elif subtype in {"task_complete", "turn_aborted"} and pending.get(turn, 0) > 0:
                         pending[turn] -= 1
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise QueueError(f"cannot resolve current task lifecycle from {path.name}") from exc

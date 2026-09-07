@@ -502,6 +502,8 @@ class QueueTest(unittest.TestCase):
             {"type": "session_meta", "payload": {"id": thread}},
             {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "old"}},
             {"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "old"}},
+            {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "interrupted"}},
+            {"type": "event_msg", "payload": {"type": "turn_aborted", "turn_id": "interrupted", "reason": "interrupted"}},
             {"type": "response_item", "payload": {"type": "message", "role": "user"}},
             {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "current"}},
         )
@@ -510,6 +512,11 @@ class QueueTest(unittest.TestCase):
         )
 
         self.assertEqual(queue.resolve_current_task_id(codex_home, thread), "current")
+
+        with rollout.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps({"type": "event_msg", "payload": {"type": "task_started", "turn_id": "concurrent"}}) + "\n")
+        with self.assertRaisesRegex(queue.QueueError, "found 2"):
+            queue.resolve_current_task_id(codex_home, thread)
 
 
 if __name__ == "__main__":

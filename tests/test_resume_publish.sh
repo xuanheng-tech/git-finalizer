@@ -254,6 +254,52 @@ test_multiple_ahead_commits_publish_as_one_range() {
         'multi-commit publish count is absent'
 }
 
+test_merge_range_preserves_published_baseline_and_checks_new_content() {
+    local kind case_dir output remote_before
+
+    for kind in clean whitespace secret-history; do
+        case_dir=$tmp_root/merge-$kind
+        output=$case_dir/output.log
+        make_published_repo "$case_dir"
+        git -C "$test_repo" branch feature
+        printf 'historical license\n\n' >"$test_repo/LICENSE"
+        git -C "$test_repo" add -- LICENSE
+        git -C "$test_repo" commit --quiet -m 'published historical baseline'
+        git -C "$test_repo" push --quiet origin HEAD:refs/heads/main
+        remote_before=$(remote_head)
+        git -C "$test_repo" switch --quiet feature
+        make_ahead_commit 1
+        if [[ "$kind" == secret-history ]]; then
+            printf 'synthetic fixture\n' >"$test_repo/.env"
+            git -C "$test_repo" add -- .env
+            git -C "$test_repo" commit --quiet -m 'unsafe intermediate path'
+            git -C "$test_repo" rm --quiet -- .env
+            git -C "$test_repo" commit --quiet -m 'remove unsafe path'
+        fi
+        git -C "$test_repo" switch --quiet main
+        git -C "$test_repo" merge --quiet --no-ff --no-commit feature
+        if [[ "$kind" == whitespace ]]; then
+            printf 'new trailing whitespace \n' >"$test_repo/introduced.txt"
+            git -C "$test_repo" add -- introduced.txt
+        fi
+        git -C "$test_repo" commit --quiet -m 'integrate feature'
+        expected_head=$(git -C "$test_repo" rev-parse HEAD)
+
+        if [[ "$kind" == clean ]]; then
+            expect_success "$output" resume_command
+            assert_equal "$expected_head" "$(remote_head)" 'merge was not published'
+        else
+            expect_failure "$output" resume_command
+            assert_equal "$remote_before" "$(remote_head)" 'unsafe merge changed remote'
+            if [[ "$kind" == whitespace ]]; then
+                assert_file_contains "$output" 'whitespace' 'merge-introduced whitespace was accepted'
+            else
+                assert_file_contains "$output" '敏感文件' 'side-branch history was not scanned'
+            fi
+        fi
+    done
+}
+
 test_ahead_zero_is_rejected() {
     local case_dir=$tmp_root/ahead-zero
     local output=$case_dir/output.log
@@ -569,6 +615,8 @@ run_case 'resume-publish publishes one ahead commit without local Git mutation' 
     test_ahead_one_publishes_without_local_mutation
 run_case 'resume-publish publishes multiple ahead commits as one validated range' \
     test_multiple_ahead_commits_publish_as_one_range
+run_case 'resume-publish checks new merge content and side history without rescanning the published baseline' \
+    test_merge_range_preserves_published_baseline_and_checks_new_content
 run_case 'resume-publish rejects an ahead-zero clean branch' test_ahead_zero_is_rejected
 run_case 'resume-publish rejects dirty and staged states' \
     test_dirty_and_staged_states_are_rejected

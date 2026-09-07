@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import subprocess
@@ -147,6 +148,15 @@ class FakeGitea:
 
 class RepositoryBootstrapTests(unittest.TestCase):
     def setUp(self) -> None:
+        # The fake loopback service must never inherit the caller's proxy routing.
+        self.enterContext(
+            mock.patch.dict(os.environ, {
+                name: "" for name in (
+                    "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+                    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+                )
+            })
+        )
         self.temporary = tempfile.TemporaryDirectory(prefix="git-finalizer-bootstrap-")
         self.repo = Path(self.temporary.name) / "repo"
         subprocess.run(
@@ -300,7 +310,7 @@ class RepositoryBootstrapTests(unittest.TestCase):
             code, receipt = self.execute(self.arguments(server), password=marker)
             self.assertEqual(code, 0)
             self.assertEqual(receipt["summary_schema_version"], 1)
-            self.assertEqual(receipt["finalizer_version"], "0.9.1")
+            self.assertEqual(receipt["finalizer_version"], "0.9.3")
             self.assertEqual(receipt["repository_id"], "controller-repository")
             self.assertEqual(receipt["allocation_id"], "allocation")
             self.assertEqual(receipt["task_key"], "task")
