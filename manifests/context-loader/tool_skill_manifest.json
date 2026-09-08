@@ -22,10 +22,10 @@
       "codex-project-context"
     ]
   },
-  "public_cli_contract_sha256": "3b891266ef74501f89bbd894528272286196ea5d3b20dde5ce63dec235ecfe63",
+  "public_cli_contract_sha256": "0105f283196f334d7e9f2bc6da9414bd2b1a7582ed90915efeb2852033198511",
   "schema_version": 2,
   "skill_contract_version": 1,
   "tool_commit": "@release",
   "tool_name": "context-loader",
-  "tool_version": "0.1.7"
+  "tool_version": "0.1.8"
 }
