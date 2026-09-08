@@ -390,6 +390,23 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 run.assert_called_once()
                 self.assertEqual(run.call_args.args[0], shlex.split(command))
 
+    def test_exact_fixture_exceptions_are_history_only_and_forwarded(self) -> None:
+        option = " --fixture-exceptions /tmp/reviewed-fixtures.json"
+        for command in (self.publish_existing_history_command, self.resume_existing_history_command):
+            with self.subTest(command=command):
+                output, run = self.invoke_main(self.event(command + option))
+                self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+                self.assertEqual(run.call_args.args[0], shlex.split(command + option))
+        commands = (
+            self.publish_existing_branch_command + option,
+            self.command.replace(" -- ", option + " -- ", 1),
+            self.publish_existing_history_command + option + option,
+            self.publish_existing_history_command + " --fixture-exceptions relative.json",
+        )
+        for command in commands:
+            with self.subTest(command=command), self.assertRaises(bridge.BridgeError):
+                bridge.validate_hook_event(self.event(command))
+
     def test_summary_is_accepted_and_forwarded_without_rewriting(self) -> None:
         output, run = self.invoke_main(self.event(self.summary_command))
 
@@ -659,6 +676,75 @@ class GitFinalizerBridgeTest(unittest.TestCase):
             self.assertRaises(bridge.BridgeError),
         ):
             bridge.validate_hook_event(event)
+
+    def test_loopback_proxy_prefix_is_forwarded_after_transcript_validation(self) -> None:
+        prefix = "NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost "
+        command = prefix + self.repo_plan_command
+        self.write_transcript_call({"cmd": command, "workdir": str(self.repo)})
+        event = self.event(command)
+        event["permission_mode"] = "bypassPermissions"
+        with mock.patch.object(bridge.os, "geteuid", return_value=1000):
+            output, run = self.invoke_main(event)
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        run.assert_called_once_with(shlex.split(command), self.repo)
+
+    def test_loopback_proxy_prefix_cannot_differ_from_transcript(self) -> None:
+        command = (
+            "NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost "
+            + self.repo_plan_command
+        )
+        self.write_transcript_call(
+            {
+                "cmd": self.repo_plan_command,
+                "workdir": str(self.repo),
+                "sandbox_permissions": "require_escalated",
+            }
+        )
+        output, run = self.invoke_main(self.event(command))
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
+        run.assert_not_called()
+
+    def test_proxy_prefix_rejects_other_environments_wrappers_and_broader_hosts(self) -> None:
+        prefix = "NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost "
+        for command in (
+            "NO_PROXY=* no_proxy=* " + self.command,
+            "NO_PROXY=127.0.0.1,localhost no_proxy=github.com " + self.command,
+            "NO_PROXY=127.0.0.1,localhost " + self.command,
+            "PATH=/tmp " + self.command,
+            "PYTHONPATH=/tmp " + prefix + self.command,
+            prefix + "NO_PROXY=127.0.0.1,localhost " + self.command,
+            "/usr/bin/env " + prefix + self.command,
+            prefix + "/bin/bash -lc " + shlex.quote(self.command),
+            prefix + self.command + " && /usr/bin/true",
+        ):
+            with self.subTest(command=command), self.assertRaises(bridge.BridgeError):
+                bridge.validate_hook_event(self.event(command))
+
+    def test_proxy_override_only_applies_to_finalizer_child_environment(self) -> None:
+        prefix = "NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost "
+        inherited = {
+            "HTTP_PROXY": "http://proxy.example.invalid",
+            "NO_PROXY": "example.invalid",
+            "no_proxy": "example.invalid",
+            "KEEP": "unchanged",
+        }
+        process = mock.Mock(returncode=0)
+        process.communicate.return_value = ("synthetic success", None)
+        with (
+            mock.patch.dict(bridge.os.environ, inherited, clear=True),
+            mock.patch.object(bridge.subprocess, "Popen", return_value=process) as popen,
+        ):
+            result = bridge.run_finalizer(shlex.split(prefix + self.command), self.repo)
+            self.assertEqual(dict(bridge.os.environ), inherited)
+        self.assertEqual(result, (0, "synthetic success"))
+        self.assertEqual(popen.call_args.args[0], shlex.split(self.command))
+        self.assertEqual(popen.call_args.kwargs["cwd"], self.repo)
+        self.assertFalse(popen.call_args.kwargs.get("shell", False))
+        self.assertEqual(
+            popen.call_args.kwargs["env"],
+            inherited
+            | {"NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"},
+        )
 
     def test_conflicting_direct_transcript_call_is_denied(self) -> None:
         self.write_transcript_call(

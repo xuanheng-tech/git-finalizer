@@ -85,6 +85,7 @@ BRIDGE_OPTION_SPECS: dict[str, tuple[int, bool]] = {
     "--allocation-id": (1, False),
     "--allow-large-binary": (1, True),
     "--allow-test-fixture": (1, True),
+    "--fixture-exceptions": (1, False),
     "--authority-key": (1, False),
     "--ci-commit-oid": (1, False),
     "--ci-required": (0, False),
@@ -418,15 +419,34 @@ def _explicit_paths(values: list[str]) -> tuple[str, ...]:
     return tuple(normalized)
 
 
+def split_loopback_proxy_prefix(argv: list[str]) -> tuple[list[str], dict[str, str]]:
+    overrides: dict[str, str] = {}
+    index = 0
+    while index < len(argv) and "=" in argv[index]:
+        name, value = argv[index].split("=", 1)
+        if (
+            name not in {"NO_PROXY", "no_proxy"}
+            or value != "127.0.0.1,localhost"
+            or name in overrides
+        ):
+            raise BridgeError("Finalizer 只接受成对、固定 loopback 值的 NO_PROXY/no_proxy 前缀")
+        overrides[name] = value
+        index += 1
+    if overrides and set(overrides) != {"NO_PROXY", "no_proxy"}:
+        raise BridgeError("Finalizer NO_PROXY/no_proxy 必须成对声明，避免继承值覆盖")
+    return argv[index:], overrides
+
+
 def parse_direct_finalizer(
     raw_command: object,
 ) -> tuple[list[str], str, tuple[str, ...], bool]:
     if not isinstance(raw_command, str):
         raise BridgeError("PreToolUse tool_input 缺少 command")
     try:
-        argv = shlex.split(raw_command, posix=True)
+        original_argv = shlex.split(raw_command, posix=True)
     except ValueError as exc:
         raise BridgeError("Finalizer shell 命令无法安全解析") from exc
+    argv, _overrides = split_loopback_proxy_prefix(original_argv)
     if not argv or argv[0] != FINALIZER:
         raise BridgeError(
             "Finalizer 必须以固定绝对路径作为直接命令，不能经 shell、env 或管道包装"
@@ -524,7 +544,7 @@ def parse_direct_finalizer(
                 raise BridgeError(f"Finalizer {option} 不是有效的单行值")
             if len(value) > 4096:
                 raise BridgeError(f"Finalizer {option} 超出长度上限")
-        return argv, parsed["--repo"], (), False
+        return original_argv, parsed["--repo"], (), False
 
     mode = parsed.get("--mode")
     if mode is not None and mode not in ("commit-only", "verify-only"):
@@ -557,12 +577,21 @@ def parse_direct_finalizer(
             or any(character in run_id for character in ("\x00", "\n", "\r", "\t"))
         ):
             raise BridgeError("Finalizer integration run ID 无效")
-        return argv, parsed["--repo"], (), False
+        return original_argv, parsed["--repo"], (), False
     resume_initial_oid = parsed.get("--resume-initial-publish")
     resume_publish_oid = parsed.get("--resume-publish")
     resume_existing_history_oid = parsed.get("--resume-existing-history-publish")
     publish_existing_oid = parsed.get("--publish-existing-branch")
     publish_existing_history_oid = parsed.get("--publish-existing-history")
+    fixture_exceptions = parsed.get("--fixture-exceptions")
+    if fixture_exceptions is not None:
+        if not (publish_existing_history_oid or resume_existing_history_oid):
+            raise BridgeError("Finalizer 精确 fixture exception 仅用于 existing-history/resume")
+        if (
+            not Path(fixture_exceptions).is_absolute()
+            or any(c in fixture_exceptions for c in ("\x00", "\n", "\r", "\t"))
+        ):
+            raise BridgeError("Finalizer fixture exception 必须是显式绝对文件路径")
     retirement_branch = parsed.get("--retire-remote-branch")
     retirement = retirement_branch is not None
     existing_publish_entries = tuple(
@@ -844,7 +873,7 @@ def parse_direct_finalizer(
         not message or any(character in message for character in ("\x00", "\n", "\r"))
     ):
         raise BridgeError("Finalizer --message 不得为空或包含换行")
-    return argv, parsed["--repo"], paths, dry_run
+    return original_argv, parsed["--repo"], paths, dry_run
 
 
 def resolve_repo(raw_repo: object) -> Path:
@@ -960,9 +989,12 @@ def redact_and_bound(output: str) -> str:
 
 
 def run_finalizer(argv: list[str], repo: Path) -> tuple[int, str]:
+    argv, overrides = split_loopback_proxy_prefix(argv)
+    environment = os.environ | overrides if overrides else None
     process = subprocess.Popen(
         argv,
         cwd=repo,
+        env=environment,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

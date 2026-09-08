@@ -20,6 +20,10 @@ mode 和 `--` 文件范围；publish-existing-branch 同样禁止 message、dry-
 mode 和文件范围，但要求 explicit remote 与 remote-branch。其他未知参数继续拒绝。initial-branch、commit-only 与 verify-only 模式
 禁止 snapshot；normal、commit-only 与 verify-only 模式禁止 remote 和 remote-branch；
 verify-only 还禁止 message 和 dry-run。
+existing-history 首次发布及对应 resume 可显式携带一次
+`--fixture-exceptions <absolute-json-file>`；bridge 只转发该精确文件参数，仓库、路径、
+blob/hash、detector 与 reason 的严格匹配由 Finalizer 执行。这两个接口继续拒绝原有
+path-only `--allow-test-fixture`；其他模式不接受新的例外文件。
 `tool_cli_contract.json` 的 `host_bridge.exposed_options` 是 bridge-exposed public options 的
 机器可读 authority；版本化测试要求 bridge 的 arity/repeatability schema 与其精确一致，未知
 mutation options 继续 fail closed。ToolReleaseBundle 校验也拒绝 CLI contract 与 bundled bridge
@@ -32,6 +36,11 @@ bridge 将严格解析并规范化的绝对 `--repo` 作为 Finalizer 子进程 
 `permission_mode=bypassPermissions` 只允许非 root 进程，且 transcript 不得伪造 sandbox
 escalation。`acceptEdits`、`plan`、`dontAsk`、未知值和未知结构继续 fail closed。两条路径均继续
 执行同一固定入口、参数、显式路径、allow rule 与 Finalizer 自身安全门；任何冲突均拒绝。
+固定入口前可声明且只能成对声明
+`NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost`。bridge 将这两个固定值
+仅传给本次 Finalizer 子进程，并核对 transcript 中包含前缀的完整原命令；不会修改父进程
+或全局代理。其他环境变量、单独声明、重复声明、通配符和非 loopback 目标均拒绝，
+`env`/shell wrapper 仍拒绝。Finalizer 的其他校验和发布门槛不变。
 命令仅把 Finalizer 名称或路径作为保守只读检查器的数据，或以固定入口精确查询 `--help`、
 `--version` 时，bridge 不作 allow/deny 决定，而是交回原生 sandbox、approval、execpolicy 和
 其他 Hook。shell wrapper、解释器、`find -exec`、可执行预处理器、带其他参数的元数据查询，

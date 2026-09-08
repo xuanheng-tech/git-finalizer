@@ -40,7 +40,7 @@
       "codex-git-finalize"
     ]
   },
-  "public_cli_contract_sha256": "f1a52bb944b92e6d31de957470a5f30fe2d278d368e78922461a740ff1ba97b8",
+  "public_cli_contract_sha256": "e99396f4a2fe7c96f1f5dee014be08cd9a29ce54681a34bbb0738ab9d231a739",
   "schema_version": 2,
   "skill_contract_version": 1,
   "tool_commit": "@release",

@@ -136,6 +136,7 @@ summary_retirement_lease_bound=false
 summary_retirement_tags_unchanged=false
 summary_retirement_remote_tracking_absent=false
 declare -a summary_warnings=()
+declare -a summary_fixture_exceptions=()
 
 record_summary_warning() {
     if ((${#summary_warnings[@]} < MAX_SUMMARY_WARNINGS)); then
@@ -189,6 +190,7 @@ render_summary() {
         "$summary_retirement_remote_absent_after" "$summary_retirement_result" \
         "$summary_retirement_lease_bound" "$summary_retirement_tags_unchanged" \
         "$summary_retirement_remote_tracking_absent" \
+        "$(printf '%s\n' "${summary_fixture_exceptions[@]}")" \
         "${summary_warnings[@]}" <<'PY'
 import json
 import sys
@@ -284,6 +286,7 @@ retirement_result = take(values)
 retirement_lease_bound = boolean(take(values))
 retirement_tags_unchanged = boolean(take(values))
 retirement_remote_tracking_absent = boolean(take(values))
+fixture_exceptions = [json.loads(line) for line in take(values).splitlines() if line]
 
 
 def optional_integer(value):
@@ -333,6 +336,8 @@ result = {
     "next_action": next_action,
     "next_action_omitted_characters": next_action_omitted,
 }
+if fixture_exceptions:
+    result["fixture_exceptions"] = fixture_exceptions
 if mode == "initial":
     result["mode_result"] = {
         "initial_publish": mode_state,
@@ -554,10 +559,10 @@ Usage:
     --repo <absolute-repo> [--summary]
   codex-git-finalize --publish-existing-history <full-head-oid>
     --remote <remote-name> --remote-branch <branch-name>
-    --repo <absolute-repo> [--summary]
+    --repo <absolute-repo> [--summary] [--fixture-exceptions <absolute-json-file>]
   codex-git-finalize --resume-existing-history-publish <full-head-oid>
     --remote <remote-name> --remote-branch <branch-name>
-    --repo <absolute-repo> [--summary]
+    --repo <absolute-repo> [--summary] [--fixture-exceptions <absolute-json-file>]
   codex-git-finalize --publish-integration-candidate <full-candidate-oid>
     --repo <absolute-candidate-worktree> --lease-id <controller-lease-uuid>
     --run-id <controller-run-id> [--summary]
@@ -618,6 +623,7 @@ Options:
   --ci-verified-at <timestamp>   Optional caller-supplied CI evidence timestamp.
   --snapshot <id>                Bind initial publish to a complete snapshot.
   --allow-test-fixture <path>    Ignore content secret signatures for this exact tests/ file.
+  --fixture-exceptions <file>   Exact repository/path/blob/hash/rule exceptions for history/resume.
   --allow-large-binary <path>    Allow this exact binary file above 5 MiB, up to 25 MiB.
   --dry-run                      Commit modes avoid Git mutation/remote; retirement runs live preflight only.
   --summary                      Emit one bounded JSON result instead of phase output.
@@ -905,12 +911,14 @@ working_content_reason() {
 
 staged_content_reason() {
     local oid=$1
+    local excepted_detector=${2:-}
     local private_key_re='-----BEGIN ([A-Z0-9]+[[:space:]]+)*PRIVATE KEY-----'
     local known_token_re='(AKIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,})'
     local ssh_key_re='(^|[[:space:]])ssh-(rsa|dss|ecdsa|ed25519)[[:space:]]+[A-Za-z0-9+/]{40,}'
     local assignment_re="(credential|password|passwd|secret|token|api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token)[[:space:]]*[:=][[:space:]]*['\"][^'\"]{12,}['\"]"
 
-    if LC_ALL=C grep -aEiq -- "$private_key_re" < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null); then
+    if [[ "$excepted_detector" != 'private-key-header-v1' ]] &&
+        LC_ALL=C grep -aEiq -- "$private_key_re" < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null); then
         printf 'private key 内容签名'
         return 0
     fi
@@ -2156,6 +2164,102 @@ is_committed_large_binary() {
     return 0
 }
 
+load_fixture_exceptions() {
+    local records path oid detector record key
+
+    [[ -n "$fixture_exceptions_file" ]] || return 0
+    if ! records=$(/usr/bin/python3 -B - \
+        "$fixture_exceptions_file" "$repo" "$resume_expected_oid" "$branch_publish_remote" <<'PY'
+import hashlib
+import json
+from pathlib import Path, PurePosixPath
+import re
+import subprocess
+import sys
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        require(key not in result, "duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def git(*args):
+    return subprocess.check_output(["git", "-C", repo, *args], stderr=subprocess.DEVNULL)
+
+
+try:
+    filename, repo, head, remote = sys.argv[1:]
+    source = Path(filename)
+    require(source.is_absolute() and str(source.resolve(strict=True)) == filename
+            and source.is_file() and not source.is_symlink(), "expected canonical regular file")
+    require(source.stat().st_size <= 65536, "exception file exceeds 64 KiB")
+    document = json.loads(source.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
+    require(type(document) is dict and set(document) == {"schema_version", "repository", "exceptions"},
+            "unknown or missing document fields")
+    require(type(document["schema_version"]) is int and document["schema_version"] == 1,
+            "unknown exception schema")
+    identity = document["repository"]
+    require(type(identity) is dict and set(identity) == {"root_commit", "remote_url_sha256"},
+            "invalid repository identity")
+    roots = git("rev-list", "--max-parents=0", head).decode().splitlines()
+    endpoint = git("remote", "get-url", "--push", "--all", remote).rstrip(b"\n")
+    require(len(roots) == 1 and identity["root_commit"] == roots[0]
+            and b"\n" not in endpoint
+            and identity["remote_url_sha256"] == hashlib.sha256(endpoint).hexdigest(),
+            "repository identity mismatch")
+    entries = document["exceptions"]
+    require(type(entries) is list and 1 <= len(entries) <= 16, "expected 1..16 exceptions")
+    seen = set()
+    records = []
+    for entry in entries:
+        require(type(entry) is dict and set(entry) == {"path", "blob_oid", "sha256", "detector", "reason"},
+                "unknown or missing exception fields")
+        require(all(type(value) is str for value in entry.values()), "exception fields must be strings")
+        path, oid, detector = entry["path"], entry["blob_oid"], entry["detector"]
+        require(path.startswith("tests/") and len(path) <= 1024
+                and str(PurePosixPath(path)) == path and ".." not in PurePosixPath(path).parts
+                and not any(c in path for c in "\x00\n\r\t*?[]"), "expected exact canonical tests/ path")
+        require(len(oid) == len(roots[0]) and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", oid) is not None
+                and re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]) is not None, "invalid content identity")
+        require(detector == "private-key-header-v1", "unknown fixture detector")
+        require(0 < len(entry["reason"].strip()) <= 256
+                and not any(c in entry["reason"] for c in "\x00\n\r\t"), "invalid exception reason")
+        key = (path, oid, detector)
+        require(key not in seen, "duplicate exception")
+        seen.add(key)
+        require(hashlib.sha256(git("cat-file", "blob", oid)).hexdigest() == entry["sha256"],
+                "fixture content hash mismatch")
+        approved = {"schema_version": 1, "repository": identity, "exception": entry}
+        digest = hashlib.sha256(json.dumps(approved, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        receipt = {"exception_id": "sha256:" + digest, "repository": identity, **entry, "applied": True}
+        records.append("\t".join((path, oid, detector, json.dumps(receipt, sort_keys=True))))
+    print("\n".join(records))
+except (OSError, ValueError, TypeError, subprocess.CalledProcessError) as error:
+    # Never include JSON values, source content, remote URLs or subprocess output.
+    print("fixture exception validation failed: " + (str(error) if type(error) is ValueError else type(error).__name__),
+          file=sys.stderr)
+    sys.exit(1)
+PY
+    ); then
+        fail 'fixture exception 文件无效；未执行 push'
+    fi
+    while IFS=$'\t' read -r path oid detector record; do
+        [[ $(staged_content_reason "$oid") == 'private key 内容签名' ]] ||
+            fail 'fixture exception detector 未命中指定 blob；未执行 push'
+        key=$path:$oid:$detector
+        history_fixture_exceptions["$key"]=$record
+        history_fixture_paths["$path"]=1
+    done <<<"$records"
+}
+
 validate_existing_publish_range() {
     local commit_output
     local commit_oid
@@ -2171,6 +2275,8 @@ validate_existing_publish_range() {
     local object_type
     local object_oid
     local extra
+    local fixture_key
+    local excepted_detector
     local -a commit_oids=()
     local -a tree_entries=()
     declare -A publish_paths=()
@@ -2264,9 +2370,24 @@ validate_existing_publish_range() {
                 existing_range_error="拒绝待发布的大于 5 MiB 明显二进制文件: $(printf '%q' "$path")"
                 return 1
             fi
-            if reason=$(staged_content_reason "$object_oid"); then
+            fixture_key=$path:$object_oid:private-key-header-v1
+            excepted_detector=''
+            if [[ -n ${history_fixture_paths[$path]+present} &&
+                -z ${history_fixture_exceptions[$fixture_key]+present} ]]; then
+                existing_range_error="fixture exception path/blob identity mismatch: $(printf '%q' "$path")"
+                return 1
+            fi
+            if [[ -n ${history_fixture_exceptions[$fixture_key]+present} ]]; then
+                excepted_detector='private-key-header-v1'
+            fi
+            if reason=$(staged_content_reason "$object_oid" "$excepted_detector"); then
                 existing_range_error="拒绝待发布敏感文件 $(printf '%q' "$path"): $reason"
                 return 1
+            fi
+            if [[ -n "$excepted_detector" && -z ${history_fixture_applied[$fixture_key]+present} ]]; then
+                history_fixture_applied["$fixture_key"]=1
+                summary_fixture_exceptions+=("${history_fixture_exceptions[$fixture_key]}")
+                printf 'fixture exception applied: %s\n' "${history_fixture_exceptions[$fixture_key]}"
             fi
             publish_paths["$path"]=1
         done < <(
@@ -2275,6 +2396,12 @@ validate_existing_publish_range() {
         )
     done
 
+    for fixture_key in "${!history_fixture_exceptions[@]}"; do
+        if [[ -z ${history_fixture_applied[$fixture_key]+present} ]]; then
+            existing_range_error='fixture exception 未匹配待发布历史中的 exact path/blob/detector'
+            return 1
+        fi
+    done
     resume_publish_path_count=${#publish_paths[@]}
 }
 
@@ -3139,6 +3266,7 @@ publish_existing_history_head() {
     ) || [[ "$branch_head" != "$resume_expected_oid" ]]; then
         fail 'existing-history publication 的本地 branch ref 与 expected HEAD 不一致'
     fi
+    load_fixture_exceptions
     classify_branch_upstream \
         "$branch_publish_branch" "$branch_publish_remote" "$branch_publish_branch_ref"
     if ((resume_existing_history == 0)); then
@@ -3973,6 +4101,11 @@ resume_seen=0
 snapshot_seen=0
 summary_seen=0
 separator_seen=0
+fixture_exceptions_file=''
+fixture_exceptions_seen=0
+declare -A history_fixture_exceptions=()
+declare -A history_fixture_paths=()
+declare -A history_fixture_applied=()
 declare -a allow_test_fixture_args=()
 declare -a allow_large_binary_args=()
 
@@ -4194,6 +4327,14 @@ while (($# > 0)); do
             printf 'codex-git-finalize %s\n' "$VERSION"
             exit 0
             ;;
+        --fixture-exceptions)
+            (($# >= 2)) || fail '--fixture-exceptions 缺少参数'
+            ((fixture_exceptions_seen == 0)) || fail '--fixture-exceptions 只能指定一次'
+            [[ -n "$2" ]] || fail '--fixture-exceptions 文件路径不能为空'
+            fixture_exceptions_file=$2
+            fixture_exceptions_seen=1
+            shift 2
+            ;;
         --allow-test-fixture)
             (($# >= 2)) || fail '--allow-test-fixture 缺少参数'
             allow_test_fixture_args+=("$2")
@@ -4253,6 +4394,10 @@ elif ((verify_only == 1)); then
 fi
 
 ((repo_seen == 1)) || fail '必须指定 --repo'
+if ((fixture_exceptions_seen == 1)); then
+    ((publish_existing_history == 1 || resume_existing_history == 1)) ||
+        fail '--fixture-exceptions 只接受 existing-history publication/resume'
+fi
 if ((commit_only == 1 || verify_only == 1)); then
     ((initial_commit_only == 0 && initial_publish == 0 &&
         initial_branch_publish == 0 &&

@@ -293,6 +293,35 @@ PreToolUse bridge 将 `--summary`、严格的 `--mode commit-only|verify-only`�
 入口原样转发；其调用授权、路径校验、停止条件和输出
 上限不变。
 
+### Exact synthetic fixture exceptions for existing history
+
+`--fixture-exceptions /absolute/reviewed-fixtures.json` is accepted only by
+`--publish-existing-history` and `--resume-existing-history-publish`. Both scan the
+entire proposed history with the same checks, including when the remote already
+contains the expected commit. This does not enable the path-only `--allow-test-fixture`
+option in either mode.
+
+The JSON contract is `{"schema_version":1,"repository":{"root_commit":"<full root OID>",
+"remote_url_sha256":"<SHA256 of exact push URL, without newline>"},"exceptions":[
+{"path":"tests/example.py","blob_oid":"<full blob OID>","sha256":"<content SHA256>",
+"detector":"private-key-header-v1","reason":"Reviewed synthetic test data"}]}`.
+Repository identity binds the single reachable root commit and selected push endpoint;
+each reviewed historical blob requires its own entry. The file must be a canonical
+absolute regular file, at most 64 KiB, with 1–16 entries. Paths must be exact canonical
+`tests/` paths, without glob syntax. Only the existing private-key header detector can
+be excepted; all other content detectors and all path, type, size and Git gates remain.
+Every historical blob at an explicitly excepted path must match a listed approval,
+even if a later mutation removes the detector signature.
+No fixture is approved automatically: the caller must review its origin and complete
+content before explicitly supplying this file.
+
+Unknown fields/rules/schema, duplicate entries or JSON keys, repository/hash mismatch,
+and unused exceptions fail closed. Changed content or another path requires a new
+explicitly reviewed identity. Output and `--summary` record `exception_id` (SHA256 of
+the canonical approval), repository, matched path/blob/SHA256, detector, reason and
+`applied=true`. No content or credentials are included. Resume requires the same
+explicit exception file; a previous successful scan never disables later scans.
+
 ## Codex PreToolUse bridge
 
 Git Finalizer Hook 的版本化源、测试、只读漂移检查和显式恢复入口见

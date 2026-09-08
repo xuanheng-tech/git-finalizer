@@ -286,7 +286,8 @@
         "--remote",
         "--remote-branch",
         "--repo",
-        "--summary"
+        "--summary",
+        "--fixture-exceptions"
       ],
       "name": "publish_existing_history",
       "operation_class": "remote_mutation",
@@ -309,7 +310,8 @@
         "--remote",
         "--remote-branch",
         "--repo",
-        "--summary"
+        "--summary",
+        "--fixture-exceptions"
       ],
       "name": "resume_existing_history_publish",
       "operation_class": "remote_mutation",
@@ -444,6 +446,10 @@
         "repeatable": false
       },
       "--expected-remote-oid": {
+        "arity": 1,
+        "repeatable": false
+      },
+      "--fixture-exceptions": {
         "arity": 1,
         "repeatable": false
       },
