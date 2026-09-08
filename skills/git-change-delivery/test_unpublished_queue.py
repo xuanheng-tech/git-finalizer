@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -517,6 +518,112 @@ class QueueTest(unittest.TestCase):
             stream.write(json.dumps({"type": "event_msg", "payload": {"type": "task_started", "turn_id": "concurrent"}}) + "\n")
         with self.assertRaisesRegex(queue.QueueError, "found 2"):
             queue.resolve_current_task_id(codex_home, thread)
+
+
+class IdentityResolutionTest(unittest.TestCase):
+    """Identity resolution must serve Codex and non-Codex providers alike."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.codex_home = Path(self.temporary.name) / "codex"
+        (self.codex_home / "sessions").mkdir(parents=True)
+        for name in ("AGENT_TASK_ID", "AGENT_THREAD_ID", "CODEX_THREAD_ID"):
+            os.environ.pop(name, None)
+            self.addCleanup(os.environ.pop, name, None)
+
+    def _arguments(self, *, task_id=None, thread_id=None):
+        return argparse.Namespace(
+            task_id=task_id, thread_id=thread_id, codex_home=self.codex_home
+        )
+
+    def _rollout(self, thread: str) -> None:
+        events = (
+            {"type": "session_meta", "payload": {"id": thread}},
+            {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "current"}},
+        )
+        (self.codex_home / "sessions" / f"rollout-{thread}.jsonl").write_text(
+            "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
+        )
+
+    def test_codex_thread_still_derives_its_task_from_the_rollout(self) -> None:
+        self._rollout("codex-thread")
+
+        self.assertEqual(
+            queue._resolve_identity(self._arguments(thread_id="codex-thread")),
+            ("current", "codex-thread"),
+        )
+
+    def test_codex_thread_environment_fallback_is_preserved(self) -> None:
+        self._rollout("codex-thread")
+        os.environ["CODEX_THREAD_ID"] = "codex-thread"
+
+        self.assertEqual(
+            queue._resolve_identity(self._arguments()), ("current", "codex-thread")
+        )
+
+    def test_explicit_identity_records_without_any_rollout(self) -> None:
+        arguments = self._arguments(task_id="claude-turn-1", thread_id="claude-thread")
+
+        self.assertEqual(
+            queue._resolve_identity(arguments), ("claude-turn-1", "claude-thread")
+        )
+        self.assertEqual(queue.codex_rollouts(self.codex_home, "claude-thread"), [])
+
+    def test_provider_neutral_environment_identity_records_without_a_rollout(self) -> None:
+        os.environ["AGENT_TASK_ID"] = "claude-turn-2"
+        os.environ["AGENT_THREAD_ID"] = "claude-thread"
+
+        self.assertEqual(
+            queue._resolve_identity(self._arguments()), ("claude-turn-2", "claude-thread")
+        )
+
+    def test_explicit_task_wins_over_a_matching_rollout(self) -> None:
+        self._rollout("codex-thread")
+
+        self.assertEqual(
+            queue._resolve_identity(
+                self._arguments(task_id="explicit", thread_id="codex-thread")
+            ),
+            ("explicit", "codex-thread"),
+        )
+
+    def test_thread_without_a_rollout_is_told_to_supply_its_task(self) -> None:
+        with self.assertRaisesRegex(queue.QueueError, "pass --task-id"):
+            queue._resolve_identity(self._arguments(thread_id="claude-thread"))
+
+    def test_missing_thread_identity_still_fails_closed(self) -> None:
+        with self.assertRaisesRegex(queue.QueueError, "thread identity is unavailable"):
+            queue._resolve_identity(self._arguments())
+
+
+class NonCodexProviderQueueTest(QueueTest):
+    """A Claude-shaped session records and closes without any Codex rollout."""
+
+    def test_claude_session_records_and_closes_a_pending_record(self) -> None:
+        action, record = self._upsert(
+            task_id="claude-turn-1",
+            thread_id="b603b555-4f81-423f-b1b0-08c045daabf9",
+            workstream="context-loader 0.1.7 manifest pin",
+        )
+
+        self.assertEqual(action, "created")
+        assert record is not None
+        self.assertEqual(record["queue_state"], "pending")
+        # Raw provider identity is pseudonymised, never stored.
+        serialized = json.dumps(record)
+        self.assertNotIn("claude-turn-1", serialized)
+        self.assertNotIn("b603b555-4f81-423f-b1b0-08c045daabf9", serialized)
+        self.assertEqual(queue.validate_queue(self.state), (1, 1))
+        self.assertIn("1", queue.summary(state_dir=self.state, repo=self.repo))
+
+        repeated_action, _ = self._upsert(
+            task_id="claude-turn-1",
+            thread_id="b603b555-4f81-423f-b1b0-08c045daabf9",
+            workstream="context-loader 0.1.7 manifest pin",
+        )
+
+        self.assertEqual(repeated_action, "unchanged")
 
 
 if __name__ == "__main__":

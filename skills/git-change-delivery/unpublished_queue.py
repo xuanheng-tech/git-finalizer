@@ -680,11 +680,16 @@ def _identity_refs(key: bytes, task_id: str, thread_id: str) -> tuple[str, str]:
     )
 
 
-def resolve_current_task_id(codex_home: Path, thread_id: str) -> str:
+def codex_rollouts(codex_home: Path, thread_id: str) -> list[Path]:
+    """Return the Codex rollout files that may record this thread, newest name last."""
     if RAW_ID_RE.fullmatch(thread_id) is None:
         raise QueueError("thread_id must be a bounded structured identifier")
     sessions = codex_home / "sessions"
-    candidates = sorted(sessions.rglob(f"*{thread_id}*.jsonl"))
+    return sorted(sessions.rglob(f"*{thread_id}*.jsonl"))
+
+
+def resolve_current_task_id(codex_home: Path, thread_id: str) -> str:
+    candidates = codex_rollouts(codex_home, thread_id)
     unmatched: list[str] = []
     for path in candidates:
         pending: dict[str, int] = {}
@@ -1249,13 +1254,29 @@ def _add_identity_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _resolve_identity(arguments: argparse.Namespace) -> tuple[str, str]:
-    thread_id = arguments.thread_id or os.environ.get("CODEX_THREAD_ID")
+    """Resolve one task/thread identity for any provider.
+
+    Explicit identity is the provider-neutral contract: a caller that already knows its
+    own task and thread passes them and no rollout is read. Deriving the task from Codex
+    rollout lifecycle is a Codex-only convenience, so a thread with no rollout is told to
+    supply the identity instead of failing on a Codex-internal condition.
+    """
+    thread_id = (
+        arguments.thread_id
+        or os.environ.get("AGENT_THREAD_ID")
+        or os.environ.get("CODEX_THREAD_ID")
+    )
     if not thread_id:
         raise QueueError("thread identity is unavailable; pass --thread-id")
-    task_id = arguments.task_id
-    if not task_id:
-        task_id = resolve_current_task_id(arguments.codex_home, thread_id)
-    return task_id, thread_id
+    task_id = arguments.task_id or os.environ.get("AGENT_TASK_ID")
+    if task_id:
+        return task_id, thread_id
+    if not codex_rollouts(arguments.codex_home, thread_id):
+        raise QueueError(
+            "no Codex rollout records this thread; pass --task-id (or set AGENT_TASK_ID) "
+            "to record a task from another provider"
+        )
+    return resolve_current_task_id(arguments.codex_home, thread_id), thread_id
 
 
 def build_parser() -> argparse.ArgumentParser:

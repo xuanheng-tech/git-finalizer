@@ -25,11 +25,19 @@ current-state record；写入在 advisory lock 内原子替换。单条（含换
 ## 身份、schema 与隐私
 
 `repo_ref`、`task_ref`、`thread_ref`、`record_id` 和 `path_ref` 使用 queue 私有 32-byte key
-计算 HMAC-SHA256 pseudonym。raw remote URL、task/thread ID 不落盘。task ID 未显式传入时，
-helper 只从 `CODEX_THREAD_ID` 对应的一个 root rollout 中读取结构化 lifecycle envelope，要求恰有
-一个 unmatched `task_started.turn_id`；`task_complete` 与带同一 turn ID 的 `turn_aborted`
-都是正式终态。helper 不读取或保存 message 正文，不修改 rollout；真正存在多个未结束 turn
-时仍 fail closed。
+计算 HMAC-SHA256 pseudonym。raw remote URL、task/thread ID 不落盘。
+
+identity 合同是 provider-neutral 的：显式 identity 永远优先。thread ID 取
+`--thread-id`、`AGENT_THREAD_ID`、`CODEX_THREAD_ID` 中第一个可用值；task ID 取
+`--task-id` 或 `AGENT_TASK_ID`。两者都提供时 helper 不读取任何 rollout，因此 Claude 或其他
+非 Codex provider 只要能给出自己的 task/thread identity 就能正常 record 与 finalize，不需要
+伪造 Codex 事件。
+
+只有在 task ID 未显式提供时，helper 才使用 Codex-only 的便利路径：从该 thread 对应的一个
+root rollout 中读取结构化 lifecycle envelope，要求恰有一个 unmatched `task_started.turn_id`；
+`task_complete` 与带同一 turn ID 的 `turn_aborted` 都是正式终态。helper 不读取或保存 message
+正文，不修改 rollout；真正存在多个未结束 turn 时仍 fail closed。该 thread 没有任何 rollout
+时，helper 报告需要显式 `--task-id`，而不是暴露 Codex 内部的 turn 计数条件。
 
 record schema 固定包含：
 
@@ -75,8 +83,8 @@ python3 -B /home/hsd/.agents/skills/git-change-delivery/unpublished_queue.py \
   --path relative/file
 ```
 
-测试、Workspace 或其他能直接提供 structured identity 的 caller 可显式传 `--task-id` 和
-`--thread-id`。同一 repo/task/workstream 的 `record_id` 稳定；相同 scope 重试为 no-op，scope
+测试、Workspace、Claude 会话或其他能直接提供 structured identity 的 caller 显式传
+`--task-id` 和 `--thread-id`（或对应的 `AGENT_TASK_ID`/`AGENT_THREAD_ID`）。同一 repo/task/workstream 的 `record_id` 稳定；相同 scope 重试为 no-op，scope
 扩大更新原 record。scope fingerprint 参与幂等判断，但不进入稳定 `record_id`，因此不会因扩大
 scope 静默新增 active record。
 
