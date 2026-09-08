@@ -217,6 +217,43 @@ class FixtureExceptionTests(unittest.TestCase):
         self.write_approval()
         self.assert_blocked_both()
 
+    def test_multiple_rules_need_independent_exact_approvals(self) -> None:
+        content = (
+            SYNTHETIC
+            + "AKIA"
+            + "ABCDEFGHIJKLMNOP\n"
+            + "secret"
+            + " = '"
+            + "SYNTHETIC_ASSIGNMENT_VALUE"
+            + "'\n"
+        )
+        (self.repo / self.path).write_text(content)
+        self.commit()
+        entry = dict(
+            self.approval["exceptions"][0],
+            blob_oid=self.git("rev-parse", "HEAD:" + self.path),
+            sha256=hashlib.sha256(content.encode()).hexdigest(),
+        )
+        self.approval["exceptions"].extend(
+            dict(entry, detector=rule)
+            for rule in ("private-key-header-v1", "known-token-v1")
+        )
+        self.write_approval()
+        self.assert_blocked_both()
+        self.approval["exceptions"].append(
+            dict(entry, detector="credential-assignment-v1")
+        )
+        self.write_approval()
+        receipts = None
+        for mode in MODES:
+            status, data = self.run_finalizer(mode)
+            self.assertEqual(status, 0, data)
+            self.assertEqual(len(data["fixture_exceptions"]), 4)
+            self.assertTrue(all(item["applied"] for item in data["fixture_exceptions"]))
+            if receipts is not None:
+                self.assertEqual(receipts, data["fixture_exceptions"])
+            receipts = data["fixture_exceptions"]
+
     def test_invalid_approvals_fail_closed_in_both_modes(self) -> None:
         original = copy.deepcopy(self.approval)
         changes = (

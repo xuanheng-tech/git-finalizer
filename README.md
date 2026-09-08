@@ -308,8 +308,11 @@ The JSON contract is `{"schema_version":1,"repository":{"root_commit":"<full roo
 Repository identity binds the single reachable root commit and selected push endpoint;
 each reviewed historical blob requires its own entry. The file must be a canonical
 absolute regular file, at most 64 KiB, with 1–16 entries. Paths must be exact canonical
-`tests/` paths, without glob syntax. Only the existing private-key header detector can
-be excepted; all other content detectors and all path, type, size and Git gates remain.
+`tests/` paths, without glob syntax. Supported rule IDs are `private-key-header-v1`,
+`known-token-v1` and `credential-assignment-v1`, corresponding to the existing private-key
+header, known token prefix and quoted credential assignment detectors. Each matched
+rule needs its own reviewed entry. Other rules (including SSH keys) and all path, type,
+size and Git gates remain active.
 Every historical blob at an explicitly excepted path must match a listed approval,
 even if a later mutation removes the detector signature.
 No fixture is approved automatically: the caller must review its origin and complete
