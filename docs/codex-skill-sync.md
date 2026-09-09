@@ -34,11 +34,21 @@ compatibility shim 的独立 SHA-256 由 ToolSkillManifest v2 绑定，并随 bu
 ./codex-skill-sync --install-root <isolated-root> rollback <tool>
 ./codex-skill-sync install <tool> --activate-production
 ./codex-skill-sync rollback <tool> --activate-production
+./codex-skill-sync upgrade <tool> [--dry-run]
 ```
 
 `status` 只读取 canonical source、PATH 中 stable entries 与 active Skill，输出 `none`、
 `binary_only`、`skill_only` 或 `incompatible`。`check` 对 schema、tool/version、entrypoints、Skill
-和 CLI hashes、install target 及 toolchain contract version fail closed，不静默修复。
+和 CLI hashes、install target 及 toolchain contract version fail closed，不静默修复；它同时校验
+canonical source contract 与已安装生产状态，`--source-only` 仅在无安装的构建环境跳过后者。
+
+`upgrade` 是 `python_console_scripts` 工具的唯一生产升级入口，用于消除手工 `uv tool install`
+造成的 CLI 中断与符号链接修复。它先读取现有 uv receipt，保留 `UV_TOOL_BIN_DIR`、index 列表和
+`no-build`，再以 `uv tool install --force` 安装 manifest 声明的版本——`--reinstall` 会先卸载再
+校验 entrypoint 冲突，可能让生产短暂没有可用 CLI，因此不使用。安装后校验全部 entrypoint、版本、
+receipt 的 bin 目录/index/no-build、符号链接目标，以及 site-packages 对已发布 wheel `RECORD` 的
+逐文件 SHA-256。任一校验失败即重新安装上一版本并 fail closed；保留的 legacy launcher 通过
+uv receipt 识别真正的 uv tool root，其目标不被改写。
 
 ## ToolReleaseBundle and activation
 

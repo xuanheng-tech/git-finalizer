@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
 import hashlib
 import json
 import os
@@ -19,7 +20,7 @@ import tomllib
 from typing import Any, Sequence
 
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 SCHEMA_VERSION = 1
 TOOL_SKILL_MANIFEST_SCHEMA_VERSION = 2
 SKILL_NAME = "git-change-delivery"
@@ -659,6 +660,250 @@ def check_tool_deployment(
     result["errors"] = errors
     result["status"] = "PASS" if source_status == "PASS" and drift == "none" else "FAIL"
     return result
+
+
+UV_EXECUTABLE = "uv"
+
+
+def read_uv_receipt(root: Path) -> dict[str, Any]:
+    receipt = root / "uv-receipt.toml"
+    require_regular(receipt, "uv tool receipt")
+    with receipt.open("rb") as stream:
+        return tomllib.load(stream)
+
+
+def python_tool_installation(
+    entrypoints: Sequence[str], bin_dir: Path | None
+) -> dict[str, Any]:
+    """Describe the uv tool installation that backs one tool's console scripts."""
+    resolved = {name: resolve_entry(name, bin_dir) for name in entrypoints}
+    missing = sorted(name for name, path in resolved.items() if path is None)
+    if missing:
+        raise SyncError(f"installed entrypoints are missing: {', '.join(missing)}")
+    # Retained legacy launchers deliberately live outside the uv tool directory and shim
+    # into it, so the uv root is the one directory that actually carries a uv receipt.
+    roots = set()
+    for path in resolved.values():
+        if path is None:
+            continue
+        for candidate in list(path.parents)[:3]:
+            if (candidate / "uv-receipt.toml").is_file():
+                roots.add(candidate)
+                break
+    if len(roots) != 1:
+        raise SyncError("installed entrypoints resolve to more than one uv tool root")
+    root = roots.pop()
+    require_owned_directory(root)
+    receipt = read_uv_receipt(root)
+    tool_section = receipt.get("tool", {})
+    options = tool_section.get("options", {})
+    install_paths = {
+        entry["name"]: Path(entry["install-path"])
+        for entry in tool_section.get("entrypoints", [])
+        if isinstance(entry, dict) and "name" in entry and "install-path" in entry
+    }
+    if not set(entrypoints) <= set(install_paths):
+        raise SyncError("uv receipt does not cover every declared entrypoint")
+    directories = {path.parent for path in install_paths.values()}
+    if len(directories) != 1:
+        raise SyncError("uv receipt entrypoints span more than one bin directory")
+    indexes = [
+        item["url"]
+        for item in options.get("index", [])
+        if isinstance(item, dict) and isinstance(item.get("url"), str)
+    ]
+    return {
+        "root": str(root),
+        "bin_dir": str(directories.pop()),
+        "indexes": indexes,
+        "no_build": bool(options.get("no-build", False)),
+        "entry_targets": {
+            name: str(path) for name, path in sorted(install_paths.items())
+        },
+        "resolved": {
+            name: str(path)
+            for name, path in sorted(resolved.items())
+            if path is not None
+        },
+    }
+
+
+def verify_installed_record(root: Path) -> dict[str, Any]:
+    """Verify installed runtime files against the published wheel RECORD."""
+    candidates = sorted(root.glob("lib/python*/site-packages"))
+    if len(candidates) != 1:
+        raise SyncError("uv tool installation has no single site-packages directory")
+    site_packages = candidates[0]
+    dist_infos = sorted(site_packages.glob("*.dist-info"))
+    if len(dist_infos) != 1:
+        raise SyncError("uv tool installation has no single dist-info directory")
+    dist_info = dist_infos[0]
+    record = dist_info / "RECORD"
+    require_regular(record, "installed RECORD")
+    verified = 0
+    for line in record.read_text(encoding="utf-8").splitlines():
+        if not line:
+            continue
+        name, _, remainder = line.partition(",")
+        digest, _, _size = remainder.partition(",")
+        # Console scripts live outside site-packages and RECORD lists itself without a hash.
+        if not digest.startswith("sha256=") or name.startswith("../"):
+            continue
+        target = site_packages / name
+        if not target.is_file():
+            raise SyncError(f"installed file is missing: {name}")
+        expected = digest.split("=", 1)[1]
+        actual = (
+            base64.urlsafe_b64encode(hashlib.sha256(target.read_bytes()).digest())
+            .rstrip(b"=")
+            .decode()
+        )
+        if actual != expected:
+            raise SyncError(
+                f"installed file does not match the published artifact: {name}"
+            )
+        verified += 1
+    if not verified:
+        raise SyncError("installed RECORD verified no files")
+    return {"dist_info": dist_info.name, "verified_files": verified}
+
+
+def install_python_tool(
+    tool: str,
+    version: str,
+    *,
+    bin_dir: str,
+    indexes: Sequence[str],
+    no_build: bool,
+) -> None:
+    """Install one pinned uv tool release, preserving the recorded installation shape.
+
+    ``--force`` is required: ``--reinstall`` removes the existing installation before it
+    validates entrypoint conflicts, which can leave production with no working CLI.
+    """
+    argv = [UV_EXECUTABLE, "tool", "install", "--force"]
+    if no_build:
+        argv.append("--no-build")
+    for index in indexes:
+        argv.extend(("--index", index))
+    argv.append(f"{tool}=={version}")
+    environment = dict(os.environ, UV_TOOL_BIN_DIR=bin_dir)
+    result = subprocess.run(
+        argv, capture_output=True, text=True, check=False, env=environment
+    )
+    if result.returncode:
+        raise SyncError(
+            f"uv tool install failed for {tool}=={version} "
+            f"(exit {result.returncode}): {result.stderr.strip()[:200]}"
+        )
+
+
+def verify_python_tool(
+    tool: str,
+    version: str,
+    entrypoints: Sequence[str],
+    bin_dir: Path | None,
+    expected: dict[str, Any],
+) -> dict[str, Any]:
+    """Fail closed unless every entrypoint, hash and receipt field matches the release."""
+    binary = installed_binary_state(entrypoints, bin_dir)
+    if binary["version"] != version:
+        raise SyncError(
+            f"installed {tool} reports {binary['version']}, expected {version}"
+        )
+    installation = python_tool_installation(entrypoints, bin_dir)
+    if installation["bin_dir"] != expected["bin_dir"]:
+        raise SyncError("upgrade changed the entrypoint bin directory")
+    if installation["no_build"] != expected["no_build"]:
+        raise SyncError("upgrade changed the receipt no-build setting")
+    if not set(expected["indexes"]) <= set(installation["indexes"]):
+        raise SyncError("upgrade dropped a recorded package index")
+    if installation["entry_targets"] != expected["entry_targets"]:
+        raise SyncError("upgrade changed an entrypoint install path")
+    if installation["resolved"] != expected["resolved"]:
+        raise SyncError("upgrade changed a resolved entrypoint target")
+    record = verify_installed_record(Path(installation["root"]))
+    return {
+        "version": binary["version"],
+        "binary_sha256": binary["sha256"],
+        "entries": binary["entries"],
+        "installation": installation,
+        "record": record,
+    }
+
+
+def upgrade(
+    sources: Sources,
+    tool: str,
+    *,
+    bin_dir: Path | None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Upgrade one console-script tool to its canonical release, or restore the old one."""
+    manifest = read_json(sources.manifest_path(tool))
+    entrypoints = validate_install_targets(manifest)
+    if manifest["executable"]["kind"] != "python_console_scripts":
+        raise SyncError(f"{tool} is not installed as Python console scripts")
+    target_version = str(manifest["tool_version"])
+    before = python_tool_installation(entrypoints, bin_dir)
+    previous_version = installed_binary_state(entrypoints, bin_dir)["version"]
+    plan = {
+        "schema_version": SCHEMA_VERSION,
+        "operation": "upgrade",
+        "tool": tool,
+        "previous_version": previous_version,
+        "target_version": target_version,
+        "bin_dir": before["bin_dir"],
+        "indexes": before["indexes"],
+        "no_build": before["no_build"],
+    }
+    if previous_version == target_version:
+        plan["status"] = "UNCHANGED"
+        plan["verification"] = verify_python_tool(
+            tool, target_version, entrypoints, bin_dir, before
+        )
+        return plan
+    if dry_run:
+        plan["status"] = "DRY_RUN"
+        return plan
+    try:
+        install_python_tool(
+            tool,
+            target_version,
+            bin_dir=before["bin_dir"],
+            indexes=before["indexes"],
+            no_build=before["no_build"],
+        )
+        plan["verification"] = verify_python_tool(
+            tool, target_version, entrypoints, bin_dir, before
+        )
+    except (SyncError, OSError, subprocess.SubprocessError) as exc:
+        plan["status"] = "RESTORED"
+        plan["error"] = str(exc)
+        if previous_version is None:
+            plan["status"] = "FAILED"
+            raise SyncError(f"{exc}; no previous version recorded to restore") from None
+        try:
+            install_python_tool(
+                tool,
+                previous_version,
+                bin_dir=before["bin_dir"],
+                indexes=before["indexes"],
+                no_build=before["no_build"],
+            )
+            plan["restored_verification"] = verify_python_tool(
+                tool, previous_version, entrypoints, bin_dir, before
+            )
+        except (SyncError, OSError, subprocess.SubprocessError) as restore_error:
+            plan["status"] = "FAILED"
+            raise SyncError(
+                f"{exc}; restoring {previous_version} also failed: {restore_error}"
+            ) from None
+        raise SyncError(
+            f"upgrade failed and {previous_version} was restored: {exc}"
+        ) from None
+    plan["status"] = "UPGRADED"
+    return plan
 
 
 def installed_skill_hashes(agents_root: Path) -> tuple[str | None, str | None]:
@@ -1672,6 +1917,9 @@ def parser() -> argparse.ArgumentParser:
     install_parser.add_argument("tool")
     install_parser.add_argument("--allow-dirty-source", action="store_true")
     install_parser.add_argument("--activate-production", action="store_true")
+    upgrade_parser = subcommands.add_parser("upgrade")
+    upgrade_parser.add_argument("tool")
+    upgrade_parser.add_argument("--dry-run", action="store_true")
     rollback_parser = subcommands.add_parser("rollback")
     rollback_parser.add_argument("tool")
     rollback_parser.add_argument("--activate-production", action="store_true")
@@ -1700,6 +1948,15 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 )
                 print(canonical_json(output).decode(), end="")
                 return 0 if output["status"] == "PASS" else 1
+            if args.command == "upgrade":
+                output = upgrade(
+                    sources,
+                    args.tool,
+                    bin_dir=args.bin_dir,
+                    dry_run=args.dry_run,
+                )
+                print(canonical_json(output).decode(), end="")
+                return 0
             if args.command == "install":
                 output = install(
                     sources,

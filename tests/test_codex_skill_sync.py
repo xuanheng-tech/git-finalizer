@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 from pathlib import Path
 import shutil
 import subprocess
@@ -420,6 +422,149 @@ class SkillSyncTests(unittest.TestCase):
             sync.check_tool(self.sources, "snapshot-runner")["status"], "PASS"
         )
         self.assertEqual(self._deployment()["status"], "FAIL")
+
+    # --- safe production upgrade path -------------------------------------------------
+
+    def _uv_tool_layout(self, version: str) -> Path:
+        """Build a uv-tool-shaped installation for snapshot-runner in the fixture."""
+        root = self.root / "uvtools" / "snapshot-runner"
+        site = root / "lib" / "python3.12" / "site-packages"
+        package = site / "codex_snapshot_runner"
+        package.mkdir(parents=True, exist_ok=True)
+        module = package / "__init__.py"
+        module.write_text(f'__version__ = "{version}"\n', encoding="utf-8")
+        dist_info = site / f"snapshot_runner-{version}.dist-info"
+        if dist_info.exists():
+            shutil.rmtree(dist_info)
+        dist_info.mkdir(parents=True)
+        digest = base64.urlsafe_b64encode(
+            hashlib.sha256(module.read_bytes()).digest()
+        ).rstrip(b"=").decode()
+        (dist_info / "RECORD").write_text(
+            f"codex_snapshot_runner/__init__.py,sha256={digest},{module.stat().st_size}\n"
+            f"../../../bin/snapshot-runner,sha256=ignored,1\n"
+            f"snapshot_runner-{version}.dist-info/RECORD,,\n",
+            encoding="utf-8",
+        )
+        for stale in site.glob("snapshot_runner-*.dist-info"):
+            if stale != dist_info:
+                shutil.rmtree(stale)
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        entrypoints = TOOLS["snapshot-runner"][1]
+        entries = ",\n".join(
+            f'    {{ name = "{name}", install-path = "{self.bin_dir / name}", '
+            f'from = "snapshot-runner" }}'
+            for name in entrypoints
+        )
+        (root / "uv-receipt.toml").write_text(
+            "[tool]\n"
+            f'requirements = [{{ name = "snapshot-runner", specifier = "=={version}" }}]\n'
+            f"entrypoints = [\n{entries},\n]\n"
+            "\n[tool.options]\n"
+            'index = [{ url = "https://pypi.org/simple" }]\n'
+            "no-build = true\n",
+            encoding="utf-8",
+        )
+        for name in entrypoints:
+            target = bin_dir / name
+            target.write_text(
+                f"#!/usr/bin/env sh\nprintf '%s {version}\\n' '{name}'\n", encoding="utf-8"
+            )
+            target.chmod(0o755)
+            link = self.bin_dir / name
+            if link.exists() or link.is_symlink():
+                link.unlink()
+            link.symlink_to(target)
+        return root
+
+    def _upgrade(self, **kwargs):
+        return sync.upgrade(self.sources, "snapshot-runner", bin_dir=self.bin_dir, **kwargs)
+
+    def test_upgrade_is_unchanged_and_verified_when_already_current(self) -> None:
+        self._uv_tool_layout("1.4.0")
+        report = self._upgrade()
+        self.assertEqual(report["status"], "UNCHANGED")
+        self.assertEqual(report["target_version"], "1.4.0")
+        self.assertEqual(report["no_build"], True)
+        self.assertEqual(report["bin_dir"], str(self.bin_dir))
+        self.assertEqual(report["verification"]["record"]["verified_files"], 1)
+        self.assertEqual(
+            sorted(report["verification"]["entries"]), sorted(TOOLS["snapshot-runner"][1])
+        )
+
+    def test_upgrade_preserves_bin_dir_index_and_no_build(self) -> None:
+        self._uv_tool_layout("1.3.0")
+        captured: dict[str, object] = {}
+
+        def fake_install(tool, version, *, bin_dir, indexes, no_build):
+            captured.update(
+                tool=tool, version=version, bin_dir=bin_dir, indexes=indexes, no_build=no_build
+            )
+            self._uv_tool_layout(version)
+
+        with mock.patch.object(sync, "install_python_tool", fake_install):
+            report = self._upgrade()
+        self.assertEqual(report["status"], "UPGRADED")
+        self.assertEqual(captured["version"], "1.4.0")
+        self.assertEqual(captured["bin_dir"], str(self.bin_dir))
+        self.assertEqual(captured["no_build"], True)
+        self.assertEqual(captured["indexes"], ["https://pypi.org/simple"])
+        self.assertEqual(report["verification"]["version"], "1.4.0")
+
+    def test_failed_upgrade_restores_the_previous_working_installation(self) -> None:
+        """An alias conflict or any install failure must not strand the CLIs."""
+        self._uv_tool_layout("1.3.0")
+        attempts: list[str] = []
+
+        def fake_install(tool, version, *, bin_dir, indexes, no_build):
+            attempts.append(version)
+            if version == "1.4.0":
+                raise sync.SyncError(
+                    "uv tool install failed: Executables already exist: codex-diff-audit"
+                )
+            self._uv_tool_layout(version)
+
+        with mock.patch.object(sync, "install_python_tool", fake_install):
+            with self.assertRaises(sync.SyncError) as error:
+                self._upgrade()
+        self.assertIn("restored", str(error.exception))
+        self.assertEqual(attempts, ["1.4.0", "1.3.0"])
+        # The previous release is installed and every entrypoint still works.
+        state = sync.installed_binary_state(TOOLS["snapshot-runner"][1], self.bin_dir)
+        self.assertEqual(state["version"], "1.3.0")
+        self.assertEqual(len(state["entries"]), 5)
+
+    def test_upgrade_fails_closed_when_verification_rejects_the_result(self) -> None:
+        self._uv_tool_layout("1.3.0")
+
+        def fake_install(tool, version, *, bin_dir, indexes, no_build):
+            # Simulate an install that silently produced the wrong version.
+            self._uv_tool_layout("9.9.9" if version == "1.4.0" else version)
+
+        with mock.patch.object(sync, "install_python_tool", fake_install):
+            with self.assertRaises(sync.SyncError):
+                self._upgrade()
+        state = sync.installed_binary_state(TOOLS["snapshot-runner"][1], self.bin_dir)
+        self.assertEqual(state["version"], "1.3.0")
+
+    def test_upgrade_detects_runtime_files_that_do_not_match_the_artifact(self) -> None:
+        root = self._uv_tool_layout("1.4.0")
+        module = root / "lib" / "python3.12" / "site-packages" / "codex_snapshot_runner"
+        (module / "__init__.py").write_text("__version__ = 'tampered'\n", encoding="utf-8")
+        with self.assertRaises(sync.SyncError) as error:
+            self._upgrade()
+        self.assertIn("does not match the published artifact", str(error.exception))
+
+    def test_upgrade_dry_run_does_not_install(self) -> None:
+        self._uv_tool_layout("1.3.0")
+        with mock.patch.object(
+            sync, "install_python_tool", side_effect=AssertionError("must not install")
+        ):
+            report = self._upgrade(dry_run=True)
+        self.assertEqual(report["status"], "DRY_RUN")
+        self.assertEqual(report["previous_version"], "1.3.0")
+        self.assertEqual(report["target_version"], "1.4.0")
 
     def test_check_and_status_report_matching_pair(self) -> None:
         for tool in TOOLS:

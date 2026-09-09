@@ -21,6 +21,12 @@ section is invented for it.
   release source, and own its `ToolSkillManifest` at
   `manifests/snapshot-runner/tool_skill_manifest.json` covering the primary
   `snapshot-runner` entrypoint alongside the four retained `codex-*` aliases.
+- Update `codex-skill-sync` to 1.3.0 with `upgrade <tool>`, the safe production upgrade
+  path for `python_console_scripts` tools. It preserves the recorded `UV_TOOL_BIN_DIR`,
+  index list and `no-build`, installs with `uv tool install --force` so entrypoint
+  conflicts cannot strand production without a CLI, verifies every entrypoint, version,
+  receipt field, symlink target and the installed files against the published wheel
+  `RECORD`, and reinstalls the previous release if any step fails.
 
 ## 0.9.3 - 2026-09-07
 
