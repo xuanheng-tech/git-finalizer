@@ -27,6 +27,10 @@ section is invented for it.
   conflicts cannot strand production without a CLI, verifies every entrypoint, version,
   receipt field, symlink target and the installed files against the published wheel
   `RECORD`, and reinstalls the previous release if any step fails.
+- Point the Snapshot Runner canonical source directory at `snapshot-runner` after the
+  public tree was consolidated into that path. The former private Snapshot Runner
+  repository is preserved as a read-only archive and is no longer an active source; the
+  private `ToolSkillManifest` continues to live here.
 
 ## 0.9.3 - 2026-09-07
 
