@@ -1,0 +1,39 @@
+{
+  "canonical_skill": {
+    "owner": "git-finalizer",
+    "path": "skills/git-change-delivery/SKILL.md"
+  },
+  "canonical_skill_sha256": "11c6c40b96339ea951dc0c34d55f47dba40b23dc7e7b85a482b83e7c9d993643",
+  "compatibility_skill": {
+    "name": "three-tool-git-workflow",
+    "path": "skills/three-tool-git-workflow/SKILL.md",
+    "sha256": "68503da0ffb2e94e487afc8bbc8320390da9bdf7a8e6e7e902f6f6ab426dd8cd"
+  },
+  "compatible_toolchain_contract_version": 3,
+  "executable": {
+    "entrypoints": [
+      "codex-branch-review",
+      "codex-diff-audit",
+      "codex-repo-status",
+      "codex-test-triage",
+      "snapshot-runner"
+    ],
+    "kind": "python_console_scripts"
+  },
+  "install_targets": {
+    "skill_directory": "git-change-delivery",
+    "stable_entries": [
+      "codex-branch-review",
+      "codex-diff-audit",
+      "codex-repo-status",
+      "codex-test-triage",
+      "snapshot-runner"
+    ]
+  },
+  "public_cli_contract_sha256": "e1034a3e78661b17fee10a6b2cfb875ec5593df9862b6a7967f88608c8087c85",
+  "schema_version": 2,
+  "skill_contract_version": 1,
+  "tool_commit": "@release",
+  "tool_name": "snapshot-runner",
+  "tool_version": "1.6.0"
+}

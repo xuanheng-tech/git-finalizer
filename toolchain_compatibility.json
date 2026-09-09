@@ -19,7 +19,8 @@
     "snapshot-runner": {
       "public_cli_contract_version": 1,
       "skill_contract_version": 1,
-      "source_directory": "snapshot-runner"
+      "skill_manifest": "manifests/snapshot-runner/tool_skill_manifest.json",
+      "source_directory": "snapshot-runner-public"
     }
   },
   "workflow_skill": {

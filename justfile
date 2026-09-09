@@ -7,12 +7,12 @@ check:
     python3 -B -m unittest discover -s hooks -p 'test_*.py'
     python3 -B skills/git-change-delivery/quick_validate.py skills/git-change-delivery
     python3 -B -m unittest discover -s skills/git-change-delivery -p 'test_*.py'
-    ./codex-skill-sync check git-finalizer
+    ./codex-skill-sync check --source-only git-finalizer
 
 toolchain-check source_root="..":
-    ./codex-skill-sync --source-root "{{source_root}}" check context-loader
-    ./codex-skill-sync --source-root "{{source_root}}" check snapshot-runner
-    ./codex-skill-sync --source-root "{{source_root}}" check git-finalizer
+    ./codex-skill-sync --source-root "{{source_root}}" check --source-only context-loader
+    ./codex-skill-sync --source-root "{{source_root}}" check --source-only snapshot-runner
+    ./codex-skill-sync --source-root "{{source_root}}" check --source-only git-finalizer
 
 shellcheck:
     shellcheck --exclude=SC2016 -- codex-git-finalize codex-skill-sync tests/*.sh

@@ -19,7 +19,7 @@ import tomllib
 from typing import Any, Sequence
 
 
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 SCHEMA_VERSION = 1
 TOOL_SKILL_MANIFEST_SCHEMA_VERSION = 2
 SKILL_NAME = "git-change-delivery"
@@ -480,9 +480,7 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
         skill_sha = tree_sha256(sources.skill_root, SKILL_PAYLOAD)
         if manifest.get("canonical_skill_sha256") != skill_sha:
             raise SyncError("canonical Skill payload SHA mismatch")
-        compatibility_sha = sha256_file(
-            sources.compatibility_skill_root / "SKILL.md"
-        )
+        compatibility_sha = sha256_file(sources.compatibility_skill_root / "SKILL.md")
         if manifest["compatibility_skill"]["sha256"] != compatibility_sha:
             raise SyncError("compatibility Skill SHA mismatch")
         compatibility_version = sources.compatibility.get("toolchain_contract_version")
@@ -611,25 +609,106 @@ def installed_binary_state(
     }
 
 
+def check_tool_deployment(
+    sources: Sources,
+    tool: str,
+    agents_root: Path,
+    bin_dir: Path | None,
+) -> dict[str, Any]:
+    """Validate the source contract and the installed production state together.
+
+    ``source_contract_status`` keeps the original meaning: the canonical source repo is
+    internally consistent. ``installed_drift`` reports whether the executables actually on
+    PATH match the declared canonical release. ``status`` is PASS only when both hold, so
+    a stale or mismatched installation can no longer be reported as clean.
+    """
+    checked = check_tool(sources, tool)
+    source_status = str(checked["status"])
+    installed_skill_sha, installed_compatibility_sha = installed_skill_hashes(
+        agents_root
+    )
+    errors = list(checked["errors"])
+    binary: dict[str, Any] = {"version": None, "sha256": None, "entries": {}}
+    drift = "unknown"
+    try:
+        manifest = read_json(sources.manifest_path(tool))
+        entrypoints = validate_install_targets(manifest)
+        binary = installed_binary_state(entrypoints, bin_dir)
+        drift = classify_drift(
+            manifest,
+            source_status=source_status,
+            binary_version=binary["version"],
+            installed_skill_sha=installed_skill_sha,
+            installed_compatibility_sha=installed_compatibility_sha,
+        )
+        if drift != "none":
+            errors.append(
+                f"installed production state drifts from the canonical release: {drift}"
+            )
+    except SyncError as exc:
+        errors.append(str(exc))
+
+    result = dict(checked)
+    result["source_contract_status"] = source_status
+    result["installed_binary_version"] = binary["version"]
+    result["installed_binary_sha256"] = binary["sha256"]
+    result["installed_binaries"] = binary["entries"]
+    result["installed_skill_sha256"] = installed_skill_sha
+    result["installed_compatibility_skill_sha256"] = installed_compatibility_sha
+    result["installed_drift"] = drift
+    result["errors"] = errors
+    result["status"] = "PASS" if source_status == "PASS" and drift == "none" else "FAIL"
+    return result
+
+
+def installed_skill_hashes(agents_root: Path) -> tuple[str | None, str | None]:
+    """Return the installed canonical and compatibility Skill payload hashes."""
+    try:
+        skill_sha = tree_sha256(agents_root / "skills" / SKILL_NAME, SKILL_PAYLOAD)
+    except SyncError:
+        skill_sha = None
+    compatibility = agents_root / "skills" / COMPATIBILITY_SKILL_NAME / "SKILL.md"
+    try:
+        require_regular(compatibility, "installed compatibility Skill")
+        compatibility_sha = sha256_file(compatibility)
+    except SyncError:
+        compatibility_sha = None
+    return skill_sha, compatibility_sha
+
+
+def classify_drift(
+    manifest: dict[str, Any],
+    *,
+    source_status: str,
+    binary_version: str | None,
+    installed_skill_sha: str | None,
+    installed_compatibility_sha: str | None,
+) -> str:
+    """Classify installed production state against the declared canonical release."""
+    binary_matches = binary_version == manifest.get("tool_version")
+    skill_matches = installed_skill_sha == manifest.get(
+        "canonical_skill_sha256"
+    ) and installed_compatibility_sha == manifest.get("compatibility_skill", {}).get(
+        "sha256"
+    )
+    if source_status != "PASS" or (not binary_matches and not skill_matches):
+        return "incompatible"
+    if binary_matches and skill_matches:
+        return "none"
+    if binary_matches:
+        return "skill_only"
+    return "binary_only"
+
+
 def status(sources: Sources, agents_root: Path, bin_dir: Path | None) -> dict[str, Any]:
     result: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "operation": "status",
         "tools": [],
     }
-    installed_skill_root = agents_root / "skills" / SKILL_NAME
-    try:
-        installed_skill_sha = tree_sha256(installed_skill_root, SKILL_PAYLOAD)
-    except SyncError:
-        installed_skill_sha = None
-    installed_compatibility = (
-        agents_root / "skills" / COMPATIBILITY_SKILL_NAME / "SKILL.md"
+    installed_skill_sha, installed_compatibility_sha = installed_skill_hashes(
+        agents_root
     )
-    try:
-        require_regular(installed_compatibility, "installed compatibility Skill")
-        installed_compatibility_sha = sha256_file(installed_compatibility)
-    except SyncError:
-        installed_compatibility_sha = None
 
     for tool in sources.names():
         checked = check_tool(sources, tool)
@@ -658,20 +737,13 @@ def status(sources: Sources, agents_root: Path, bin_dir: Path | None) -> dict[st
             )
             continue
         binary = installed_binary_state(entrypoints, bin_dir)
-        binary_matches = binary["version"] == manifest.get("tool_version")
-        skill_matches = (
-            installed_skill_sha == manifest.get("canonical_skill_sha256")
-            and installed_compatibility_sha
-            == manifest.get("compatibility_skill", {}).get("sha256")
+        drift = classify_drift(
+            manifest,
+            source_status=str(checked["status"]),
+            binary_version=binary["version"],
+            installed_skill_sha=installed_skill_sha,
+            installed_compatibility_sha=installed_compatibility_sha,
         )
-        if checked["status"] != "PASS" or (not binary_matches and not skill_matches):
-            drift = "incompatible"
-        elif binary_matches and skill_matches:
-            drift = "none"
-        elif binary_matches:
-            drift = "skill_only"
-        else:
-            drift = "binary_only"
         result["tools"].append(
             {
                 "tool_name": tool,
@@ -816,10 +888,7 @@ def verify_bundle(bundle: Path, expected_tool: str | None = None) -> dict[str, A
     if manifest_schema == TOOL_SKILL_MANIFEST_SCHEMA_VERSION:
         compatibility_path = bundle / COMPATIBILITY_BUNDLE_PATH
         require_regular(compatibility_path, "bundled compatibility Skill")
-        if (
-            sha256_file(compatibility_path)
-            != manifest["compatibility_skill"]["sha256"]
-        ):
+        if sha256_file(compatibility_path) != manifest["compatibility_skill"]["sha256"]:
             raise SyncError(
                 "bundle compatibility Skill does not match ToolSkillManifest"
             )
@@ -864,11 +933,9 @@ def smoke_bundle(bundle: Path) -> None:
     sync_entry = bundle / "executable" / "codex-skill-sync"
     if sync_entry.exists():
         result = run((str(sync_entry), "--version"))
-        if (
-            result.returncode != 0
-            or extract_version(result.stdout + result.stderr)
-            != bundled_sync_version(bundle)
-        ):
+        if result.returncode != 0 or extract_version(
+            result.stdout + result.stderr
+        ) != bundled_sync_version(bundle):
             raise SyncError("bundled codex-skill-sync --version smoke failed")
 
 
@@ -1022,10 +1089,7 @@ def verify_production_bundle(
             agents_root / "skills" / COMPATIBILITY_SKILL_NAME / "SKILL.md"
         )
         require_owned_regular(compatibility_path, "active compatibility Skill")
-        if (
-            sha256_file(compatibility_path)
-            != manifest["compatibility_skill"]["sha256"]
-        ):
+        if sha256_file(compatibility_path) != manifest["compatibility_skill"]["sha256"]:
             raise SyncError("active compatibility Skill SHA does not match bundle")
 
     entrypoints = validate_install_targets(manifest, allow_legacy=True)
@@ -1045,11 +1109,9 @@ def verify_production_bundle(
         )
         if sync_entry is not None:
             result = run((str(sync_entry), "--version"))
-            if (
-                result.returncode != 0
-                or extract_version(result.stdout + result.stderr)
-                != bundled_sync_version(bundle)
-            ):
+            if result.returncode != 0 or extract_version(
+                result.stdout + result.stderr
+            ) != bundled_sync_version(bundle):
                 raise SyncError("active codex-skill-sync smoke failed")
     return {
         "binary_version": binary["version"],
@@ -1598,6 +1660,14 @@ def parser() -> argparse.ArgumentParser:
     subcommands.add_parser("status")
     check_parser = subcommands.add_parser("check")
     check_parser.add_argument("tool")
+    check_parser.add_argument(
+        "--source-only",
+        action="store_true",
+        help=(
+            "validate only the canonical source contract and skip installed-production "
+            "drift detection (for build environments with no installation)"
+        ),
+    )
     install_parser = subcommands.add_parser("install")
     install_parser.add_argument("tool")
     install_parser.add_argument("--allow-dirty-source", action="store_true")
@@ -1618,7 +1688,16 @@ def main(arguments: Sequence[str] | None = None) -> int:
             if args.tool not in sources.names():
                 raise SyncError(f"unknown tool: {args.tool}")
             if args.command == "check":
-                output = check_tool(sources, args.tool)
+                output = (
+                    check_tool(sources, args.tool)
+                    if args.source_only
+                    else check_tool_deployment(
+                        sources,
+                        args.tool,
+                        args.agents_root.resolve(),
+                        args.bin_dir,
+                    )
+                )
                 print(canonical_json(output).decode(), end="")
                 return 0 if output["status"] == "PASS" else 1
             if args.command == "install":

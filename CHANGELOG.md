@@ -13,6 +13,15 @@ section is invented for it.
 
 ## Unreleased
 
+- Update `codex-skill-sync` to 1.2.0. `check <tool>` now validates the installed
+  production state as well as the canonical source contract, so a stale or mismatched
+  installation can no longer report a clean PASS; `--source-only` keeps the previous
+  source-contract-only behavior for build environments with no installation.
+- Make the public `snapshot-runner` repository the canonical Snapshot Runner runtime and
+  release source, and own its `ToolSkillManifest` at
+  `manifests/snapshot-runner/tool_skill_manifest.json` covering the primary
+  `snapshot-runner` entrypoint alongside the four retained `codex-*` aliases.
+
 ## 0.9.3 - 2026-09-07
 
 - Validate each unpublished commit and first-parent merge changes when resuming publication,

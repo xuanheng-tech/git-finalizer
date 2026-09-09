@@ -19,6 +19,7 @@ TOOLS = {
             "codex-diff-audit",
             "codex-branch-review",
             "codex-test-triage",
+            "snapshot-runner",
         ),
     ),
     "git-finalizer": ("0.9.3", ("codex-git-finalize",)),
@@ -336,6 +337,89 @@ class SkillSyncTests(unittest.TestCase):
             bin_dir=self.bin_dir,
             hooks_dir=self.hooks_dir,
         )
+
+    def _deployment(self, tool: str = "snapshot-runner") -> dict[str, object]:
+        return sync.check_tool_deployment(
+            self.sources, tool, self.agents_root, self.bin_dir
+        )
+
+    def _rewrite_entry(self, entrypoint: str, version: str) -> None:
+        path = self.bin_dir / entrypoint
+        path.write_text(
+            f"#!/usr/bin/env sh\nprintf '%s {version}\\n' '{entrypoint}'\n",
+            encoding="utf-8",
+        )
+        path.chmod(0o755)
+
+    def test_check_deployment_passes_when_installation_matches(self) -> None:
+        report = self._deployment()
+        self.assertEqual(report["status"], "PASS")
+        self.assertEqual(report["source_contract_status"], "PASS")
+        self.assertEqual(report["installed_drift"], "none")
+        self.assertEqual(report["installed_binary_version"], "1.4.0")
+        self.assertEqual(report["errors"], [])
+        self.assertEqual(
+            sorted(report["installed_binaries"]),
+            [
+                "codex-branch-review",
+                "codex-diff-audit",
+                "codex-repo-status",
+                "codex-test-triage",
+                "snapshot-runner",
+            ],
+        )
+
+    def test_check_deployment_fails_on_binary_only_drift(self) -> None:
+        for entrypoint in TOOLS["snapshot-runner"][1]:
+            self._rewrite_entry(entrypoint, "9.9.9")
+        report = self._deployment()
+        self.assertEqual(report["status"], "FAIL")
+        # The source contract is still internally valid; only production drifted.
+        self.assertEqual(report["source_contract_status"], "PASS")
+        self.assertEqual(report["installed_drift"], "binary_only")
+        self.assertEqual(report["installed_binary_version"], "9.9.9")
+        self.assertTrue(any("binary_only" in error for error in report["errors"]))
+
+    def test_check_deployment_detects_missing_primary_entrypoint(self) -> None:
+        (self.bin_dir / "snapshot-runner").unlink()
+        report = self._deployment()
+        self.assertEqual(report["status"], "FAIL")
+        # An unresolvable installation reports no version at all.
+        self.assertIsNone(report["installed_binary_version"])
+        self.assertEqual(report["installed_drift"], "binary_only")
+        self.assertIsNone(report["installed_binaries"]["snapshot-runner"]["path"])
+
+    def test_check_deployment_detects_inconsistent_primary_entrypoint(self) -> None:
+        self._rewrite_entry("snapshot-runner", "9.9.9")
+        report = self._deployment()
+        self.assertEqual(report["status"], "FAIL")
+        # A primary command disagreeing with its aliases must not resolve to a version.
+        self.assertIsNone(report["installed_binary_version"])
+        self.assertEqual(report["installed_drift"], "binary_only")
+        self.assertEqual(
+            report["installed_binaries"]["snapshot-runner"]["version"], "9.9.9"
+        )
+
+    def test_check_deployment_fails_when_manifest_omits_primary_entrypoint(self) -> None:
+        path = self.sources_root / "snapshot-runner" / "tool_skill_manifest.json"
+        manifest = sync.read_json(path)
+        entrypoints = [
+            name for name in manifest["executable"]["entrypoints"] if name != "snapshot-runner"
+        ]
+        manifest["executable"]["entrypoints"] = entrypoints
+        manifest["install_targets"]["stable_entries"] = entrypoints
+        write_json(path, manifest)
+        report = self._deployment()
+        self.assertEqual(report["status"], "FAIL")
+        self.assertEqual(report["source_contract_status"], "FAIL")
+
+    def test_source_only_check_ignores_installed_drift(self) -> None:
+        for entrypoint in TOOLS["snapshot-runner"][1]:
+            self._rewrite_entry(entrypoint, "9.9.9")
+        self.assertEqual(
+            sync.check_tool(self.sources, "snapshot-runner")["status"], "PASS"
+        )
+        self.assertEqual(self._deployment()["status"], "FAIL")
 
     def test_check_and_status_report_matching_pair(self) -> None:
         for tool in TOOLS:
