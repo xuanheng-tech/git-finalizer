@@ -20,7 +20,14 @@
       "public_cli_contract_version": 2,
       "skill_contract_version": 1,
       "skill_manifest": "manifests/snapshot-runner/tool_skill_manifest.json",
-      "source_directory": "snapshot-runner"
+      "source_directory": "snapshot-runner",
+      "uv_install_policy": {
+        "bin_dir": "~/.local/share/snapshot-runner/bin",
+        "index": [
+          "https://pypi.org/simple"
+        ],
+        "no_build": true
+      }
     }
   },
   "workflow_skill": {

@@ -407,7 +407,10 @@ class SkillSyncTests(unittest.TestCase):
     # --- safe production upgrade path -------------------------------------------------
 
     def _uv_tool_layout(
-        self, version: str, entrypoints: tuple[str, ...] | None = None
+        self,
+        version: str,
+        entrypoints: tuple[str, ...] | None = None,
+        bin_dir: Path | None = None,
     ) -> Path:
         """Build a uv-tool-shaped installation for snapshot-runner in the fixture."""
         root = self.root / "uvtools" / "snapshot-runner"
@@ -434,11 +437,12 @@ class SkillSyncTests(unittest.TestCase):
         for stale in site.glob("snapshot_runner-*.dist-info"):
             if stale != dist_info:
                 shutil.rmtree(stale)
-        bin_dir = root / "bin"
-        bin_dir.mkdir(exist_ok=True)
+        venv_bin = root / "bin"
+        venv_bin.mkdir(exist_ok=True)
         entrypoints = entrypoints or TOOLS["snapshot-runner"][1]
+        install_dir = bin_dir or self.bin_dir
         entries = ",\n".join(
-            f'    {{ name = "{name}", install-path = "{self.bin_dir / name}", '
+            f'    {{ name = "{name}", install-path = "{install_dir / name}", '
             f'from = "snapshot-runner" }}'
             for name in entrypoints
         )
@@ -452,13 +456,13 @@ class SkillSyncTests(unittest.TestCase):
             encoding="utf-8",
         )
         for name in entrypoints:
-            target = bin_dir / name
+            target = venv_bin / name
             target.write_text(
                 f"#!/usr/bin/env sh\nprintf '%s {version}\\n' '{name}'\n",
                 encoding="utf-8",
             )
             target.chmod(0o755)
-            link = self.bin_dir / name
+            link = install_dir / name
             if link.exists() or link.is_symlink():
                 link.unlink()
             link.symlink_to(target)
@@ -592,6 +596,56 @@ class SkillSyncTests(unittest.TestCase):
         with mock.patch.object(sync, "install_python_tool", fake_install):
             with self.assertRaises(sync.SyncError):
                 self._upgrade()
+
+    def _declare_uv_policy(self, bin_dir: Path, *, no_build: bool = True) -> None:
+        path = self.sources_root / "git-finalizer" / "toolchain_compatibility.json"
+        compatibility = sync.read_json(path)
+        compatibility["tools"]["snapshot-runner"]["uv_install_policy"] = {
+            "bin_dir": str(bin_dir),
+            "index": ["https://pypi.org/simple"],
+            "no_build": no_build,
+        }
+        write_json(path, compatibility)
+        self.sources = sync.Sources(self.sources_root)
+
+    def test_declared_policy_normalizes_a_drifted_receipt(self) -> None:
+        """A drifted bin dir/index/no-build is normalized, not preserved."""
+        self._uv_tool_layout("1.4.0")
+        drifted = self.root / "drifted-bin"
+        drifted.mkdir()
+        self._declare_uv_policy(drifted)
+        captured: dict[str, object] = {}
+
+        def fake_install(tool, version, *, bin_dir, indexes, no_build):
+            captured.update(bin_dir=bin_dir, indexes=indexes, no_build=no_build)
+            self._uv_tool_layout(version, bin_dir=drifted)
+
+        with mock.patch.object(sync, "install_python_tool", fake_install):
+            report = self._upgrade()
+        # Already at the target version, so this is a deployment-only normalization.
+        self.assertEqual(report["status"], "NORMALIZED")
+        self.assertTrue(report["receipt_drifted"])
+        self.assertEqual(report["bin_dir"], str(drifted))
+        self.assertEqual(captured["bin_dir"], str(drifted))
+        self.assertEqual(captured["indexes"], ["https://pypi.org/simple"])
+        self.assertEqual(captured["no_build"], True)
+
+    def test_declared_policy_reports_unchanged_when_already_canonical(self) -> None:
+        self._uv_tool_layout("1.4.0")
+        self._declare_uv_policy(self.bin_dir)
+        with mock.patch.object(
+            sync, "install_python_tool", side_effect=AssertionError("must not install")
+        ):
+            report = self._upgrade()
+        self.assertEqual(report["status"], "UNCHANGED")
+        self.assertFalse(report["receipt_drifted"])
+
+    def test_without_a_declared_policy_the_receipt_is_preserved(self) -> None:
+        self._uv_tool_layout("1.4.0")
+        report = self._upgrade()
+        self.assertEqual(report["status"], "UNCHANGED")
+        self.assertFalse(report["receipt_drifted"])
+        self.assertEqual(report["bin_dir"], str(self.bin_dir))
 
     def test_upgrade_dry_run_does_not_install(self) -> None:
         self._uv_tool_layout("1.3.0")

@@ -20,7 +20,7 @@ import tomllib
 from typing import Any, Sequence
 
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 SCHEMA_VERSION = 1
 TOOL_SKILL_MANIFEST_SCHEMA_VERSION = 2
 SKILL_NAME = "git-change-delivery"
@@ -690,6 +690,10 @@ def python_tool_installation(
             if (candidate / "uv-receipt.toml").is_file():
                 roots.add(candidate)
                 break
+    if not roots:
+        raise SyncError(
+            "installed entrypoints do not resolve into a uv tool installation"
+        )
     if len(roots) != 1:
         raise SyncError("installed entrypoints resolve to more than one uv tool root")
     root = roots.pop()
@@ -798,12 +802,54 @@ def install_python_tool(
         )
 
 
+def canonical_install_policy(
+    sources: Sources, tool: str, observed: dict[str, Any]
+) -> tuple[dict[str, Any], bool]:
+    """Return the intended uv install shape and whether the observed receipt drifted.
+
+    ``uv_install_policy`` in the toolchain compatibility contract is authoritative when
+    present, so a receipt that drifted away from the declared bin directory, package index
+    or no-build policy is normalized instead of being preserved. Without a declared policy
+    the observed receipt is kept, which is the previous behavior.
+    """
+    policy = sources.tool_config.get(tool, {}).get("uv_install_policy")
+    if policy is None:
+        return dict(observed), False
+    if not isinstance(policy, dict):
+        raise SyncError(f"{tool} uv_install_policy must be an object")
+    bin_dir = policy.get("bin_dir")
+    if not isinstance(bin_dir, str) or not bin_dir:
+        raise SyncError(f"{tool} uv_install_policy bin_dir is invalid")
+    resolved = Path(bin_dir).expanduser()
+    if not resolved.is_absolute():
+        raise SyncError(
+            f"{tool} uv_install_policy bin_dir must resolve to an absolute path"
+        )
+    indexes = policy.get("index", [])
+    if not isinstance(indexes, list) or not all(
+        isinstance(item, str) and item for item in indexes
+    ):
+        raise SyncError(f"{tool} uv_install_policy index must be a list of URLs")
+    intended = dict(observed)
+    intended["bin_dir"] = os.fspath(resolved)
+    intended["indexes"] = list(indexes)
+    intended["no_build"] = bool(policy.get("no_build", False))
+    drifted = (
+        observed["bin_dir"] != intended["bin_dir"]
+        or observed["no_build"] != intended["no_build"]
+        or not set(intended["indexes"]) <= set(observed["indexes"])
+    )
+    return intended, drifted
+
+
 def verify_python_tool(
     tool: str,
     version: str,
     entrypoints: Sequence[str],
     bin_dir: Path | None,
     expected: dict[str, Any],
+    *,
+    expect_stable_paths: bool = True,
 ) -> dict[str, Any]:
     """Fail closed unless every entrypoint, hash and receipt field matches the release."""
     binary = installed_binary_state(entrypoints, bin_dir)
@@ -821,7 +867,7 @@ def verify_python_tool(
     # A release may intentionally remove console scripts, so compare only the entrypoints
     # the target release declares. Retained entrypoints must keep their exact install path
     # and resolved target; entrypoints the new release drops are reported as retired.
-    for name in entrypoints:
+    for name in entrypoints if expect_stable_paths else ():
         previous_target = expected["entry_targets"].get(name)
         if (
             previous_target is not None
@@ -860,36 +906,46 @@ def upgrade(
         raise SyncError(f"{tool} is not installed as Python console scripts")
     target_version = str(manifest["tool_version"])
     before = python_tool_installation(entrypoints, bin_dir)
+    intended, drifted = canonical_install_policy(sources, tool, before)
     previous_version = installed_binary_state(entrypoints, bin_dir)["version"]
+    stable_paths = intended["bin_dir"] == before["bin_dir"]
     plan = {
         "schema_version": SCHEMA_VERSION,
         "operation": "upgrade",
         "tool": tool,
         "previous_version": previous_version,
         "target_version": target_version,
-        "bin_dir": before["bin_dir"],
-        "indexes": before["indexes"],
-        "no_build": before["no_build"],
+        "bin_dir": intended["bin_dir"],
+        "indexes": intended["indexes"],
+        "no_build": intended["no_build"],
+        "receipt_drifted": drifted,
+        "observed_bin_dir": before["bin_dir"],
+        "observed_no_build": before["no_build"],
     }
-    if previous_version == target_version:
+    if previous_version == target_version and not drifted:
         plan["status"] = "UNCHANGED"
         plan["verification"] = verify_python_tool(
-            tool, target_version, entrypoints, bin_dir, before
+            tool, target_version, entrypoints, bin_dir, intended
         )
         return plan
     if dry_run:
-        plan["status"] = "DRY_RUN"
+        plan["status"] = "DRY_RUN_NORMALIZE" if drifted else "DRY_RUN"
         return plan
     try:
         install_python_tool(
             tool,
             target_version,
-            bin_dir=before["bin_dir"],
-            indexes=before["indexes"],
-            no_build=before["no_build"],
+            bin_dir=intended["bin_dir"],
+            indexes=intended["indexes"],
+            no_build=intended["no_build"],
         )
         plan["verification"] = verify_python_tool(
-            tool, target_version, entrypoints, bin_dir, before
+            tool,
+            target_version,
+            entrypoints,
+            bin_dir,
+            intended,
+            expect_stable_paths=stable_paths,
         )
     except (SyncError, OSError, subprocess.SubprocessError) as exc:
         plan["status"] = "RESTORED"
@@ -908,6 +964,7 @@ def upgrade(
             plan["restored_verification"] = verify_python_tool(
                 tool, previous_version, entrypoints, bin_dir, before
             )
+            plan["restored_shape"] = "observed"
         except (SyncError, OSError, subprocess.SubprocessError) as restore_error:
             plan["status"] = "FAILED"
             raise SyncError(
@@ -916,7 +973,7 @@ def upgrade(
         raise SyncError(
             f"upgrade failed and {previous_version} was restored: {exc}"
         ) from None
-    plan["status"] = "UPGRADED"
+    plan["status"] = "NORMALIZED" if previous_version == target_version else "UPGRADED"
     return plan
 
 

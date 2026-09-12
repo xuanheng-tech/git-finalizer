@@ -13,6 +13,18 @@ section is invented for it.
 
 ## Unreleased
 
+- Update `codex-skill-sync` to 1.5.0 with a declared canonical uv installation policy.
+  `tools.<tool>.uv_install_policy` in `toolchain_compatibility.json` is authoritative for the
+  entrypoint bin directory, package index and `--no-build`, so `upgrade` normalizes a drifted
+  receipt instead of faithfully preserving it. Without a declared policy the observed receipt
+  is still preserved. A deployment-only normalization reports `NORMALIZED`, and the intended
+  bin-directory move relaxes only the retained-path assertions while every other verification
+  stays fail closed.
+- Declare the Snapshot Runner policy: dedicated `~/.local/share/snapshot-runner/bin` entrypoint
+  ownership, `https://pypi.org/simple` as the deterministic package source, and `--no-build`.
+- Fix a misleading diagnostic: entrypoints that resolve into no uv tool installation now say so
+  instead of reporting more than one root.
+
 - Migrate the Snapshot Runner integration to the provider-neutral 2.0.0 contract. The
   manifest now declares `2.0.0` with the single `snapshot-runner` entrypoint, the toolchain
   binding moves Snapshot Runner's public CLI contract to version 2, the Skill reference
