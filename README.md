@@ -339,6 +339,37 @@ Git Finalizer Hook 的版本化源、测试、只读漂移检查和显式恢复�
 ToolReleaseBundle；`--activate-production` 在完整验证后事务化同步稳定入口、active Skill 与
 Git Finalizer bridge，并为整组回滚保留 production `PREVIOUS`。
 
+## Snapshot Runner dual-remote topology
+
+Snapshot Runner 有**一个** canonical 源树和**一段** commit 历史，同时托管在两个远端。
+"single source of truth" 指唯一源树与唯一历史，**不**等于唯一远端。
+
+| 角色 | 位置 |
+| --- | --- |
+| canonical 源树 | `/home/hsd/projects/snapshot-runner`（唯一，不得再建第二份） |
+| `github` | GitHub `xuanheng-tech/snapshot-runner` —— 公共源、release 与 PyPI Trusted Publishing 权威，Finalizer 的 configured upstream |
+| `origin` | Gitea `xuanheng-tech/snapshot-runner` —— 受治理的日常交付远端 |
+
+Gitea 仓库同时保留 pre-OSS legacy refs（`main`、`renovate/python-tooling`、`refs/pull/*`、
+`v1.0.0`–`v1.4.0`）。两段历史 root 不同、完全不相交：canonical `88a50187`，legacy `9e1f9a69`。
+legacy refs 仅作存量保留，**不参与**当前开发、交付或公共 release 同步；不得合并进 public 历史，
+也不得推送到 GitHub。
+
+### 交付与校验
+
+1. 常规交付用 Git Finalizer 默认/`--resume-publish` 模式推送 configured upstream（`github`）
+   并完成远端 post-verify。
+2. 再以显式 non-force refspec 把**同一个固定 commit** 推到 `origin`：
+   `git push origin refs/heads/master:refs/heads/master`。
+3. 双远端 post-verify：`git ls-remote <remote> refs/heads/master` 必须与本地 `master` OID 相同。
+4. release tag 推送到两个远端后，校验 **tag-object OID 与 peeled commit** 在两侧都一致
+   （`refs/tags/<t>` 与 `refs/tags/<t>^{}`）。
+5. 部分失败只重试缺失的那个远端；**绝不**重建 commit 或 tag，绝不 force push。
+
+首次把 canonical `master` 引入已有 legacy refs 的 Gitea 仓库属 bootstrap：Finalizer 无适用
+模式（`--publish-existing-branch` 拒绝已有 upstream，`--publish-existing-history` 要求全空远端），
+该一次性动作用显式 non-force refspec 完成，并以 `--dry-run` 预先证明只新增 ref。
+
 ## 工作流边界
 
 正常开发流程是先完成修改、测试和审查，再调用正常模式提交推送。首次发布仅适用于 unborn

@@ -13,6 +13,13 @@ section is invented for it.
 
 ## Unreleased
 
+- Record the Snapshot Runner dual-remote topology: one canonical source tree and one commit
+  history hosted on both GitHub (public source/release/PyPI authority, Finalizer upstream)
+  and Gitea (governed daily delivery). "Single source of truth" means one source tree and
+  one history, not one remote. Documents the explicit non-force dual-push, dual branch-OID
+  post-verify, release tag-object/peeled-commit parity check, missing-remote-only retry, and
+  the one-time bootstrap exception where no Finalizer mode applies.
+
 - Update `codex-skill-sync` to 1.2.0. `check <tool>` now validates the installed
   production state as well as the canonical source contract, so a stale or mismatched
   installation can no longer report a clean PASS; `--source-only` keeps the previous
