@@ -20,7 +20,7 @@ import tomllib
 from typing import Any, Sequence
 
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 SCHEMA_VERSION = 1
 TOOL_SKILL_MANIFEST_SCHEMA_VERSION = 2
 SKILL_NAME = "git-change-delivery"
@@ -818,16 +818,30 @@ def verify_python_tool(
         raise SyncError("upgrade changed the receipt no-build setting")
     if not set(expected["indexes"]) <= set(installation["indexes"]):
         raise SyncError("upgrade dropped a recorded package index")
-    if installation["entry_targets"] != expected["entry_targets"]:
-        raise SyncError("upgrade changed an entrypoint install path")
-    if installation["resolved"] != expected["resolved"]:
-        raise SyncError("upgrade changed a resolved entrypoint target")
+    # A release may intentionally remove console scripts, so compare only the entrypoints
+    # the target release declares. Retained entrypoints must keep their exact install path
+    # and resolved target; entrypoints the new release drops are reported as retired.
+    for name in entrypoints:
+        previous_target = expected["entry_targets"].get(name)
+        if (
+            previous_target is not None
+            and installation["entry_targets"][name] != previous_target
+        ):
+            raise SyncError(f"upgrade changed the install path of {name}")
+        previous_resolved = expected["resolved"].get(name)
+        if (
+            previous_resolved is not None
+            and installation["resolved"][name] != previous_resolved
+        ):
+            raise SyncError(f"upgrade changed the resolved target of {name}")
+    retired = sorted(set(expected["entry_targets"]) - set(entrypoints))
     record = verify_installed_record(Path(installation["root"]))
     return {
         "version": binary["version"],
         "binary_sha256": binary["sha256"],
         "entries": binary["entries"],
         "installation": installation,
+        "retired_entrypoints": retired,
         "record": record,
     }
 

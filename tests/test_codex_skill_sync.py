@@ -239,9 +239,7 @@ class SkillSyncTests(unittest.TestCase):
                 },
                 "compatibility_skill": {
                     "name": sync.COMPATIBILITY_SKILL_NAME,
-                    "path": (
-                        f"skills/{sync.COMPATIBILITY_SKILL_NAME}/SKILL.md"
-                    ),
+                    "path": (f"skills/{sync.COMPATIBILITY_SKILL_NAME}/SKILL.md"),
                     "sha256": compatibility_sha,
                 },
                 "executable": executable_definition,
@@ -269,10 +267,7 @@ class SkillSyncTests(unittest.TestCase):
             / "SKILL.md"
         )
         compatibility_target = (
-            self.agents_root
-            / "skills"
-            / sync.COMPATIBILITY_SKILL_NAME
-            / "SKILL.md"
+            self.agents_root / "skills" / sync.COMPATIBILITY_SKILL_NAME / "SKILL.md"
         )
         compatibility_target.parent.mkdir(parents=True)
         shutil.copyfile(compatibility_source, compatibility_target)
@@ -384,11 +379,15 @@ class SkillSyncTests(unittest.TestCase):
             report["installed_binaries"]["snapshot-runner"]["version"], "9.9.9"
         )
 
-    def test_check_deployment_fails_when_manifest_omits_primary_entrypoint(self) -> None:
+    def test_check_deployment_fails_when_manifest_omits_primary_entrypoint(
+        self,
+    ) -> None:
         path = self.sources_root / "snapshot-runner" / "tool_skill_manifest.json"
         manifest = sync.read_json(path)
         entrypoints = [
-            name for name in manifest["executable"]["entrypoints"] if name != "snapshot-runner"
+            name
+            for name in manifest["executable"]["entrypoints"]
+            if name != "snapshot-runner"
         ]
         manifest["executable"]["entrypoints"] = entrypoints
         manifest["install_targets"]["stable_entries"] = entrypoints
@@ -407,7 +406,9 @@ class SkillSyncTests(unittest.TestCase):
 
     # --- safe production upgrade path -------------------------------------------------
 
-    def _uv_tool_layout(self, version: str) -> Path:
+    def _uv_tool_layout(
+        self, version: str, entrypoints: tuple[str, ...] | None = None
+    ) -> Path:
         """Build a uv-tool-shaped installation for snapshot-runner in the fixture."""
         root = self.root / "uvtools" / "snapshot-runner"
         site = root / "lib" / "python3.12" / "site-packages"
@@ -419,9 +420,11 @@ class SkillSyncTests(unittest.TestCase):
         if dist_info.exists():
             shutil.rmtree(dist_info)
         dist_info.mkdir(parents=True)
-        digest = base64.urlsafe_b64encode(
-            hashlib.sha256(module.read_bytes()).digest()
-        ).rstrip(b"=").decode()
+        digest = (
+            base64.urlsafe_b64encode(hashlib.sha256(module.read_bytes()).digest())
+            .rstrip(b"=")
+            .decode()
+        )
         (dist_info / "RECORD").write_text(
             f"codex_snapshot_runner/__init__.py,sha256={digest},{module.stat().st_size}\n"
             f"../../../bin/snapshot-runner,sha256=ignored,1\n"
@@ -433,7 +436,7 @@ class SkillSyncTests(unittest.TestCase):
                 shutil.rmtree(stale)
         bin_dir = root / "bin"
         bin_dir.mkdir(exist_ok=True)
-        entrypoints = TOOLS["snapshot-runner"][1]
+        entrypoints = entrypoints or TOOLS["snapshot-runner"][1]
         entries = ",\n".join(
             f'    {{ name = "{name}", install-path = "{self.bin_dir / name}", '
             f'from = "snapshot-runner" }}'
@@ -451,7 +454,8 @@ class SkillSyncTests(unittest.TestCase):
         for name in entrypoints:
             target = bin_dir / name
             target.write_text(
-                f"#!/usr/bin/env sh\nprintf '%s {version}\\n' '{name}'\n", encoding="utf-8"
+                f"#!/usr/bin/env sh\nprintf '%s {version}\\n' '{name}'\n",
+                encoding="utf-8",
             )
             target.chmod(0o755)
             link = self.bin_dir / name
@@ -461,7 +465,9 @@ class SkillSyncTests(unittest.TestCase):
         return root
 
     def _upgrade(self, **kwargs):
-        return sync.upgrade(self.sources, "snapshot-runner", bin_dir=self.bin_dir, **kwargs)
+        return sync.upgrade(
+            self.sources, "snapshot-runner", bin_dir=self.bin_dir, **kwargs
+        )
 
     def test_upgrade_is_unchanged_and_verified_when_already_current(self) -> None:
         self._uv_tool_layout("1.4.0")
@@ -472,7 +478,8 @@ class SkillSyncTests(unittest.TestCase):
         self.assertEqual(report["bin_dir"], str(self.bin_dir))
         self.assertEqual(report["verification"]["record"]["verified_files"], 1)
         self.assertEqual(
-            sorted(report["verification"]["entries"]), sorted(TOOLS["snapshot-runner"][1])
+            sorted(report["verification"]["entries"]),
+            sorted(TOOLS["snapshot-runner"][1]),
         )
 
     def test_upgrade_preserves_bin_dir_index_and_no_build(self) -> None:
@@ -481,7 +488,11 @@ class SkillSyncTests(unittest.TestCase):
 
         def fake_install(tool, version, *, bin_dir, indexes, no_build):
             captured.update(
-                tool=tool, version=version, bin_dir=bin_dir, indexes=indexes, no_build=no_build
+                tool=tool,
+                version=version,
+                bin_dir=bin_dir,
+                indexes=indexes,
+                no_build=no_build,
             )
             self._uv_tool_layout(version)
 
@@ -533,10 +544,54 @@ class SkillSyncTests(unittest.TestCase):
     def test_upgrade_detects_runtime_files_that_do_not_match_the_artifact(self) -> None:
         root = self._uv_tool_layout("1.4.0")
         module = root / "lib" / "python3.12" / "site-packages" / "codex_snapshot_runner"
-        (module / "__init__.py").write_text("__version__ = 'tampered'\n", encoding="utf-8")
+        (module / "__init__.py").write_text(
+            "__version__ = 'tampered'\n", encoding="utf-8"
+        )
         with self.assertRaises(sync.SyncError) as error:
             self._upgrade()
         self.assertIn("does not match the published artifact", str(error.exception))
+
+    def test_upgrade_accepts_a_release_that_removes_entrypoints(self) -> None:
+        """A major release may drop console scripts; retained ones must keep their paths."""
+        legacy = ("snapshot-runner", "legacy-alias")
+        root = self._uv_tool_layout("1.3.0", entrypoints=legacy)
+        self.assertTrue((self.bin_dir / "legacy-alias").exists())
+
+        def fake_install(tool, version, *, bin_dir, indexes, no_build):
+            # The new release ships only the neutral primary command.
+            self._uv_tool_layout(version, entrypoints=("snapshot-runner",))
+            (self.bin_dir / "legacy-alias").unlink()
+
+        with mock.patch.object(sync, "install_python_tool", fake_install):
+            report = self._upgrade()
+        self.assertEqual(report["status"], "UPGRADED")
+        self.assertEqual(report["verification"]["version"], "1.4.0")
+        self.assertEqual(
+            report["verification"]["retired_entrypoints"], ["legacy-alias"]
+        )
+        self.assertEqual(sorted(report["verification"]["entries"]), ["snapshot-runner"])
+
+    def test_upgrade_still_rejects_a_moved_retained_entrypoint(self) -> None:
+        self._uv_tool_layout("1.3.0")
+        moved = self.root / "elsewhere"
+        moved.mkdir()
+
+        def fake_install(tool, version, *, bin_dir, indexes, no_build):
+            self._uv_tool_layout(version)
+            link = self.bin_dir / "snapshot-runner"
+            link.unlink()
+            target = moved / "snapshot-runner"
+            target.write_text(
+                "#!/usr/bin/env sh\nprintf '%s 1.4.0\\n' 'snapshot-runner'\n",
+                encoding="utf-8",
+            )
+            target.chmod(0o755)
+            link.symlink_to(target)
+
+        # Relocating a retained entrypoint out of its uv tool root must fail closed.
+        with mock.patch.object(sync, "install_python_tool", fake_install):
+            with self.assertRaises(sync.SyncError):
+                self._upgrade()
 
     def test_upgrade_dry_run_does_not_install(self) -> None:
         self._uv_tool_layout("1.3.0")
@@ -681,9 +736,7 @@ class SkillSyncTests(unittest.TestCase):
         manifest["canonical_skill"]["path"] = (
             f"skills/{sync.COMPATIBILITY_SKILL_NAME}/SKILL.md"
         )
-        manifest["install_targets"]["skill_directory"] = (
-            sync.COMPATIBILITY_SKILL_NAME
-        )
+        manifest["install_targets"]["skill_directory"] = sync.COMPATIBILITY_SKILL_NAME
         write_json(manifest_path, manifest)
         shutil.rmtree(legacy / "compatibility")
         release_path = legacy / "release_manifest.json"
@@ -721,10 +774,7 @@ class SkillSyncTests(unittest.TestCase):
         )
         self.assertEqual(
             (
-                self.agents_root
-                / "skills"
-                / sync.COMPATIBILITY_SKILL_NAME
-                / "SKILL.md"
+                self.agents_root / "skills" / sync.COMPATIBILITY_SKILL_NAME / "SKILL.md"
             ).read_bytes(),
             (current / sync.COMPATIBILITY_BUNDLE_PATH).read_bytes(),
         )
@@ -739,10 +789,7 @@ class SkillSyncTests(unittest.TestCase):
 
     def test_activation_accepts_verified_previous_sync_version(self) -> None:
         implementation = (
-            self.sources_root
-            / "git-finalizer"
-            / "tooling"
-            / "codex_skill_sync.py"
+            self.sources_root / "git-finalizer" / "tooling" / "codex_skill_sync.py"
         )
         current_source = implementation.read_text(encoding="utf-8")
         implementation.write_text(
