@@ -13,6 +13,14 @@ section is invented for it.
 
 ## Unreleased
 
+- Migrate the Snapshot Runner integration to the provider-neutral 2.0.0 contract. The
+  manifest now declares `2.0.0` with the single `snapshot-runner` entrypoint, the toolchain
+  binding moves Snapshot Runner's public CLI contract to version 2, the Skill reference
+  documents `snapshot-runner <command>` and the neutral
+  `~/.local/state/snapshot-runner/snapshots/` artifact namespace, and the PreToolUse bridge
+  treats `/home/hsd/bin/snapshot-runner` as the inert read-only reference entry in place of
+  the removed `codex-diff-audit` alias.
+
 - Record the Snapshot Runner dual-remote topology: one canonical source tree and one commit
   history hosted on both GitHub (public source/release/PyPI authority, Finalizer upstream)
   and Gitea (governed daily delivery). "Single source of truth" means one source tree and

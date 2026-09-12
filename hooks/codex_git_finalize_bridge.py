@@ -275,7 +275,7 @@ def _is_inert_reference_segment(segment: list[str]) -> bool:
         return arguments in (["--help"], ["--version"])
     if _is_lifecycle_helper_passthrough(segment):
         return True
-    if segment[0] == "/home/hsd/bin/codex-diff-audit":
+    if segment[0] == "/home/hsd/bin/snapshot-runner":
         return True
     executable = PurePosixPath(segment[0])
     if "/" in segment[0] and executable.parent.as_posix() not in (

@@ -104,7 +104,8 @@ class ToolContractTests(unittest.TestCase):
         )
         self.assertEqual(compatibility["toolchain_contract_version"], 3)
         self.assertEqual(compatibility["context_loader_contract_version"], 1)
-        self.assertEqual(compatibility["snapshot_runner_contract_version"], 1)
+        # Snapshot Runner 2.0.0 removed the provider-named aliases: public CLI contract 2.
+        self.assertEqual(compatibility["snapshot_runner_contract_version"], 2)
         self.assertEqual(compatibility["git_finalizer_contract_version"], 2)
         self.assertEqual(compatibility["worktree_controller_contract_version"], 1)
         self.assertEqual(

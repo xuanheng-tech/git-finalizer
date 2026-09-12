@@ -14,16 +14,7 @@ from tooling import codex_skill_sync as sync
 
 TOOLS = {
     "context-loader": ("0.1.5", ("codex-project-context",)),
-    "snapshot-runner": (
-        "1.4.0",
-        (
-            "codex-repo-status",
-            "codex-diff-audit",
-            "codex-branch-review",
-            "codex-test-triage",
-            "snapshot-runner",
-        ),
-    ),
+    "snapshot-runner": ("1.4.0", ("snapshot-runner",)),
     "git-finalizer": ("0.9.3", ("codex-git-finalize",)),
 }
 
@@ -360,16 +351,8 @@ class SkillSyncTests(unittest.TestCase):
         self.assertEqual(report["installed_drift"], "none")
         self.assertEqual(report["installed_binary_version"], "1.4.0")
         self.assertEqual(report["errors"], [])
-        self.assertEqual(
-            sorted(report["installed_binaries"]),
-            [
-                "codex-branch-review",
-                "codex-diff-audit",
-                "codex-repo-status",
-                "codex-test-triage",
-                "snapshot-runner",
-            ],
-        )
+        # 2.0.0 ships a single provider-neutral console script.
+        self.assertEqual(sorted(report["installed_binaries"]), ["snapshot-runner"])
 
     def test_check_deployment_fails_on_binary_only_drift(self) -> None:
         for entrypoint in TOOLS["snapshot-runner"][1]:
@@ -391,12 +374,11 @@ class SkillSyncTests(unittest.TestCase):
         self.assertEqual(report["installed_drift"], "binary_only")
         self.assertIsNone(report["installed_binaries"]["snapshot-runner"]["path"])
 
-    def test_check_deployment_detects_inconsistent_primary_entrypoint(self) -> None:
+    def test_check_deployment_detects_wrong_primary_entrypoint_version(self) -> None:
         self._rewrite_entry("snapshot-runner", "9.9.9")
         report = self._deployment()
         self.assertEqual(report["status"], "FAIL")
-        # A primary command disagreeing with its aliases must not resolve to a version.
-        self.assertIsNone(report["installed_binary_version"])
+        self.assertEqual(report["installed_binary_version"], "9.9.9")
         self.assertEqual(report["installed_drift"], "binary_only")
         self.assertEqual(
             report["installed_binaries"]["snapshot-runner"]["version"], "9.9.9"
@@ -533,7 +515,7 @@ class SkillSyncTests(unittest.TestCase):
         # The previous release is installed and every entrypoint still works.
         state = sync.installed_binary_state(TOOLS["snapshot-runner"][1], self.bin_dir)
         self.assertEqual(state["version"], "1.3.0")
-        self.assertEqual(len(state["entries"]), 5)
+        self.assertEqual(len(state["entries"]), 1)
 
     def test_upgrade_fails_closed_when_verification_rejects_the_result(self) -> None:
         self._uv_tool_layout("1.3.0")
