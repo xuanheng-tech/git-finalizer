@@ -275,6 +275,18 @@ def _is_inert_reference_segment(segment: list[str]) -> bool:
         return arguments in (["--help"], ["--version"])
     if _is_lifecycle_helper_passthrough(segment):
         return True
+    if segment[0] == "/home/hsd/.local/bin/codex-worktree":
+        # These lifecycle commands consume paths, never a delegated command.
+        # Controller still owns all admission, scope and mutation checks.
+        return (
+            len(segment) > 1
+            and segment[1] in {"acquire", "adopt", "review"}
+            and all(
+                index > 1 and segment[index - 1] in {"--scope", "--add-scope"}
+                for index, value in enumerate(segment)
+                if FINALIZER_NAME in value
+            )
+        )
     if segment[0] == "/home/hsd/bin/snapshot-runner":
         return True
     executable = PurePosixPath(segment[0])

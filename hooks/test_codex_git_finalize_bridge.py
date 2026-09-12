@@ -898,6 +898,42 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 self.assertEqual(stdout.getvalue(), "")
                 run.assert_not_called()
 
+    def test_controller_scope_data_does_not_invoke_or_authorize_finalizer(self) -> None:
+        for operation, flag in (
+            ("acquire", "--scope"),
+            ("adopt", "--scope"),
+            ("review", "--add-scope"),
+        ):
+            command = f"/home/hsd/.local/bin/codex-worktree {operation} {flag} codex-git-finalize"
+            with self.subTest(operation=operation):
+                stdin = io.StringIO(json.dumps(self.event(command)))
+                stdout = io.StringIO()
+                with (
+                    mock.patch.object(sys, "stdin", stdin),
+                    mock.patch.object(sys, "stdout", stdout),
+                    mock.patch.object(bridge, "run_finalizer") as run,
+                ):
+                    bridge.main()
+                self.assertEqual(stdout.getvalue(), "")
+                run.assert_not_called()
+
+    def test_controller_delegation_and_wrappers_stay_denied(self) -> None:
+        commands = (
+            "/home/hsd/.local/bin/codex-worktree writer-session codex-git-finalize",
+            "/home/hsd/.local/bin/codex-worktree acquire --command codex-git-finalize",
+            "/tmp/codex-worktree acquire --scope codex-git-finalize",
+            "bash -c '/home/hsd/.local/bin/codex-worktree acquire --scope codex-git-finalize'",
+            "/home/hsd/.local/bin/codex-worktree acquire --scope codex-git-finalize && "
+            + self.verify_only_command,
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                output, run = self.invoke_main(self.event(command))
+                self.assertEqual(
+                    output["hookSpecificOutput"]["permissionDecision"], "deny"
+                )
+                run.assert_not_called()
+
     def test_commands_that_can_execute_finalizer_stay_denied(self) -> None:
         commands = (
             "/bin/bash -lc " + shlex.quote(self.command),

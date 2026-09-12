@@ -48,6 +48,10 @@ escalation。`acceptEdits`、`plan`、`dontAsk`、未知值和未知结构继续
 精确调用 active 或 versioned `unpublished_queue.py` lifecycle helper 时，文件 scope 中出现
 `codex-git-finalize` 仅作为路径数据，bridge 不作 allow/deny 决定并交回正常 sandbox/execpolicy；
 该例外不适用于 Python `-c`、其他脚本、shell wrapper 或复合 Finalizer 执行。
+固定 Controller 入口 `/home/hsd/.local/bin/codex-worktree` 的 `acquire`、`adopt`、
+`review` 中，Finalizer 文件名仅作为 `--scope` / `--add-scope` 的参数时也交回原生控制。
+这不授权 Controller mutation；其正式 lifecycle / writer / scope 检查仍须通过。
+delegated execution、wrapper、其他参数位置和复合 Finalizer 执行继续拒绝。
 
 ## 管理范围
 
