@@ -59,6 +59,21 @@ section is invented for it.
   repository is preserved as a read-only archive and is no longer an active source; the
   private `ToolSkillManifest` continues to live here.
 
+## 0.10.0 - 2026-09-12
+
+- Add explicit `--reviewed-sensitive-source` for normal, commit-only and verify-only operations.
+  External, time-bounded review evidence binds the Git repository, Controller allocation/linkage,
+  full explicit scope and exact Python source SHA256. Worktree, index and committed content are
+  checked again; changed content or evidence invalidates the review. This only admits reviewed
+  credential/secret/token-named source paths. All existing secret-content detectors remain mandatory,
+  and content exceptions cannot be combined with source review.
+- Include the source-review companion and receipt contract in the versioned ToolReleaseBundle and
+  host bridge. Keep initial/history/integration publication modes unchanged and fail closed for
+  unsupported review combinations.
+- Govern the canonical Finalizer repository and preserve its existing linked checkout through
+  Controller policy/adoption. Allow exact Controller scope arguments to name Finalizer source files
+  without treating those inert filenames as wrapped Finalizer execution.
+
 ## 0.9.3 - 2026-09-07
 
 - Validate each unpublished commit and first-parent merge changes when resuming publication,

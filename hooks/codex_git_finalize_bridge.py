@@ -86,6 +86,7 @@ BRIDGE_OPTION_SPECS: dict[str, tuple[int, bool]] = {
     "--allow-large-binary": (1, True),
     "--allow-test-fixture": (1, True),
     "--fixture-exceptions": (1, False),
+    "--reviewed-sensitive-source": (1, False),
     "--authority-key": (1, False),
     "--ci-commit-oid": (1, False),
     "--ci-required": (0, False),
@@ -509,6 +510,36 @@ def parse_direct_finalizer(
     initial_publish = "--initial-publish" in switches
     initial_branch_publish = "--initial-branch-publish" in switches
     ci_required = "--ci-required" in switches
+
+    source_review = parsed.get("--reviewed-sensitive-source")
+    if source_review is not None:
+        required_linkage = {
+            "--repository-id",
+            "--allocation-id",
+            "--task-key",
+            "--authority-key",
+        }
+        allowed_values = required_linkage | {
+            "--repo",
+            "--mode",
+            "--message",
+            "--worktree-path",
+            "--role",
+            "--reviewed-sensitive-source",
+        }
+        if (
+            switches - {"--summary", "--dry-run"}
+            or set(parsed) - allowed_values
+            or set(repeated) - {"--allow-large-binary"}
+            or not required_linkage <= set(parsed)
+        ):
+            raise BridgeError(
+                "Finalizer source review 仅用于带完整 linkage 的普通提交验证，不接受内容例外"
+            )
+        if not Path(source_review).is_absolute() or any(
+            c in source_review for c in ("\x00", "\n", "\r", "\t")
+        ):
+            raise BridgeError("Finalizer source review 必须是显式绝对文件路径")
 
     if repo_plan or repo_ensure:
         if repo_plan and repo_ensure:

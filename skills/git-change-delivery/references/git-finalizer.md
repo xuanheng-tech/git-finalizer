@@ -360,6 +360,54 @@ receipt，result 只取 `REMOTE_BRANCH_RETIRED_VERIFIED`、`ALREADY_ABSENT_VERIF
 `RETIREMENT_PREFLIGHT_PASSED`、`RETIREMENT_BLOCKED` 或 `REMOTE_DELETE_UNVERIFIED`；工具不另建
 持久 audit store。
 
+## Reviewed sensitive Python source（0.10.0）
+
+当任务明确授权审查某个敏感命名的源码文件时，normal、commit-only、verify-only 可显式使用
+`--reviewed-sensitive-source <absolute-json-file>`。它只豁免 exact Python 源码的
+credential/secret/token **路径标记**；`.env`、private/SSH key 路径、非 Python 文件不接受。
+既有 secret 内容扫描仍在工作区、index 和提交后运行，不能组合任何 fixture 内容例外。
+其他 initial/history/resume/integration 接口不消费该 review，保持原有 fail-closed 行为。
+
+先使用 Controller 取得合法 task/writer 和显式 source scope，完成定向业务与 secret 审查；
+再由受信任调用者生成以下外部 review JSON。它不授予 writer、不修改 Controller，也不改变
+用户的 commit/push 授权。此机制信任当前用户与 OS，不声称防御恶意同 UID 进程。
+
+```json
+{
+  "schema_version": 1,
+  "kind": "reviewed-sensitive-source",
+  "repository": {"common_dir": "/absolute/canonical/.git", "root_commit": "<root OID>"},
+  "allocation": {
+    "repository_id": "<Controller repository ID>",
+    "allocation_id": "<allocation ID>",
+    "task_key": "<task key>",
+    "authority_key": "<authority key>",
+    "worktree_path": "/absolute/selected-worktree"
+  },
+  "scope_sha256": "<SHA256 of sorted explicit relative paths, joined by LF, ending in LF>",
+  "reviewed_at": "<UTC ISO timestamp>",
+  "expires_at": "<UTC ISO timestamp, at most seven days after review>",
+  "reviews": [{
+    "path": "scripts/credential_transfer.py",
+    "sha256": "<exact content SHA256>",
+    "purpose": "<specific authorized review purpose>",
+    "evidence": {"path": "/absolute/external/review.md", "sha256": "<evidence SHA256>"}
+  }]
+}
+```
+
+Review 与 evidence 必须是 worktree/Git common directory 外部的 canonical 普通文件、当前 UID
+所有、group/other 不可写、各不超过 64 KiB；不能引用 symlink。Review 不接受未知字段，最多
+16 个 exact source 条目，每个不超过 1 MiB 且能通过 Python AST 解析。JSON 与 evidence 只含
+审查结论和非秘密 identity，不记录 secret 值。调用时必须同时传入完全匹配的
+`--repository-id --allocation-id --task-key --authority-key` 和完整显式文件列表。
+
+任一仓库、路径、content hash、allocation、scope、evidence hash 或有效期变化都会阻断，必须
+重新审查；不存储永久 allowlist。`reviewed_sensitive_sources` 摘要 receipt 绑定 review 文件
+SHA256、源码/evidence/purpose 摘要和 identity；只有完整验证成功才报告 `content_scan=passed`。
+verify-only 仍不写 index/HEAD 或访问远端。Git filter/hook 改变已审查源码时停止；若 hook 已创建
+commit，receipt 保留 exact OID，禁止误报成功或自动重提。
+
 ## Release 流程边界
 
 tag、Release、Artifact 和 deployment 是独立 Release 流程，必须按仓库既有文档、recipe 或自动化另行授权和执行；它们不属于 verify-only、commit-only 或默认模式，也不得从任何 Finalizer 成功结果推导其授权或完成状态。

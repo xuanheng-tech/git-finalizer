@@ -414,6 +414,27 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0], shlex.split(self.summary_command))
 
+    def test_source_review_is_exactly_forwarded_and_cannot_weaken_modes(self) -> None:
+        option = (
+            " --reviewed-sensitive-source /tmp/source-review.json"
+            " --repository-id test-repo --allocation-id test-allocation"
+            " --task-key test-task --authority-key test-task"
+        )
+        command = self.command.replace(" -- ", option + " -- ", 1)
+        output, run = self.invoke_main(self.event(command))
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        self.assertEqual(run.call_args.args[0], shlex.split(command))
+        invalid = (
+            command.replace("/tmp/source-review.json", "relative.json"),
+            command.replace(" --task-key test-task", ""),
+            command.replace(" -- ", " --allow-test-fixture tests/foo.py -- ", 1),
+            command.replace(" -- ", " --initial-branch-publish -- ", 1),
+            self.publish_existing_history_command + option,
+        )
+        for value in invalid:
+            with self.subTest(command=value), self.assertRaises(bridge.BridgeError):
+                bridge.validate_hook_event(self.event(value))
+
     def test_allow_test_fixture_is_accepted_and_forwarded_without_rewriting(
         self,
     ) -> None:

@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="0.9.3"
+readonly VERSION="0.10.0"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -137,6 +137,7 @@ summary_retirement_tags_unchanged=false
 summary_retirement_remote_tracking_absent=false
 declare -a summary_warnings=()
 declare -a summary_fixture_exceptions=()
+declare -a summary_source_reviews=()
 
 record_summary_warning() {
     if ((${#summary_warnings[@]} < MAX_SUMMARY_WARNINGS)); then
@@ -191,6 +192,7 @@ render_summary() {
         "$summary_retirement_lease_bound" "$summary_retirement_tags_unchanged" \
         "$summary_retirement_remote_tracking_absent" \
         "$(printf '%s\n' "${summary_fixture_exceptions[@]}")" \
+        "$(printf '%s\n' "${summary_source_reviews[@]}")" \
         "${summary_warnings[@]}" <<'PY'
 import json
 import sys
@@ -287,6 +289,7 @@ retirement_lease_bound = boolean(take(values))
 retirement_tags_unchanged = boolean(take(values))
 retirement_remote_tracking_absent = boolean(take(values))
 fixture_exceptions = [json.loads(line) for line in take(values).splitlines() if line]
+source_reviews = [json.loads(line) for line in take(values).splitlines() if line]
 
 
 def optional_integer(value):
@@ -338,6 +341,11 @@ result = {
 }
 if fixture_exceptions:
     result["fixture_exceptions"] = fixture_exceptions
+if source_reviews:
+    if status == "success" and not dry_run:
+        for review in source_reviews:
+            review["content_scan"] = "passed"
+    result["reviewed_sensitive_sources"] = source_reviews
 if mode == "initial":
     result["mode_result"] = {
         "initial_publish": mode_state,
@@ -624,6 +632,8 @@ Options:
   --snapshot <id>                Bind initial publish to a complete snapshot.
   --allow-test-fixture <path>    Ignore content secret signatures for this exact tests/ file.
   --fixture-exceptions <file>   Exact repository/path/blob/hash/rule exceptions for history/resume.
+  --reviewed-sensitive-source <file>
+                               External exact Python source review; secret scans remain mandatory.
   --allow-large-binary <path>    Allow this exact binary file above 5 MiB, up to 25 MiB.
   --dry-run                      Commit modes avoid Git mutation/remote; retirement runs live preflight only.
   --summary                      Emit one bounded JSON result instead of phase output.
@@ -881,6 +891,29 @@ sensitive_path_reason() {
         return 0
     fi
     return 1
+}
+
+load_source_reviews() {
+    ((source_review_seen == 1)) || return 0
+    local phase=$1
+    local executable helper output path receipt reason
+    executable=$(realpath -e -- "${BASH_SOURCE[0]}") || fail '无法解析 Finalizer 入口'
+    helper=${executable%/*}/codex-git-finalize-source-review.py
+    [[ -f "$helper" && ! -L "$helper" ]] || fail '缺少 source review companion'
+    output=$(/usr/bin/python3 -B "$helper" --review "$source_review_file" \
+        --repo "$repo" --phase "$phase" --repository-id "$repository_id_arg" \
+        --allocation-id "$allocation_id_arg" --task-key "$task_key_arg" \
+        --authority-key "$authority_key_arg" -- "${paths[@]}") ||
+        fail 'reviewed-sensitive-source validation blocked'
+    reviewed_source_paths=()
+    summary_source_reviews=()
+    while IFS=$'\t' read -r path receipt; do
+        reason=$(sensitive_path_reason "$path") || fail 'review 只接受敏感源码路径'
+        [[ "$reason" == 'credential/secret/token 路径标记' ]] ||
+            fail 'review 不接受 .env 或 private/SSH key 路径'
+        reviewed_source_paths["$path"]=1
+        summary_source_reviews+=("$receipt")
+    done <<<"$output"
 }
 
 working_content_reason() {
@@ -4113,6 +4146,9 @@ summary_seen=0
 separator_seen=0
 fixture_exceptions_file=''
 fixture_exceptions_seen=0
+source_review_file=''
+source_review_seen=0
+declare -A reviewed_source_paths=()
 declare -A history_fixture_exceptions=()
 declare -A history_fixture_paths=()
 declare -A history_fixture_rules=()
@@ -4346,6 +4382,13 @@ while (($# > 0)); do
             fixture_exceptions_seen=1
             shift 2
             ;;
+        --reviewed-sensitive-source)
+            (($# >= 2)) || fail '--reviewed-sensitive-source 缺少参数'
+            ((source_review_seen == 0)) || fail '--reviewed-sensitive-source 只能指定一次'
+            source_review_file=$2
+            source_review_seen=1
+            shift 2
+            ;;
         --allow-test-fixture)
             (($# >= 2)) || fail '--allow-test-fixture 缺少参数'
             allow_test_fixture_args+=("$2")
@@ -4405,6 +4448,17 @@ elif ((verify_only == 1)); then
 fi
 
 ((repo_seen == 1)) || fail '必须指定 --repo'
+if ((source_review_seen == 1)); then
+    ((initial_commit_only == 0 && initial_publish == 0 && initial_branch_publish == 0 &&
+        publish_existing_branch == 0 && publish_existing_history == 0 &&
+        retire_remote_branch == 0 && resume_initial == 0 && resume_existing == 0 &&
+        resume_existing_history == 0)) ||
+        fail '--reviewed-sensitive-source 只接受 normal/commit-only/verify-only'
+    ((fixture_exceptions_seen == 0 && ${#allow_test_fixture_args[@]} == 0)) ||
+        fail 'source review 不接受任何 secret 内容例外'
+    ((repository_id_seen == 1 && allocation_id_seen == 1 && task_key_seen == 1 &&
+        authority_key_seen == 1)) || fail 'source review 要求完整 Controller linkage'
+fi
 if ((fixture_exceptions_seen == 1)); then
     ((publish_existing_history == 1 || resume_existing_history == 1)) ||
         fail '--fixture-exceptions 只接受 existing-history publication/resume'
@@ -4817,6 +4871,7 @@ for path in "${large_binary_paths[@]}"; do
     printf 'large binary size override (max 25 MiB): %q\n' "$path"
 done
 
+load_source_reviews worktree
 collect_staged_paths
 if ((initial_publish == 0 && initial_commit_only == 0)); then
     for path in "${paths[@]}"; do
@@ -4879,7 +4934,8 @@ if ((dry_run == 1)); then
     for index in "${!paths[@]}"; do
         path=${paths[$index]}
         absolute_path=${absolute_paths[$index]}
-        if reason=$(sensitive_path_reason "$path"); then
+        if reason=$(sensitive_path_reason "$path") &&
+            [[ -z ${reviewed_source_paths[$path]+present} ]]; then
             add_risk "真实运行会拒绝 $(printf '%q' "$path"): $reason"
             continue
         fi
@@ -4979,7 +5035,8 @@ done
 for index in "${!paths[@]}"; do
     path=${paths[$index]}
     absolute_path=${absolute_paths[$index]}
-    if reason=$(sensitive_path_reason "$path"); then
+    if reason=$(sensitive_path_reason "$path") &&
+        [[ -z ${reviewed_source_paths[$path]+present} ]]; then
         fail "拒绝敏感文件 $(printf '%q' "$path"): $reason"
     fi
     if [[ -n ${retained_ignored_deletions[$path]+present} ]]; then
@@ -5000,6 +5057,7 @@ done
 
 if ((verify_only == 1)); then
     verify_local_candidate
+    load_source_reviews worktree
 
     verify_head_after=$(git -C "$repo" rev-parse --verify 'HEAD^{commit}') ||
         fail 'verify-only 无法记录验证后 HEAD'
@@ -5110,8 +5168,10 @@ if ! git -C "$repo" diff --cached --check >/dev/null; then
 fi
 printf '(passed)\n'
 
+load_source_reviews index
 for path in "${staged_paths[@]}"; do
-    if reason=$(sensitive_path_reason "$path"); then
+    if reason=$(sensitive_path_reason "$path") &&
+        [[ -z ${reviewed_source_paths[$path]+present} ]]; then
         fail "拒绝敏感 staged 文件 $(printf '%q' "$path"): $reason"
     fi
     if is_staged_large_binary "$path" &&
@@ -5166,6 +5226,15 @@ for path in "${committed_paths[@]}"; do
         else
             fail_after_commit "commit 包含超出显式范围的文件: $(printf '%q' "$path")"
         fi
+    fi
+done
+
+load_source_reviews head
+for path in "${!reviewed_source_paths[@]}"; do
+    reviewed_oid=$(git -C "$repo" rev-parse "HEAD:$path") ||
+        fail_after_commit '无法读取已审查源码 commit blob'
+    if reason=$(staged_content_reason "$reviewed_oid"); then
+        fail_after_commit "拒绝敏感 commit 内容: $reason"
     fi
 done
 

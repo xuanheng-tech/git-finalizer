@@ -76,6 +76,7 @@
         "--repo",
         "--allow-test-fixture",
         "--allow-large-binary",
+        "--reviewed-sensitive-source",
         "--summary",
         "--"
       ],
@@ -99,6 +100,7 @@
         "--allow-test-fixture",
         "--allow-large-binary",
         "--dry-run",
+        "--reviewed-sensitive-source",
         "--summary",
         "--"
       ],
@@ -146,6 +148,7 @@
         "--allow-test-fixture",
         "--allow-large-binary",
         "--dry-run",
+        "--reviewed-sensitive-source",
         "--summary",
         "--"
       ],
@@ -576,6 +579,10 @@
       "--worktree-path": {
         "arity": 1,
         "repeatable": false
+      },
+      "--reviewed-sensitive-source": {
+        "arity": 1,
+        "repeatable": false
       }
     },
     "path_delimiter": "--",
@@ -595,5 +602,5 @@
   ],
   "schema_version": 1,
   "tool_name": "git-finalizer",
-  "tool_version": "0.9.3"
+  "tool_version": "0.10.0"
 }
