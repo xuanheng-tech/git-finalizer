@@ -18,6 +18,8 @@ class ToolContractTests(unittest.TestCase):
         manifest_path = ROOT / "tool_skill_manifest.json"
         contract = json.loads(contract_path.read_text(encoding="utf-8"))
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(sync.read_json(contract_path), contract)
+        self.assertEqual(sync.read_json(manifest_path), manifest)
         version_match = re.search(
             r'^readonly VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$',
             (ROOT / "codex-git-finalize").read_text(encoding="utf-8"),

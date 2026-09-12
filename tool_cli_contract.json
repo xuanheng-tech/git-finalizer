@@ -552,6 +552,10 @@
         "arity": 1,
         "repeatable": false
       },
+      "--reviewed-sensitive-source": {
+        "arity": 1,
+        "repeatable": false
+      },
       "--role": {
         "arity": 1,
         "repeatable": false
@@ -577,10 +581,6 @@
         "repeatable": false
       },
       "--worktree-path": {
-        "arity": 1,
-        "repeatable": false
-      },
-      "--reviewed-sensitive-source": {
         "arity": 1,
         "repeatable": false
       }
