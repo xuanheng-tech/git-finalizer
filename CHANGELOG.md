@@ -72,6 +72,9 @@ section is invented for it.
 - Include `tool-temp-dir` with a neutral state namespace and explicit registered
   basename contract, retaining inode, ownership, mount and FD-bound cleanup gates.
 
+- Carry forward the 0.10.1 exact `HEAD -> index` deletion validation through the
+  renamed CLI, including staged deletion, rename-old-side and invalid-path regressions.
+
 ## 0.10.1
 
 - Validate absent explicit paths against the exact `HEAD -> index` deletion, with rename
