@@ -267,7 +267,8 @@
         "--remote",
         "--remote-branch",
         "--repo",
-        "--summary"
+        "--summary",
+        "--fixture-exceptions"
       ],
       "name": "publish_existing_branch",
       "operation_class": "remote_mutation",
@@ -602,5 +603,5 @@
   ],
   "schema_version": 1,
   "tool_name": "git-finalizer",
-  "tool_version": "0.10.1"
+  "tool_version": "0.10.2"
 }

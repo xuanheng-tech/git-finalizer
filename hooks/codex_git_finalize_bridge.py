@@ -628,8 +628,8 @@ def parse_direct_finalizer(
     publish_existing_history_oid = parsed.get("--publish-existing-history")
     fixture_exceptions = parsed.get("--fixture-exceptions")
     if fixture_exceptions is not None:
-        if not (publish_existing_history_oid or resume_existing_history_oid):
-            raise BridgeError("Finalizer 精确 fixture exception 仅用于 existing-history/resume")
+        if not (publish_existing_oid or publish_existing_history_oid or resume_existing_history_oid):
+            raise BridgeError("Finalizer 精确 fixture exception 仅用于 existing-branch 或 existing-history/resume")
         if (
             not Path(fixture_exceptions).is_absolute()
             or any(c in fixture_exceptions for c in ("\x00", "\n", "\r", "\t"))

@@ -59,6 +59,15 @@ section is invented for it.
   repository is preserved as a read-only archive and is no longer an active source; the
   private `ToolSkillManifest` continues to live here.
 
+## 0.10.2
+
+- Accept the existing exact fixture exception contract in `--publish-existing-branch`,
+  preserving repository root/remote, literal test path, blob OID, SHA-256 and detector
+  bindings. Unused exceptions, changed content, other paths/rules and existing targets
+  remain blocked; path-only fixture exceptions and ordinary resume remain unsupported.
+- Forward this exact option through the governed host boundary with unchanged writer,
+  permission, content, non-force push and remote verification gates.
+
 ## 0.10.1
 
 - Validate absent explicit paths against the exact `HEAD -> index` deletion, with rename

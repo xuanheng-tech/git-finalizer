@@ -390,18 +390,22 @@ class GitFinalizerBridgeTest(unittest.TestCase):
                 run.assert_called_once()
                 self.assertEqual(run.call_args.args[0], shlex.split(command))
 
-    def test_exact_fixture_exceptions_are_history_only_and_forwarded(self) -> None:
+    def test_exact_fixture_exceptions_are_first_publication_only_and_forwarded(self) -> None:
         option = " --fixture-exceptions /tmp/reviewed-fixtures.json"
-        for command in (self.publish_existing_history_command, self.resume_existing_history_command):
+        for command in (self.publish_existing_branch_command, self.publish_existing_history_command, self.resume_existing_history_command):
             with self.subTest(command=command):
                 output, run = self.invoke_main(self.event(command + option))
                 self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
                 self.assertEqual(run.call_args.args[0], shlex.split(command + option))
         commands = (
-            self.publish_existing_branch_command + option,
+            self.resume_publish_command + option,
             self.command.replace(" -- ", option + " -- ", 1),
             self.publish_existing_history_command + option + option,
             self.publish_existing_history_command + " --fixture-exceptions relative.json",
+            self.publish_existing_branch_command + option + option,
+            self.publish_existing_branch_command + " --fixture-exceptions relative.json",
+            self.publish_existing_branch_command + ' --fixture-exceptions "/tmp/invalid\nfixture.json"',
+            self.publish_existing_branch_command + option + " --allow-test-fixture tests/foo.py",
         )
         for command in commands:
             with self.subTest(command=command), self.assertRaises(bridge.BridgeError):

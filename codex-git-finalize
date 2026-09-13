@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="0.10.1"
+readonly VERSION="0.10.2"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -564,7 +564,7 @@ Usage:
     --repo <absolute-repo> [--summary]
   codex-git-finalize --publish-existing-branch <full-head-oid>
     --remote <remote-name> --remote-branch <branch-name>
-    --repo <absolute-repo> [--summary]
+    --repo <absolute-repo> [--summary] [--fixture-exceptions <absolute-json-file>]
   codex-git-finalize --publish-existing-history <full-head-oid>
     --remote <remote-name> --remote-branch <branch-name>
     --repo <absolute-repo> [--summary] [--fixture-exceptions <absolute-json-file>]
@@ -631,7 +631,7 @@ Options:
   --ci-verified-at <timestamp>   Optional caller-supplied CI evidence timestamp.
   --snapshot <id>                Bind initial publish to a complete snapshot.
   --allow-test-fixture <path>    Ignore content secret signatures for this exact tests/ file.
-  --fixture-exceptions <file>   Exact repository/path/blob/hash/rule exceptions for history/resume.
+  --fixture-exceptions <file>   Exact repository/path/blob/hash/rule exceptions for first branch/history publication.
   --reviewed-sensitive-source <file>
                                External exact Python source review; secret scans remain mandatory.
   --allow-large-binary <path>    Allow this exact binary file above 5 MiB, up to 25 MiB.
@@ -3153,6 +3153,7 @@ publish_existing_branch_head() {
     ) || [[ "$branch_head" != "$resume_expected_oid" ]]; then
         fail 'existing-branch publish 的本地 branch ref 与 expected HEAD 不一致'
     fi
+    load_fixture_exceptions
     classify_branch_upstream \
         "$branch_publish_branch" "$branch_publish_remote" "$branch_publish_branch_ref"
     if [[ "$branch_upstream_state" != 'none' ]]; then
@@ -3215,6 +3216,8 @@ publish_existing_branch_head() {
         fi
         printf 'validated changed paths: %s\n' "$resume_publish_path_count"
     else
+        [[ -z "$fixture_exceptions_file" ]] ||
+            fail 'fixture exception 未匹配待发布历史中的 exact path/blob/detector；未执行 push'
         printf 'all commits already reachable from captured remote heads\n'
     fi
     printf 'range safety checks: passed\n'
@@ -4469,8 +4472,8 @@ if ((source_review_seen == 1)); then
         authority_key_seen == 1)) || fail 'source review 要求完整 Controller linkage'
 fi
 if ((fixture_exceptions_seen == 1)); then
-    ((publish_existing_history == 1 || resume_existing_history == 1)) ||
-        fail '--fixture-exceptions 只接受 existing-history publication/resume'
+    ((publish_existing_branch == 1 || publish_existing_history == 1 || resume_existing_history == 1)) ||
+        fail '--fixture-exceptions 只接受 existing-branch 或 existing-history publication/resume'
 fi
 if ((commit_only == 1 || verify_only == 1)); then
     ((initial_commit_only == 0 && initial_publish == 0 &&
