@@ -126,6 +126,16 @@ def validate(args: argparse.Namespace) -> list[dict[str, object]]:
         "review allocation mismatch",
     )
     require(len(set(args.paths)) == len(args.paths), "duplicate scope path")
+    for scope_path in args.paths:
+        relative_scope = PurePosixPath(text(scope_path))
+        require(
+            not relative_scope.is_absolute()
+            and str(relative_scope) == scope_path
+            and relative_scope.parts
+            and not any(part in {"..", ".git"} for part in relative_scope.parts)
+            and not any(c in scope_path for c in "*?[]\\"),
+            "invalid exact scope path",
+        )
     require(
         review["scope_sha256"]
         == digest(("\n".join(sorted(args.paths)) + "\n").encode()),

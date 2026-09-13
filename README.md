@@ -12,8 +12,10 @@ Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明
 检查；仅明确登记的 fixture 可显式启用 `--allow-owned-fixture-fifo`。
 
 敏感命名的 Python 源码可通过显式 `--reviewed-sensitive-source` 提交定向审查证据。
+`--publish-existing-branch` 复用提交时相同的 exact review、Controller linkage 和文件 scope；
+发布前重新验证内容、证据和有效期，并继续扫描所有待发布 commit，拒绝未审查的历史版本。
 授权绑定仓库、Controller allocation、完整 scope 和 exact SHA256；内容扫描始终执行。
-格式及失效规则见 [source review contract](skills/git-change-delivery/references/git-finalizer.md#reviewed-sensitive-python-source0100)。
+格式及失效规则见 [source review contract](skills/git-change-delivery/references/git-finalizer.md#reviewed-sensitive-python-source0103)。
 
 ## Gitea repository bootstrap
 
@@ -302,10 +304,12 @@ HEAD/remote/worktree、已完成阶段和是否仍需恢复；commit-only 另含
 ### Exact synthetic fixture exceptions for existing history
 
 `--fixture-exceptions /absolute/reviewed-fixtures.json` is accepted only by
-`--publish-existing-history` and `--resume-existing-history-publish`. Both scan the
-entire proposed history with the same checks, including when the remote already
-contains the expected commit. This does not enable the path-only `--allow-test-fixture`
-option in either mode.
+`--publish-existing-branch`, `--publish-existing-history` and
+`--resume-existing-history-publish`. The first scans commits not reachable from the
+captured remote heads; the latter two scan the entire proposed history, including
+when the remote already contains the expected commit. All three use the same exact
+binding and content checks. This does not enable the path-only `--allow-test-fixture`
+option or grant an exception to ordinary `--resume-publish`.
 
 The JSON contract is `{"schema_version":1,"repository":{"root_commit":"<full root OID>",
 "remote_url_sha256":"<SHA256 of exact push URL, without newline>"},"exceptions":[

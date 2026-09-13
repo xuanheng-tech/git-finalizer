@@ -74,6 +74,26 @@ section is invented for it.
 
 - Carry forward the 0.10.1 exact `HEAD -> index` deletion validation through the
   renamed CLI, including staged deletion, rename-old-side and invalid-path regressions.
+- Preserve the exact fixture and reviewed-source first-branch publication contracts
+  from 0.10.2 and 0.10.3 through the same neutral CLI and validators.
+
+## 0.10.3
+
+- Reuse the existing reviewed-sensitive-source validator for first publication of a clean
+  existing branch. Require the same exact repository, allocation, explicit scope, source hash,
+  evidence and validity; revalidate before push. Keep all secret detectors mandatory and reject
+  historical versions whose blob differs from the reviewed HEAD source.
+- Forward the review and exact scope through the host bridge without weakening any other
+  publication mode or permitting content exceptions alongside a source review.
+
+## 0.10.2
+
+- Accept the existing exact fixture exception contract in `--publish-existing-branch`,
+  preserving repository root/remote, literal test path, blob OID, SHA-256 and detector
+  bindings. Unused exceptions, changed content, other paths/rules and existing targets
+  remain blocked; path-only fixture exceptions and ordinary resume remain unsupported.
+- Forward this exact option through the governed host boundary with unchanged writer,
+  permission, content, non-force push and remote verification gates.
 
 ## 0.10.1
 

@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+FINALIZER = ROOT / json.loads((ROOT / "tool_skill_manifest.json").read_text())["executable"]["entrypoints"][0]
 MODES = ("--publish-existing-history", "--resume-existing-history-publish")
 SYNTHETIC = "-" * 5 + "BEGIN PRIVATE KEY" + "-" * 5 + "\nSYNTHETIC TEST BODY\n"
 
@@ -89,14 +90,14 @@ class FixtureExceptionTests(unittest.TestCase):
             self.git("status", "--porcelain=v1", "--untracked-files=all"),
         )
         command = [
-            str(ROOT / "git-finalize"),
+            str(FINALIZER),
             "--summary",
             mode,
             before[0],
             "--remote",
             "origin",
             "--remote-branch",
-            "main",
+            self.git("branch", "--show-current"),
             "--repo",
             str(self.repo),
         ]
@@ -165,7 +166,7 @@ class FixtureExceptionTests(unittest.TestCase):
         self.assertEqual(data["mode_result"]["post_verify"], "passed")
         self.assertEqual(
             self.git("rev-parse", "HEAD"),
-            self.git("--git-dir=" + str(self.remote), "rev-parse", "refs/heads/main"),
+            self.git("--git-dir=" + str(self.remote), "rev-parse", "refs/heads/" + self.git("branch", "--show-current")),
         )
         return receipt
 

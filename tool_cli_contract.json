@@ -267,7 +267,13 @@
         "--remote",
         "--remote-branch",
         "--repo",
-        "--summary"
+        "--summary",
+        "--fixture-exceptions",
+        "--reviewed-sensitive-source",
+        "--repository-id",
+        "--allocation-id",
+        "--task-key",
+        "--authority-key"
       ],
       "name": "publish_existing_branch",
       "operation_class": "remote_mutation",
