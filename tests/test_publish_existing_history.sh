@@ -8,7 +8,7 @@ export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_NOSYSTEM=1
 
 project_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-finalizer=$project_root/codex-git-finalize
+finalizer=$project_root/git-finalize
 tmp_root=$(mktemp -d /tmp/git-finalizer-publish-history.XXXXXX)
 current_case='startup'
 passed=0
@@ -167,7 +167,7 @@ import sys
 
 data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 head = sys.argv[2]
-assert data["finalizer_version"] == "0.10.0"
+assert data["finalizer_version"] == "1.0.0"
 assert data["mode"] == "publish_existing_history"
 assert data["status"] == "success"
 assert data["branch"] == "main"

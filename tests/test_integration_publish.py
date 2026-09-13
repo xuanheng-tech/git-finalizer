@@ -12,7 +12,7 @@ import uuid
 
 
 ROOT = Path(__file__).resolve().parents[1]
-FINALIZER = ROOT / "codex-git-finalize"
+FINALIZER = ROOT / "git-finalize"
 
 
 def git(repo: Path, *arguments: str) -> str:
@@ -81,7 +81,7 @@ class IntegrationPublishFixture:
         self.worktree_key = (
             "wt_" + hashlib.sha256(os.fspath(relative_git_dir).encode()).hexdigest()
         )
-        self.metadata = self.common / "codex-worktree" / "v1"
+        self.metadata = self.common / "worktree-controller" / "v1"
         self.allocation_id = str(uuid.uuid4())
         self.repository_id = str(uuid.uuid4())
         self.lease_id = str(uuid.uuid4())
@@ -286,7 +286,7 @@ class IntegrationPublishTests(unittest.TestCase):
         before_reflog = self.fixture.remote_reflog_count()
         environment = {
             **os.environ,
-            "CODEX_GIT_FINALIZER_TEST_CRASH_AFTER_PUSH": "1",
+            "GIT_FINALIZER_TEST_CRASH_AFTER_PUSH": "1",
         }
         interrupted = subprocess.run(
             self.fixture.command(),
@@ -338,7 +338,7 @@ class IntegrationPublishTests(unittest.TestCase):
             text=True,
             env={
                 **os.environ,
-                "CODEX_GIT_FINALIZER_TEST_CRASH_AFTER_PUSH": "1",
+                "GIT_FINALIZER_TEST_CRASH_AFTER_PUSH": "1",
             },
         )
         self.assertEqual(interrupted.returncode, 97)

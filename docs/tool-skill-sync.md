@@ -1,4 +1,4 @@
-# Tool / Skill lifecycle contract v1
+# Tool / Skill lifecycle contract v2
 
 ## Owner and authority
 
@@ -28,13 +28,14 @@ compatibility shim 的独立 SHA-256 由 ToolSkillManifest v2 绑定，并随 bu
 ## Commands
 
 ```bash
-./codex-skill-sync status
-./codex-skill-sync check <context-loader|snapshot-runner|git-finalizer>
-./codex-skill-sync --install-root <isolated-root> install <tool> --allow-dirty-source
-./codex-skill-sync --install-root <isolated-root> rollback <tool>
-./codex-skill-sync install <tool> --activate-production
-./codex-skill-sync rollback <tool> --activate-production
-./codex-skill-sync upgrade <tool> [--dry-run]
+./tool-skill-sync --source-root /absolute/projects --source-repo git-finalizer=/absolute/worktree check --source-only git-finalizer
+./tool-skill-sync status
+./tool-skill-sync check <context-loader|snapshot-runner|git-finalizer>
+./tool-skill-sync --install-root <isolated-root> install <tool> --allow-dirty-source
+./tool-skill-sync --install-root <isolated-root> rollback <tool>
+./tool-skill-sync install <tool> --activate-production
+./tool-skill-sync rollback <tool> --activate-production
+./tool-skill-sync upgrade <tool> [--dry-run]
 ```
 
 `status` 只读取 canonical source、PATH 中 stable entries 与 active Skill，输出 `none`、
@@ -47,8 +48,7 @@ canonical source contract 与已安装生产状态，`--source-only` 仅在无�
 `no-build`，再以 `uv tool install --force` 安装 manifest 声明的版本——`--reinstall` 会先卸载再
 校验 entrypoint 冲突，可能让生产短暂没有可用 CLI，因此不使用。安装后校验全部 entrypoint、版本、
 receipt 的 bin 目录/index/no-build、符号链接目标，以及 site-packages 对已发布 wheel `RECORD` 的
-逐文件 SHA-256。任一校验失败即重新安装上一版本并 fail closed；保留的 legacy launcher 通过
-uv receipt 识别真正的 uv tool root，其目标不被改写。
+逐文件 SHA-256。任一校验失败即重新安装上一版本并 fail closed。
 
 ## ToolReleaseBundle and activation
 
@@ -65,7 +65,7 @@ release_manifest.json
 ```
 
 Python package 工具绑定并验证现有 console-script identity，不复制 venv；Git Finalizer bundle
-绑定正式脚本、snapshot companion、`codex-skill-sync` 实现与 PreToolUse bridge source。
+绑定正式脚本、所有 sidecar、`tool-skill-sync` 和 `tool-temp-dir` 实现。
 `release_manifest.json` 记录 exact tool identity、binary/entry SHA、Skill SHA、CLI contract SHA 和
 materialized manifest SHA，且不含 timestamp 或 developer-specific path。
 
@@ -77,7 +77,7 @@ verify 或 smoke 失败都不会替换 `CURRENT`。`rollback` 先完整验证 `P
 默认 `install` 仍只切换 managed bundle，便于隔离验收。显式 `--activate-production` 在 bundle
 完整验证与 smoke 后，事务化安装 active Skill；对 Python package 工具只验证已安装 console
 scripts 的版本并保留其稳定入口，对 Git Finalizer 同步安装 executable、snapshot companion、
-Skill Sync 和 bridge。安装前保存整组 active pair，任一写入、验证或 `KeyboardInterrupt` 都恢复
+Skill Sync。入口改名时必须已有验证过的旧 bundle；先验证新入口，再移除内容与旧 bundle 完全匹配的退役文件。安装前保存新旧 target 集合的并集，任一写入、验证或 `KeyboardInterrupt` 都恢复
 旧 pair；成功后才更新 managed `CURRENT` 与 production `PREVIOUS`。`rollback
 --activate-production` 同步恢复完整 pair，禁止只回退 Skill。
 

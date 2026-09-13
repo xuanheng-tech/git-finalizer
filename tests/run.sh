@@ -8,7 +8,7 @@ export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_NOSYSTEM=1
 
 project_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-finalizer=$project_root/codex-git-finalize
+finalizer=$project_root/git-finalize
 tmp_root=$(mktemp -d /tmp/git-finalizer-phase01.XXXXXX)
 current_case='startup'
 passed=0
@@ -250,9 +250,9 @@ meta = {
     "preview_sha256": digest(preview_bytes),
     "preview_bytes": len(preview_bytes),
 }
-directory = state / "codex-exec" / "snapshots" / snapshot_id
+directory = state / "snapshot-runner" / "snapshots" / snapshot_id
 directory.mkdir(parents=True, mode=0o700)
-for parent in (state, state / "codex-exec", state / "codex-exec" / "snapshots", directory):
+for parent in (state, state / "snapshot-runner", state / "snapshot-runner" / "snapshots", directory):
     parent.chmod(0o700)
 for name, content in (
     ("snapshot.json", snapshot_bytes),
@@ -1879,7 +1879,7 @@ test_release_contract() {
     printf '%s\n' '#!/usr/bin/env bash' ": >\"\$GIT_PROBE\"" 'exit 97' \
         >"$fake_bin/git"
     chmod 700 "$fake_bin/git"
-    printf 'codex-git-finalize 0.10.0\n' >"$version_expected"
+    printf 'git-finalize 1.0.0\n' >"$version_expected"
 
     GIT_PROBE="$git_probe" PATH="$fake_bin:$PATH" \
         "$finalizer" --version >"$version_output" 2>"$version_error"
@@ -1890,7 +1890,7 @@ test_release_contract() {
 
     expect_success "$help_output" "$finalizer" --help
     assert_file_contains "$help_output" \
-        'codex-git-finalize --repo <absolute-repo>' 'normal mode missing from help'
+        'git-finalize --repo <absolute-repo>' 'normal mode missing from help'
     assert_file_contains "$help_output" '--mode commit-only' \
         'commit-only mode missing from help'
     assert_file_contains "$help_output" '--initial-commit-only' \
@@ -1915,13 +1915,13 @@ test_release_contract() {
         'large binary override missing from help'
     assert_file_contains "$help_output" '--snapshot' \
         'snapshot evidence option missing from help'
-    assert_file_contains "$project_root/codex-git-finalize" \
-        'readonly VERSION="0.10.0"' 'script version constant drifted'
-    assert_file_contains "$project_root/README.md" "当前版本：\`0.10.0\`" \
+    assert_file_contains "$project_root/git-finalize" \
+        'readonly VERSION="1.0.0"' 'script version constant drifted'
+    assert_file_contains "$project_root/README.md" "当前版本：\`1.0.0\`" \
         'README version drifted'
-    [[ -f "$project_root/codex-git-finalize-snapshot-verify.py" ]] ||
+    [[ -f "$project_root/git-finalize-snapshot-verify.py" ]] ||
         fail_assertion 'snapshot verifier companion is missing'
-    assert_file_contains "$project_root/codex-git-finalize" \
+    assert_file_contains "$project_root/git-finalize" \
         '/usr/bin/python3 -B "$snapshot_verifier"' \
         'snapshot verifier invocation does not disable bytecode writes'
 }

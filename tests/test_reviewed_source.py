@@ -111,7 +111,7 @@ class ReviewedSourceTests(unittest.TestCase):
     ) -> tuple[int, dict]:
         before = self.state()
         command = [
-            str(ROOT / "codex-git-finalize"),
+            str(ROOT / "git-finalize"),
             "--summary",
             "--repo",
             str(self.repo),

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import base64
 import hashlib
 import json
@@ -20,7 +19,7 @@ import tomllib
 from typing import Any, Sequence
 
 
-VERSION = "1.5.0"
+VERSION = "2.0.0"
 SCHEMA_VERSION = 1
 TOOL_SKILL_MANIFEST_SCHEMA_VERSION = 2
 SKILL_NAME = "git-change-delivery"
@@ -166,7 +165,9 @@ def project_version(repo: Path, tool_name: str) -> tuple[str, tuple[str, ...]]:
             raise SyncError(f"invalid project version/scripts: {pyproject}")
         return version, tuple(sorted(str(name) for name in scripts))
 
-    executable = repo / "codex-git-finalize"
+    manifest = read_json(repo / "tool_skill_manifest.json")
+    entrypoints = validate_install_targets(manifest)
+    executable = repo / entrypoints[0]
     require_regular(executable, "Git Finalizer executable")
     match = re.search(
         rb"(?m)^(?:readonly )?VERSION=['\"]([0-9]+\.[0-9]+\.[0-9]+)['\"]$",
@@ -174,13 +175,21 @@ def project_version(repo: Path, tool_name: str) -> tuple[str, tuple[str, ...]]:
     )
     if match is None:
         raise SyncError("cannot read Git Finalizer source version")
-    return match.group(1).decode(), ("codex-git-finalize",)
+    return match.group(1).decode(), tuple(sorted(entrypoints))
 
 
 class Sources:
-    def __init__(self, source_root: Path) -> None:
+    def __init__(
+        self, source_root: Path, source_repos: dict[str, Path] | None = None
+    ) -> None:
         self.source_root = source_root.resolve()
-        self.owner_repo = self.source_root / "git-finalizer"
+        self.source_repos = {
+            name: path.resolve() for name, path in (source_repos or {}).items()
+        }
+        self.owner_repo = self.source_repos.get(
+            "git-finalizer", self.source_root / "git-finalizer"
+        )
+        require_owned_directory(self.owner_repo)
         self.compatibility_path = self.owner_repo / "toolchain_compatibility.json"
         self.compatibility = read_json(self.compatibility_path)
         if self.compatibility.get("schema_version") != SCHEMA_VERSION:
@@ -188,15 +197,20 @@ class Sources:
         workflow_skill = self.compatibility.get("workflow_skill")
         if workflow_skill != {
             "name": SKILL_NAME,
-            "contract_version": 1,
+            "contract_version": workflow_skill.get("contract_version")
+            if isinstance(workflow_skill, dict) else None,
             "canonical_owner": "git-finalizer",
             "compatibility_shims": [COMPATIBILITY_SKILL_NAME],
         }:
             raise SyncError("toolchain workflow Skill binding is unrecognized")
+        if workflow_skill["contract_version"] not in {1, 2}:
+            raise SyncError("unsupported workflow Skill contract version")
         tools = self.compatibility.get("tools")
         if not isinstance(tools, dict) or not tools:
             raise SyncError("toolchain compatibility contract has no tools")
         self.tool_config = tools
+        if set(self.source_repos) - set(tools):
+            raise SyncError("source-repo names an unknown tool")
         self.skill_root = self.owner_repo / "skills" / SKILL_NAME
         self.compatibility_skill_root = (
             self.owner_repo / "skills" / COMPATIBILITY_SKILL_NAME
@@ -209,6 +223,10 @@ class Sources:
         config = self.tool_config.get(tool)
         if not isinstance(config, dict):
             raise SyncError(f"unknown tool: {tool}")
+        if tool in self.source_repos:
+            repo = self.source_repos[tool]
+            require_owned_directory(repo)
+            return repo
         source_directory = config.get("source_directory")
         if not isinstance(source_directory, str) or not SAFE_NAME.fullmatch(
             source_directory
@@ -326,74 +344,6 @@ def validate_contract_shape(contract: dict[str, Any]) -> None:
                 raise SyncError(f"public CLI contract command {key} must be a list")
 
 
-def contract_bridge_specs(contract: dict[str, Any]) -> dict[str, tuple[int, bool]]:
-    bridge = contract.get("host_bridge")
-    if not isinstance(bridge, dict) or set(bridge) != {
-        "exposed_options",
-        "path_delimiter",
-        "unknown_options",
-    }:
-        raise SyncError("Git Finalizer host bridge contract is invalid")
-    if (
-        bridge.get("path_delimiter") != "--"
-        or bridge.get("unknown_options") != "reject"
-    ):
-        raise SyncError("Git Finalizer host bridge fail-closed policy is invalid")
-    options = bridge.get("exposed_options")
-    if not isinstance(options, dict) or not options:
-        raise SyncError("Git Finalizer host bridge options are missing")
-    result: dict[str, tuple[int, bool]] = {}
-    for option, spec in options.items():
-        if (
-            not isinstance(option, str)
-            or not option.startswith("--")
-            or not isinstance(spec, dict)
-            or set(spec) != {"arity", "repeatable"}
-            or spec.get("arity") not in (0, 1)
-            or not isinstance(spec.get("repeatable"), bool)
-        ):
-            raise SyncError("Git Finalizer host bridge option schema is invalid")
-        result[option] = (spec["arity"], spec["repeatable"])
-    return result
-
-
-def source_bridge_specs(path: Path) -> dict[str, tuple[int, bool]]:
-    require_regular(path, "Git Finalizer host bridge")
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    except (OSError, UnicodeError, SyntaxError) as exc:
-        raise SyncError("Git Finalizer host bridge cannot be parsed") from exc
-    for node in tree.body:
-        if (
-            isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and node.target.id == "BRIDGE_OPTION_SPECS"
-            and node.value is not None
-        ):
-            try:
-                value = ast.literal_eval(node.value)
-            except (ValueError, TypeError) as exc:
-                raise SyncError(
-                    "Git Finalizer host bridge schema is not literal"
-                ) from exc
-            if not isinstance(value, dict) or not all(
-                isinstance(option, str)
-                and isinstance(spec, tuple)
-                and len(spec) == 2
-                and spec[0] in (0, 1)
-                and isinstance(spec[1], bool)
-                for option, spec in value.items()
-            ):
-                raise SyncError("Git Finalizer host bridge schema is invalid")
-            return value
-    raise SyncError("Git Finalizer host bridge schema is missing")
-
-
-def validate_bridge_contract(contract: dict[str, Any], bridge_path: Path) -> None:
-    if source_bridge_specs(bridge_path) != contract_bridge_specs(contract):
-        raise SyncError("Git Finalizer host bridge and CLI contract differ")
-
-
 def validate_manifest_static_fields(
     manifest: dict[str, Any], *, allow_legacy: bool = False
 ) -> None:
@@ -459,11 +409,6 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
             raise SyncError("tool_name mismatch")
         validate_manifest_static_fields(manifest)
         validate_contract_shape(contract)
-        if tool == "git-finalizer":
-            validate_bridge_contract(
-                contract,
-                repo / "hooks" / "codex_git_finalize_bridge.py",
-            )
         if manifest.get("tool_version") != contract.get("tool_version"):
             raise SyncError("tool version mismatch between manifest and CLI contract")
         source_version, source_entrypoints = project_version(repo, tool)
@@ -485,7 +430,7 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
         if manifest["compatibility_skill"]["sha256"] != compatibility_sha:
             raise SyncError("compatibility Skill SHA mismatch")
         compatibility_version = sources.compatibility.get("toolchain_contract_version")
-        if compatibility_version not in {1, 2, 3}:
+        if compatibility_version not in {1, 2, 3, 4}:
             raise SyncError("unsupported toolchain compatibility contract version")
         if (
             manifest.get("compatible_toolchain_contract_version")
@@ -518,9 +463,12 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
                 raise SyncError(
                     "v1 requires Worktree Controller contract to remain null/planned"
                 )
-        elif controller_contract != 1 or controller_status != "available_external":
+        elif (
+            controller_contract != (2 if compatibility_version >= 4 else 1)
+            or controller_status != "available_external"
+        ):
             raise SyncError(
-                "v2+ requires external Worktree Controller contract version 1"
+                "external Worktree Controller contract is incompatible with the toolchain"
             )
     except SyncError as exc:
         errors.append(str(exc))
@@ -546,8 +494,8 @@ def extract_version(output: str) -> str | None:
 
 
 def bundled_sync_version(bundle: Path) -> str:
-    implementation = bundle / "executable" / "tooling" / "codex_skill_sync.py"
-    require_regular(implementation, "bundled codex-skill-sync implementation")
+    implementation = bundle / "executable" / "tooling" / "tool_skill_sync.py"
+    require_regular(implementation, "bundled tool-skill-sync implementation")
     versions = set(
         re.findall(
             r"(?<![0-9])([0-9]+\.[0-9]+\.[0-9]+)(?![0-9])",
@@ -555,7 +503,7 @@ def bundled_sync_version(bundle: Path) -> str:
         )
     )
     if len(versions) != 1:
-        raise SyncError("bundled codex-skill-sync version is ambiguous")
+        raise SyncError("bundled tool-skill-sync version is ambiguous")
     return versions.pop()
 
 
@@ -881,6 +829,10 @@ def verify_python_tool(
         ):
             raise SyncError(f"upgrade changed the resolved target of {name}")
     retired = sorted(set(expected["entry_targets"]) - set(entrypoints))
+    for name in retired:
+        path = Path(expected["entry_targets"][name])
+        if path.exists() or path.is_symlink():
+            raise SyncError(f"upgrade left a retired entrypoint installed: {name}")
     record = verify_installed_record(Path(installation["root"]))
     return {
         "version": binary["version"],
@@ -898,6 +850,7 @@ def upgrade(
     *,
     bin_dir: Path | None,
     dry_run: bool = False,
+    previous_bundle: Path | None = None,
 ) -> dict[str, Any]:
     """Upgrade one console-script tool to its canonical release, or restore the old one."""
     manifest = read_json(sources.manifest_path(tool))
@@ -905,9 +858,21 @@ def upgrade(
     if manifest["executable"]["kind"] != "python_console_scripts":
         raise SyncError(f"{tool} is not installed as Python console scripts")
     target_version = str(manifest["tool_version"])
-    before = python_tool_installation(entrypoints, bin_dir)
+    previous_entries = entrypoints
+    previous_manifest = None
+    if previous_bundle is not None:
+        verify_bundle(previous_bundle, tool)
+        previous_manifest = read_json(previous_bundle / "tool_skill_manifest.json")
+        if previous_manifest["executable"]["kind"] != "python_console_scripts":
+            raise SyncError("previous bundle is not a Python console-script tool")
+        previous_entries = validate_install_targets(previous_manifest, allow_legacy=True)
+    before = python_tool_installation(previous_entries, bin_dir)
     intended, drifted = canonical_install_policy(sources, tool, before)
-    previous_version = installed_binary_state(entrypoints, bin_dir)["version"]
+    previous_version = installed_binary_state(previous_entries, bin_dir)["version"]
+    if previous_manifest is not None:
+        if previous_version != previous_manifest["tool_version"]:
+            raise SyncError("installed release does not match the explicit previous bundle")
+        verify_python_tool(tool, previous_version, previous_entries, bin_dir, before)
     stable_paths = intended["bin_dir"] == before["bin_dir"]
     plan = {
         "schema_version": SCHEMA_VERSION,
@@ -922,7 +887,7 @@ def upgrade(
         "observed_bin_dir": before["bin_dir"],
         "observed_no_build": before["no_build"],
     }
-    if previous_version == target_version and not drifted:
+    if previous_version == target_version and not drifted and previous_entries == entrypoints:
         plan["status"] = "UNCHANGED"
         plan["verification"] = verify_python_tool(
             tool, target_version, entrypoints, bin_dir, intended
@@ -947,7 +912,7 @@ def upgrade(
             intended,
             expect_stable_paths=stable_paths,
         )
-    except (SyncError, OSError, subprocess.SubprocessError) as exc:
+    except (SyncError, OSError, subprocess.SubprocessError, KeyboardInterrupt) as exc:
         plan["status"] = "RESTORED"
         plan["error"] = str(exc)
         if previous_version is None:
@@ -962,14 +927,20 @@ def upgrade(
                 no_build=before["no_build"],
             )
             plan["restored_verification"] = verify_python_tool(
-                tool, previous_version, entrypoints, bin_dir, before
+                tool, previous_version, previous_entries, bin_dir, before
             )
+            for name in set(entrypoints) - set(previous_entries):
+                path = Path(intended["bin_dir"]) / name
+                if path.exists() or path.is_symlink():
+                    raise SyncError(f"restoration left a new entrypoint installed: {name}")
             plan["restored_shape"] = "observed"
         except (SyncError, OSError, subprocess.SubprocessError) as restore_error:
             plan["status"] = "FAILED"
             raise SyncError(
                 f"{exc}; restoring {previous_version} also failed: {restore_error}"
             ) from None
+        if isinstance(exc, KeyboardInterrupt):
+            raise
         raise SyncError(
             f"upgrade failed and {previous_version} was restored: {exc}"
         ) from None
@@ -1210,11 +1181,6 @@ def verify_bundle(bundle: Path, expected_tool: str | None = None) -> dict[str, A
             )
     if manifest.get("public_cli_contract_sha256") != hashes["cli_contract_sha"]:
         raise SyncError("bundle CLI contract does not match ToolSkillManifest")
-    if release.get("tool_name") == "git-finalizer":
-        validate_bridge_contract(
-            contract,
-            bundle / "executable" / "hooks" / "codex_git_finalize_bridge.py",
-        )
     executable = manifest.get("executable", {})
     if executable.get("kind") == "python_console_scripts":
         identity_path = bundle / "executable_identity.json"
@@ -1246,13 +1212,13 @@ def smoke_bundle(bundle: Path) -> None:
         result.stdout + result.stderr
     ) != release.get("tool_version"):
         raise SyncError("bundled executable --version smoke failed")
-    sync_entry = bundle / "executable" / "codex-skill-sync"
+    sync_entry = bundle / "executable" / "tool-skill-sync"
     if sync_entry.exists():
         result = run((str(sync_entry), "--version"))
         if result.returncode != 0 or extract_version(
             result.stdout + result.stderr
         ) != bundled_sync_version(bundle):
-            raise SyncError("bundled codex-skill-sync --version smoke failed")
+            raise SyncError("bundled tool-skill-sync --version smoke failed")
 
 
 def atomic_symlink(directory: Path, name: str, target: Path) -> None:
@@ -1353,11 +1319,11 @@ def production_target_sources(
     else:
         live_bin_dir = bin_dir.resolve()
     require_owned_directory(live_bin_dir)
-    require_owned_directory(hooks_dir)
     roots = {"bin": live_bin_dir, "hooks": hooks_dir}
     for source_relative, target_relative in executable["production_targets"].items():
         target_path = Path(target_relative)
         root = roots[target_path.parts[0]]
+        require_owned_directory(root)
         within_root = Path(*target_path.parts[1:])
         if not within_root.parts:
             raise SyncError("production target must name a file")
@@ -1413,13 +1379,11 @@ def verify_production_bundle(
     if binary["version"] != release["tool_version"]:
         raise SyncError("active stable entry version does not match ToolReleaseBundle")
     if manifest["executable"]["kind"] == "source_files":
-        bridge = hooks_dir / "codex_git_finalize_bridge.py"
-        validate_bridge_contract(read_json(bundle / "tool_cli_contract.json"), bridge)
         sync_entry = next(
             (
                 target
                 for target, source in targets.items()
-                if source.name == "codex-skill-sync"
+                if source.name == "tool-skill-sync"
             ),
             None,
         )
@@ -1428,7 +1392,7 @@ def verify_production_bundle(
             if result.returncode != 0 or extract_version(
                 result.stdout + result.stderr
             ) != bundled_sync_version(bundle):
-                raise SyncError("active codex-skill-sync smoke failed")
+                raise SyncError("active tool-skill-sync smoke failed")
     return {
         "binary_version": binary["version"],
         "binary_sha256": binary["sha256"],
@@ -1644,6 +1608,7 @@ def activate_production_bundle(
     agents_root: Path,
     bin_dir: Path | None,
     hooks_dir: Path,
+    previous_bundle: Path | None = None,
 ) -> tuple[Path | None, dict[str, Any]]:
     targets, live_bin_dir = production_target_sources(
         bundle,
@@ -1651,7 +1616,23 @@ def activate_production_bundle(
         bin_dir=bin_dir,
         hooks_dir=hooks_dir,
     )
-    if production_pair_matches(
+    previous_targets = {}
+    if previous_bundle is not None:
+        previous_targets, _ = production_target_sources(
+            previous_bundle, agents_root=agents_root, bin_dir=live_bin_dir,
+            hooks_dir=hooks_dir,
+        )
+    retired = set(previous_targets) - set(targets)
+    for target in retired:
+        if not target.exists() and not target.is_symlink():
+            continue
+        require_owned_regular(target, "retiring production target")
+        source = previous_targets[target]
+        if (sha256_file(target) != sha256_file(source)
+                or stat.S_IMODE(target.stat().st_mode) != stat.S_IMODE(source.stat().st_mode)):
+            raise SyncError(f"retiring production target drifted: {target}")
+    all_targets = tuple(set(targets) | set(previous_targets))
+    if not retired and production_pair_matches(
         bundle,
         agents_root=agents_root,
         bin_dir=live_bin_dir,
@@ -1663,7 +1644,7 @@ def activate_production_bundle(
             bin_dir=live_bin_dir,
             hooks_dir=hooks_dir,
         )
-    backup = capture_production_pair(tool, tuple(targets), production_root)
+    backup = capture_production_pair(tool, all_targets, production_root)
     try:
         replace_production_pair(targets)
         verified = verify_production_bundle(
@@ -1672,8 +1653,13 @@ def activate_production_bundle(
             bin_dir=live_bin_dir,
             hooks_dir=hooks_dir,
         )
+        for target in retired:
+            if target.exists():
+                target.unlink()
+                fsync_directory(target.parent)
+        verified["retired_targets"] = sorted(map(str, retired))
     except BaseException:
-        restore_production_pair(backup, tuple(targets))
+        restore_production_pair(backup, all_targets)
         raise
     return backup, verified
 
@@ -1809,6 +1795,7 @@ def install(
             agents_root=agents_root,
             bin_dir=bin_dir,
             hooks_dir=hooks_dir,
+            previous_bundle=current,
         )
 
     try:
@@ -1837,6 +1824,12 @@ def install(
                 bin_dir=bin_dir,
                 hooks_dir=hooks_dir or Path(),
             )
+            if current is not None:
+                previous_targets, _ = production_target_sources(
+                    current, agents_root=agents_root or Path(), bin_dir=bin_dir,
+                    hooks_dir=hooks_dir or Path(),
+                )
+                targets.update(previous_targets)
             restore_production_pair(production_backup, tuple(targets))
         restore_pointer(state_root, "CURRENT", current)
         restore_pointer(state_root, "PREVIOUS", previous_before)
@@ -1899,9 +1892,9 @@ def rollback(
             bin_dir=bin_dir,
             hooks_dir=hooks_dir,
         )
-        if set(current_targets) != set(previous_targets):
-            raise SyncError("production rollback target set changed between bundles")
-        if production_pair_matches(
+        retired = set(current_targets) - set(previous_targets)
+        all_targets = tuple(set(current_targets) | set(previous_targets))
+        if not any(p.exists() or p.is_symlink() for p in retired) and production_pair_matches(
             previous,
             agents_root=agents_root,
             bin_dir=bin_dir,
@@ -1916,11 +1909,17 @@ def rollback(
         else:
             if production_previous is None:
                 raise SyncError(f"production rollback has no previous pair for {tool}")
-            current_production_backup = capture_production_pair(
-                tool, tuple(current_targets), production_root
+            verify_production_bundle(
+                current, agents_root=agents_root, bin_dir=bin_dir, hooks_dir=hooks_dir
             )
-            restore_production_pair(production_previous, tuple(previous_targets))
+            receipt = verify_production_backup(production_previous)
+            if {Path(entry["target"]) for entry in receipt["entries"]} != set(all_targets):
+                raise SyncError("production rollback backup does not cover both target sets")
+            current_production_backup = capture_production_pair(
+                tool, all_targets, production_root
+            )
             try:
+                restore_production_pair(production_previous, all_targets)
                 production_verified = verify_production_bundle(
                     previous,
                     agents_root=agents_root,
@@ -1929,7 +1928,7 @@ def rollback(
                 )
             except BaseException:
                 restore_production_pair(
-                    current_production_backup, tuple(current_targets)
+                    current_production_backup, all_targets
                 )
                 raise
     try:
@@ -1943,7 +1942,7 @@ def rollback(
         restore_pointer(state_root, "CURRENT", current)
         restore_pointer(state_root, "PREVIOUS", previous)
         if current_production_backup is not None:
-            restore_production_pair(current_production_backup, tuple(current_targets))
+            restore_production_pair(current_production_backup, all_targets)
         if production_root is not None:
             restore_pointer(production_root, "PREVIOUS", production_previous)
         raise
@@ -1959,18 +1958,22 @@ def rollback(
 
 def parser() -> argparse.ArgumentParser:
     owner_repo = Path(__file__).resolve().parent.parent
-    result = argparse.ArgumentParser(prog="codex-skill-sync")
+    result = argparse.ArgumentParser(prog="tool-skill-sync")
     result.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     result.add_argument("--source-root", type=Path, default=owner_repo.parent)
     result.add_argument(
+        "--source-repo", action="append", default=[], metavar="TOOL=PATH",
+        help="explicit source checkout; repeat for independently allocated worktrees",
+    )
+    result.add_argument(
         "--install-root",
         type=Path,
-        default=Path.home() / ".local" / "state" / "codex-skill-sync",
+        default=Path.home() / ".local" / "state" / "tool-skill-sync",
     )
     result.add_argument("--agents-root", type=Path, default=Path.home() / ".agents")
     result.add_argument("--bin-dir", type=Path)
     result.add_argument(
-        "--hooks-dir", type=Path, default=Path.home() / ".codex" / "hooks"
+        "--hooks-dir", type=Path, default=Path.home() / ".agents" / "hooks"
     )
     subcommands = result.add_subparsers(dest="command", required=True)
     subcommands.add_parser("status")
@@ -1991,6 +1994,10 @@ def parser() -> argparse.ArgumentParser:
     upgrade_parser = subcommands.add_parser("upgrade")
     upgrade_parser.add_argument("tool")
     upgrade_parser.add_argument("--dry-run", action="store_true")
+    upgrade_parser.add_argument(
+        "--previous-bundle", type=Path,
+        help="verified prior release identity when all console-script names changed",
+    )
     rollback_parser = subcommands.add_parser("rollback")
     rollback_parser.add_argument("tool")
     rollback_parser.add_argument("--activate-production", action="store_true")
@@ -2000,7 +2007,15 @@ def parser() -> argparse.ArgumentParser:
 def main(arguments: Sequence[str] | None = None) -> int:
     args = parser().parse_args(arguments)
     try:
-        sources = Sources(args.source_root)
+        source_repos = {}
+        for value in args.source_repo:
+            name, separator, path = value.partition("=")
+            if not separator or not SAFE_NAME.fullmatch(name) or not Path(path).is_absolute():
+                raise SyncError("source-repo requires TOOL=/absolute/path")
+            if name in source_repos:
+                raise SyncError("source-repo contains a duplicate tool")
+            source_repos[name] = Path(path)
+        sources = Sources(args.source_root, source_repos)
         if args.command == "status":
             output = status(sources, args.agents_root.resolve(), args.bin_dir)
         else:
@@ -2025,6 +2040,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     args.tool,
                     bin_dir=args.bin_dir,
                     dry_run=args.dry_run,
+                    previous_bundle=args.previous_bundle,
                 )
                 print(canonical_json(output).decode(), end="")
                 return 0
@@ -2051,7 +2067,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print(canonical_json(output).decode(), end="")
         return 0
     except (OSError, SyncError, subprocess.SubprocessError) as exc:
-        print(f"codex-skill-sync: {exc}", file=sys.stderr)
+        print(f"tool-skill-sync: {exc}", file=sys.stderr)
         return 2
 
 

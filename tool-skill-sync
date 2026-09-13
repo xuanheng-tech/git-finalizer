@@ -2,10 +2,10 @@
 set -euo pipefail
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-implementation="$script_dir/tooling/codex_skill_sync.py"
+implementation="$script_dir/tooling/tool_skill_sync.py"
 if [[ ! -f "$implementation" ]]; then
-    implementation="$script_dir/codex-skill-sync-support/codex_skill_sync.py"
-    source_root=${CODEX_SKILL_SYNC_SOURCE_ROOT:-"$HOME/projects"}
+    implementation="$script_dir/tool-skill-sync-support/tool_skill_sync.py"
+    source_root=${TOOL_SKILL_SYNC_SOURCE_ROOT:-"$HOME/projects"}
     exec python3 -B "$implementation" --source-root "$source_root" "$@"
 fi
 exec python3 -B "$implementation" "$@"

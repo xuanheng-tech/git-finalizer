@@ -9,13 +9,13 @@ import tempfile
 import unittest
 from unittest import mock
 
-from tooling import codex_skill_sync as sync
+from tooling import tool_skill_sync as sync
 
 
 TOOLS = {
-    "context-loader": ("0.1.5", ("codex-project-context",)),
+    "context-loader": ("0.1.5", ("project-context",)),
     "snapshot-runner": ("1.4.0", ("snapshot-runner",)),
-    "git-finalizer": ("0.9.3", ("codex-git-finalize",)),
+    "git-finalizer": ("0.9.3", ("git-finalize",)),
 }
 
 
@@ -128,55 +128,49 @@ class SkillSyncTests(unittest.TestCase):
                 "operation_classes": ["read_only"],
                 "protected_operations": [],
             }
-            if name == "git-finalizer":
-                contract["host_bridge"] = {
-                    "exposed_options": {"--summary": {"arity": 0, "repeatable": False}},
-                    "path_delimiter": "--",
-                    "unknown_options": "reject",
-                }
             write_json(repo / "tool_cli_contract.json", contract)
             if name == "git-finalizer":
                 executable_kind = "source_files"
-                executable = repo / "codex-git-finalize"
+                executable = repo / "git-finalize"
                 executable.write_text(
                     "#!/usr/bin/env bash\n"
                     f'readonly VERSION="{version}"\n'
-                    "printf 'codex-git-finalize %s\\n' \"$VERSION\"\n",
+                    "printf 'git-finalize %s\\n' \"$VERSION\"\n",
                     encoding="utf-8",
                 )
                 executable.chmod(0o755)
-                companion = repo / "codex-git-finalize-snapshot-verify.py"
+                companion = repo / "git-finalize-snapshot-verify.py"
                 companion.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
                 companion.chmod(0o755)
-                bridge = repo / "hooks" / "codex_git_finalize_bridge.py"
+                bridge = repo / "hooks" / "test_support.py"
                 bridge.parent.mkdir()
                 bridge.write_text(
                     "BRIDGE_OPTION_SPECS: dict[str, tuple[int, bool]] = "
                     '{"--summary": (0, False)}\n',
                     encoding="utf-8",
                 )
-                sync_entry = repo / "codex-skill-sync"
+                sync_entry = repo / "tool-skill-sync"
                 sync_entry.write_text(
                     "#!/usr/bin/env bash\n"
                     "set -euo pipefail\n"
                     'script_dir=$(CDPATH=\'\' cd -- "$(dirname -- "$0")" && pwd)\n'
-                    'implementation="$script_dir/tooling/codex_skill_sync.py"\n'
+                    'implementation="$script_dir/tooling/tool_skill_sync.py"\n'
                     'if [[ ! -f "$implementation" ]]; then\n'
-                    '    implementation="$script_dir/codex-skill-sync-support/'
-                    'codex_skill_sync.py"\n'
+                    '    implementation="$script_dir/tool-skill-sync-support/'
+                    'tool_skill_sync.py"\n'
                     "fi\n"
                     'exec python3 -B "$implementation" "$@"\n',
                     encoding="utf-8",
                 )
                 sync_entry.chmod(0o755)
-                sync_implementation = repo / "tooling" / "codex_skill_sync.py"
+                sync_implementation = repo / "tooling" / "tool_skill_sync.py"
                 sync_implementation.parent.mkdir()
                 sync_implementation.write_text(
                     "#!/usr/bin/env python3\n"
                     "import argparse\n"
-                    "parser = argparse.ArgumentParser(prog='codex-skill-sync')\n"
+                    "parser = argparse.ArgumentParser(prog='tool-skill-sync')\n"
                     "parser.add_argument('--version', action='version', "
-                    f"version='codex-skill-sync {sync.VERSION}')\n"
+                    f"version='tool-skill-sync {sync.VERSION}')\n"
                     "parser.parse_args()\n",
                     encoding="utf-8",
                 )
@@ -184,24 +178,24 @@ class SkillSyncTests(unittest.TestCase):
                 executable_definition = {
                     "kind": executable_kind,
                     "paths": [
-                        "codex-git-finalize",
-                        "codex-git-finalize-snapshot-verify.py",
-                        "hooks/codex_git_finalize_bridge.py",
-                        "codex-skill-sync",
-                        "tooling/codex_skill_sync.py",
+                        "git-finalize",
+                        "git-finalize-snapshot-verify.py",
+                        "hooks/test_support.py",
+                        "tool-skill-sync",
+                        "tooling/tool_skill_sync.py",
                     ],
                     "entrypoints": list(entrypoints),
                     "production_targets": {
-                        "codex-git-finalize": "bin/codex-git-finalize",
-                        "codex-git-finalize-snapshot-verify.py": (
-                            "bin/codex-git-finalize-snapshot-verify.py"
+                        "git-finalize": "bin/git-finalize",
+                        "git-finalize-snapshot-verify.py": (
+                            "bin/git-finalize-snapshot-verify.py"
                         ),
-                        "hooks/codex_git_finalize_bridge.py": (
-                            "hooks/codex_git_finalize_bridge.py"
+                        "hooks/test_support.py": (
+                            "hooks/test_support.py"
                         ),
-                        "codex-skill-sync": "bin/codex-skill-sync",
-                        "tooling/codex_skill_sync.py": (
-                            "bin/codex-skill-sync-support/codex_skill_sync.py"
+                        "tool-skill-sync": "bin/tool-skill-sync",
+                        "tooling/tool_skill_sync.py": (
+                            "bin/tool-skill-sync-support/tool_skill_sync.py"
                         ),
                     },
                 }
@@ -279,10 +273,10 @@ class SkillSyncTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 path.chmod(0o755)
-        (self.bin_dir / "codex-git-finalize-snapshot-verify.py").write_text(
+        (self.bin_dir / "git-finalize-snapshot-verify.py").write_text(
             "old companion\n", encoding="utf-8"
         )
-        (self.hooks_dir / "codex_git_finalize_bridge.py").write_text(
+        (self.hooks_dir / "test_support.py").write_text(
             "BRIDGE_OPTION_SPECS: dict[str, tuple[int, bool]] = "
             "{'--old': (0, False)}\n",
             encoding="utf-8",
@@ -404,6 +398,81 @@ class SkillSyncTests(unittest.TestCase):
         )
         self.assertEqual(self._deployment()["status"], "FAIL")
 
+    def test_explicit_checkouts_do_not_require_a_shared_directory_layout(self) -> None:
+        owner = self.sources_root / "git-finalizer"
+        checkout = self.root / "independent-feature"
+        owner.rename(checkout)
+        sources = sync.Sources(self.sources_root, {"git-finalizer": checkout})
+        self.assertEqual(sync.check_tool(sources, "git-finalizer")["status"], "PASS")
+        with self.assertRaisesRegex(sync.SyncError, "unknown tool"):
+            sync.Sources(self.sources_root, {"git-finalizer": checkout, "unknown": checkout})
+
+    def _rename_primary(self, old: str, new: str) -> None:
+        repo = self.sources_root / "git-finalizer"
+        (repo / old).rename(repo / new)
+        manifest_path = repo / "tool_skill_manifest.json"
+        manifest = sync.read_json(manifest_path)
+        executable = manifest["executable"]
+        executable["entrypoints"] = [new]
+        executable["paths"] = [new if p == old else p for p in executable["paths"]]
+        executable["production_targets"].pop(old)
+        executable["production_targets"][new] = f"bin/{new}"
+        manifest["install_targets"]["stable_entries"] = [new]
+        contract_path = repo / "tool_cli_contract.json"
+        contract = sync.read_json(contract_path)
+        contract["commands"][0]["name"] = new
+        write_json(contract_path, contract)
+        manifest["public_cli_contract_sha256"] = sync.sha256_file(contract_path)
+        write_json(manifest_path, manifest)
+
+    def test_renamed_entrypoint_activation_and_rollback_restore_exact_sets(self) -> None:
+        self._rename_primary("git-finalize", "legacy-finalize")
+        self._install_production("git-finalizer", allow_dirty_source=True)
+        (self.bin_dir / "git-finalize").unlink()  # Absent in this old installation.
+        previous = self._current("git-finalizer")
+        old_content = (self.bin_dir / "legacy-finalize").read_bytes()
+        self._rename_primary("legacy-finalize", "git-finalize")
+        self._install_production("git-finalizer", allow_dirty_source=True)
+        current = self._current("git-finalizer")
+        self.assertFalse((self.bin_dir / "legacy-finalize").exists())
+        self.assertTrue((self.bin_dir / "git-finalize").is_file())
+        result = sync.rollback(
+            "git-finalizer", self.install_root, activate_production=True,
+            agents_root=self.agents_root, bin_dir=self.bin_dir, hooks_dir=self.hooks_dir,
+        )
+        self.assertEqual(result["status"], "ROLLED_BACK")
+        self.assertEqual(self._current("git-finalizer"), previous)
+        self.assertFalse((self.bin_dir / "git-finalize").exists())
+        self.assertEqual((self.bin_dir / "legacy-finalize").read_bytes(), old_content)
+        sync.rollback(
+            "git-finalizer", self.install_root, activate_production=True,
+            agents_root=self.agents_root, bin_dir=self.bin_dir, hooks_dir=self.hooks_dir,
+        )
+        self.assertEqual(self._current("git-finalizer"), current)
+        self.assertFalse((self.bin_dir / "legacy-finalize").exists())
+
+    def test_renamed_entrypoint_failure_keeps_previous_command_and_pointer(self) -> None:
+        self._install_production("git-finalizer")
+        previous = self._current("git-finalizer")
+        original = (self.bin_dir / "git-finalize").read_bytes()
+        self._rename_primary("git-finalize", "new-finalize")
+        with mock.patch.object(sync, "verify_production_bundle", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self._install_production("git-finalizer", allow_dirty_source=True)
+        self.assertEqual(self._current("git-finalizer"), previous)
+        self.assertEqual((self.bin_dir / "git-finalize").read_bytes(), original)
+        self.assertFalse((self.bin_dir / "new-finalize").exists())
+
+    def test_retiring_entrypoint_drift_prevents_deletion(self) -> None:
+        self._install_production("git-finalizer")
+        self._rename_primary("git-finalize", "new-finalize")
+        entry = self.bin_dir / "git-finalize"
+        entry.write_text("local work must survive\n")
+        with self.assertRaisesRegex(sync.SyncError, "retiring production target drifted"):
+            self._install_production("git-finalizer", allow_dirty_source=True)
+        self.assertEqual(entry.read_text(), "local work must survive\n")
+        self.assertFalse((self.bin_dir / "new-finalize").exists())
+
     # --- safe production upgrade path -------------------------------------------------
 
     def _uv_tool_layout(
@@ -415,7 +484,7 @@ class SkillSyncTests(unittest.TestCase):
         """Build a uv-tool-shaped installation for snapshot-runner in the fixture."""
         root = self.root / "uvtools" / "snapshot-runner"
         site = root / "lib" / "python3.12" / "site-packages"
-        package = site / "codex_snapshot_runner"
+        package = site / "snapshot_runner"
         package.mkdir(parents=True, exist_ok=True)
         module = package / "__init__.py"
         module.write_text(f'__version__ = "{version}"\n', encoding="utf-8")
@@ -429,7 +498,7 @@ class SkillSyncTests(unittest.TestCase):
             .decode()
         )
         (dist_info / "RECORD").write_text(
-            f"codex_snapshot_runner/__init__.py,sha256={digest},{module.stat().st_size}\n"
+            f"snapshot_runner/__init__.py,sha256={digest},{module.stat().st_size}\n"
             f"../../../bin/snapshot-runner,sha256=ignored,1\n"
             f"snapshot_runner-{version}.dist-info/RECORD,,\n",
             encoding="utf-8",
@@ -518,7 +587,7 @@ class SkillSyncTests(unittest.TestCase):
             attempts.append(version)
             if version == "1.4.0":
                 raise sync.SyncError(
-                    "uv tool install failed: Executables already exist: codex-diff-audit"
+                    "uv tool install failed: Executables already exist: legacy-command"
                 )
             self._uv_tool_layout(version)
 
@@ -547,7 +616,7 @@ class SkillSyncTests(unittest.TestCase):
 
     def test_upgrade_detects_runtime_files_that_do_not_match_the_artifact(self) -> None:
         root = self._uv_tool_layout("1.4.0")
-        module = root / "lib" / "python3.12" / "site-packages" / "codex_snapshot_runner"
+        module = root / "lib" / "python3.12" / "site-packages" / "snapshot_runner"
         (module / "__init__.py").write_text(
             "__version__ = 'tampered'\n", encoding="utf-8"
         )
@@ -574,6 +643,67 @@ class SkillSyncTests(unittest.TestCase):
             report["verification"]["retired_entrypoints"], ["legacy-alias"]
         )
         self.assertEqual(sorted(report["verification"]["entries"]), ["snapshot-runner"])
+
+    def _previous_python_bundle(self) -> Path:
+        repo = self.sources_root / "snapshot-runner"
+        originals = {p: (repo / p).read_bytes() for p in (
+            "pyproject.toml", "tool_cli_contract.json", "tool_skill_manifest.json"
+        )}
+        project = repo / "pyproject.toml"
+        project.write_text(project.read_text().replace('version = "1.4.0"', 'version = "1.3.0"')
+                           .replace('snapshot-runner =', 'legacy-runner ='))
+        contract_path = repo / "tool_cli_contract.json"
+        contract = sync.read_json(contract_path)
+        contract["tool_version"] = "1.3.0"
+        contract["commands"][0]["name"] = "legacy-runner"
+        write_json(contract_path, contract)
+        manifest_path = repo / "tool_skill_manifest.json"
+        manifest = sync.read_json(manifest_path)
+        manifest["tool_version"] = "1.3.0"
+        manifest["executable"]["entrypoints"] = ["legacy-runner"]
+        manifest["install_targets"]["stable_entries"] = ["legacy-runner"]
+        manifest["public_cli_contract_sha256"] = sync.sha256_file(contract_path)
+        write_json(manifest_path, manifest)
+        try:
+            sync.install(self.sources, "snapshot-runner", self.install_root, allow_dirty_source=True)
+            bundle = self._current("snapshot-runner")
+        finally:
+            for p, content in originals.items():
+                (repo / p).write_bytes(content)
+        self._uv_tool_layout("1.3.0", entrypoints=("legacy-runner",))
+        (self.bin_dir / "snapshot-runner").unlink()
+        return bundle
+
+    def test_python_entrypoint_rename_uses_explicit_previous_bundle(self) -> None:
+        previous = self._previous_python_bundle()
+        def fake_install(tool, version, *, bin_dir, indexes, no_build):
+            self._uv_tool_layout(version)
+            (self.bin_dir / "legacy-runner").unlink()
+        with mock.patch.object(sync, "install_python_tool", fake_install):
+            report = sync.upgrade(self.sources, "snapshot-runner", bin_dir=self.bin_dir,
+                                  previous_bundle=previous)
+        self.assertEqual(report["status"], "UPGRADED")
+        self.assertEqual(report["verification"]["retired_entrypoints"], ["legacy-runner"])
+        self.assertFalse((self.bin_dir / "legacy-runner").exists())
+
+    def test_interrupted_python_rename_restores_the_old_contract(self) -> None:
+        previous = self._previous_python_bundle()
+        attempts = []
+        def fake_install(tool, version, *, bin_dir, indexes, no_build):
+            attempts.append(version)
+            if version == "1.4.0":
+                self._uv_tool_layout(version)
+                (self.bin_dir / "legacy-runner").unlink()
+                raise KeyboardInterrupt
+            self._uv_tool_layout(version, entrypoints=("legacy-runner",))
+            (self.bin_dir / "snapshot-runner").unlink()
+        with mock.patch.object(sync, "install_python_tool", fake_install):
+            with self.assertRaises(KeyboardInterrupt):
+                sync.upgrade(self.sources, "snapshot-runner", bin_dir=self.bin_dir,
+                             previous_bundle=previous)
+        self.assertEqual(attempts, ["1.4.0", "1.3.0"])
+        self.assertEqual(sync.installed_binary_state(["legacy-runner"], self.bin_dir)["version"], "1.3.0")
+        self.assertFalse((self.bin_dir / "snapshot-runner").exists())
 
     def test_upgrade_still_rejects_a_moved_retained_entrypoint(self) -> None:
         self._uv_tool_layout("1.3.0")
@@ -667,7 +797,7 @@ class SkillSyncTests(unittest.TestCase):
         )
 
     def test_status_classifies_binary_skill_and_incompatible_drift(self) -> None:
-        context_entry = self.bin_dir / "codex-project-context"
+        context_entry = self.bin_dir / "project-context"
         context_entry.write_text(
             "#!/usr/bin/env sh\nprintf 'tool 9.9.9\\n'\n", encoding="utf-8"
         )
@@ -691,24 +821,6 @@ class SkillSyncTests(unittest.TestCase):
         checked = sync.check_tool(self.sources, "context-loader")
         self.assertEqual(checked["status"], "FAIL")
         self.assertIn("public CLI contract SHA mismatch", checked["errors"][0])
-
-    def test_check_rejects_git_finalizer_bridge_contract_drift(self) -> None:
-        bridge = (
-            self.sources_root
-            / "git-finalizer"
-            / "hooks"
-            / "codex_git_finalize_bridge.py"
-        )
-        bridge.write_text(
-            "BRIDGE_OPTION_SPECS: dict[str, tuple[int, bool]] = "
-            '{"--unknown": (0, False)}\n',
-            encoding="utf-8",
-        )
-
-        checked = sync.check_tool(self.sources, "git-finalizer")
-
-        self.assertEqual(checked["status"], "FAIL")
-        self.assertIn("host bridge and CLI contract differ", checked["errors"][0])
 
     def test_check_rejects_nondeterministic_json_serialization(self) -> None:
         contract = self.sources_root / "context-loader" / "tool_cli_contract.json"
@@ -810,13 +922,13 @@ class SkillSyncTests(unittest.TestCase):
         self.assertTrue(installed["production_activation"])
         current = self._current("git-finalizer")
         self.assertEqual(
-            (self.bin_dir / "codex-git-finalize").read_bytes(),
-            (current / "executable" / "codex-git-finalize").read_bytes(),
+            (self.bin_dir / "git-finalize").read_bytes(),
+            (current / "executable" / "git-finalize").read_bytes(),
         )
         self.assertEqual(
-            (self.hooks_dir / "codex_git_finalize_bridge.py").read_bytes(),
+            (self.hooks_dir / "test_support.py").read_bytes(),
             (
-                current / "executable" / "hooks" / "codex_git_finalize_bridge.py"
+                current / "executable" / "hooks" / "test_support.py"
             ).read_bytes(),
         )
         self.assertEqual(
@@ -833,7 +945,7 @@ class SkillSyncTests(unittest.TestCase):
             (current / sync.COMPATIBILITY_BUNDLE_PATH).read_bytes(),
         )
         smoke = subprocess.run(
-            (str(self.bin_dir / "codex-skill-sync"), "--version"),
+            (str(self.bin_dir / "tool-skill-sync"), "--version"),
             check=False,
             capture_output=True,
             text=True,
@@ -843,7 +955,7 @@ class SkillSyncTests(unittest.TestCase):
 
     def test_activation_accepts_verified_previous_sync_version(self) -> None:
         implementation = (
-            self.sources_root / "git-finalizer" / "tooling" / "codex_skill_sync.py"
+            self.sources_root / "git-finalizer" / "tooling" / "tool_skill_sync.py"
         )
         current_source = implementation.read_text(encoding="utf-8")
         implementation.write_text(
@@ -879,7 +991,7 @@ class SkillSyncTests(unittest.TestCase):
 
         self.assertTrue(installed["production_activation"])
         smoke = subprocess.run(
-            (str(self.bin_dir / "codex-skill-sync"), "--version"),
+            (str(self.bin_dir / "tool-skill-sync"), "--version"),
             check=False,
             capture_output=True,
             text=True,
@@ -888,9 +1000,9 @@ class SkillSyncTests(unittest.TestCase):
         self.assertIn(sync.VERSION, smoke.stdout)
 
     def test_production_verification_failure_restores_active_pair(self) -> None:
-        binary = self.bin_dir / "codex-git-finalize"
+        binary = self.bin_dir / "git-finalize"
         skill = self.agents_root / "skills" / sync.SKILL_NAME / "SKILL.md"
-        bridge = self.hooks_dir / "codex_git_finalize_bridge.py"
+        bridge = self.hooks_dir / "test_support.py"
         before = (binary.read_bytes(), skill.read_bytes(), bridge.read_bytes())
         real_verify = sync.verify_production_bundle
 
@@ -911,7 +1023,7 @@ class SkillSyncTests(unittest.TestCase):
         self.assertTrue(callable(real_verify))
 
     def test_production_keyboard_interrupt_restores_active_pair(self) -> None:
-        binary = self.bin_dir / "codex-git-finalize"
+        binary = self.bin_dir / "git-finalize"
         skill = self.agents_root / "skills" / sync.SKILL_NAME / "SKILL.md"
         before = (binary.read_bytes(), skill.read_bytes())
 
@@ -960,14 +1072,14 @@ class SkillSyncTests(unittest.TestCase):
         )
         skill.write_text("fixture changed Skill\n", encoding="utf-8")
         self._update_skill_manifest_hashes()
-        executable = self.sources_root / "git-finalizer" / "codex-git-finalize"
+        executable = self.sources_root / "git-finalizer" / "git-finalize"
         executable.write_text(
             executable.read_text(encoding="utf-8") + "# second bundle\n",
             encoding="utf-8",
         )
         second = self._install_production("git-finalizer", allow_dirty_source=True)
         self.assertNotEqual(second["current_bundle"], first_bundle)
-        second_binary = (self.bin_dir / "codex-git-finalize").read_bytes()
+        second_binary = (self.bin_dir / "git-finalize").read_bytes()
         rolled_back = sync.rollback(
             "git-finalizer",
             self.install_root,
@@ -980,7 +1092,7 @@ class SkillSyncTests(unittest.TestCase):
         release = sync.verify_bundle(self._current("git-finalizer"), "git-finalizer")
         self.assertEqual(release["source_state"], "committed_release")
         self.assertNotEqual(
-            (self.bin_dir / "codex-git-finalize").read_bytes(), second_binary
+            (self.bin_dir / "git-finalize").read_bytes(), second_binary
         )
         sync.verify_production_bundle(
             self._current("git-finalizer"),

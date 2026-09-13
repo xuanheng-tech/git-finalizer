@@ -16,7 +16,7 @@ from typing import Any, NoReturn, Sequence
 import uuid
 
 
-VERSION = "0.10.0"
+VERSION = "1.0.0"
 OID = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 SAFE_REMOTE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -432,7 +432,7 @@ def publish(arguments: argparse.Namespace) -> dict[str, Any]:
     lease_id = require_uuid(arguments.lease_id, "lease argument")
     run_id = require_text(arguments.run_id, "run argument", maximum=256)
     repo, common, git_dir = resolve_repo(arguments.repo)
-    metadata_root = common / "codex-worktree" / "v1"
+    metadata_root = common / "worktree-controller" / "v1"
     lock_path = metadata_root / "repo.lock"
     if lock_path.is_symlink() or not lock_path.is_file():
         raise PublishError("Controller repository lock is missing or unsafe")
@@ -474,7 +474,7 @@ def publish(arguments: argparse.Namespace) -> dict[str, Any]:
                 check=False,
             )
             push_executed = True
-            if os.environ.get("CODEX_GIT_FINALIZER_TEST_CRASH_AFTER_PUSH") == "1":
+            if os.environ.get("GIT_FINALIZER_TEST_CRASH_AFTER_PUSH") == "1":
                 os._exit(97)
             if push.returncode != 0:
                 observed_after_failure = live_remote_oid(repo, remote, target_ref)

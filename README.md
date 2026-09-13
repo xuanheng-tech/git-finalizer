@@ -1,8 +1,15 @@
-# Codex Git Finalizer
+# Git Finalizer
 
-Codex Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
+Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`0.10.0`
+当前版本：`1.0.0`
+
+共享 bundle 同时交付 `tool-skill-sync` 与 `tool-temp-dir`。临时目录使用
+`tool-temp-dir create <task-prefix>`，并通过 `validate-cleanup`、`dry-run-cleanup` 和
+`cleanup <absolute-path>` 验证或清理。登记保存在 `~/.local/state/tool-temp-dir`，record v2
+绑定精确 basename、路径、UID、device 和 inode；目录 namespace 迁移必须先验证并迁移登记，
+不能仅移动或重建目录。清理保留 0700/0600 权限、mount、symlink、设备类型及 FD identity
+检查；仅明确登记的 fixture 可显式启用 `--allow-owned-fixture-fifo`。
 
 敏感命名的 Python 源码可通过显式 `--reviewed-sensitive-source` 提交定向审查证据。
 授权绑定仓库、Controller allocation、完整 scope 和 exact SHA256；内容扫描始终执行。
@@ -15,7 +22,7 @@ owner capability、repository existence、visibility 和本地 remote；`--repo-
 一个空 repository，并可在指定 remote 完全缺失时通过 `--add-origin` 添加精确 URL：
 
 ```bash
-codex-git-finalize \
+git-finalize \
   --repo-plan \
   --repo /home/user/projects/example \
   --gitea-url http://gitea.example.test \
@@ -37,7 +44,7 @@ URL、日志或 receipt。bootstrap outcome 与 `publication.executed=false` 分
 正常模式用于已有 upstream 的成熟仓库：
 
 ```bash
-codex-git-finalize \
+git-finalize \
   --repo /home/user/projects/example \
   --message "fix: describe the change" \
   -- path/to/file
@@ -46,7 +53,7 @@ codex-git-finalize \
 只创建本地 commit、明确跳过 push 和全部远端验证时，使用 `commit-only`：
 
 ```bash
-codex-git-finalize \
+git-finalize \
   --mode commit-only \
   --repo /home/user/projects/example \
   --message "fix: describe the change" \
@@ -61,7 +68,7 @@ verification，也不修改 remote、tag 或 Git 配置。成功输出会报告 
 尚无任何 commit 且远端目标未获明确授权时，使用显式的本地 root commit 模式：
 
 ```bash
-codex-git-finalize \
+git-finalize \
   --initial-commit-only \
   --repo /home/user/projects/example \
   --message "feat: initialize project locally" \
@@ -75,7 +82,7 @@ root commit，但不要求 remote，也不执行 fetch、`ls-remote`、push 或�
 只读验证当前显式文件范围时，使用 `verify-only`；该模式不接受或要求 `--message`：
 
 ```bash
-codex-git-finalize \
+git-finalize \
   --mode verify-only \
   --repo /home/user/projects/example \
   -- path/to/file
@@ -92,7 +99,7 @@ fast-forward 条件。
 首次发布模式只接受 unborn 分支和完全空的远端，并创建首个非空 root commit：
 
 ```bash
-codex-git-finalize \
+git-finalize \
   --initial-publish \
   --remote origin \
   --repo /home/user/projects/example \
@@ -104,7 +111,7 @@ codex-git-finalize \
 已有正常历史的本地功能分支首次发布到尚不存在的同名远端分支时，使用独立模式：
 
 ```bash
-codex-git-finalize \
+git-finalize \
   --initial-branch-publish \
   --remote origin \
   --remote-branch feat/example \
@@ -129,13 +136,13 @@ schema 2 / security epoch 4 的 `diff-audit` artifact 为完整 unborn initial �
 路径集合或 snapshot artifact 漂移都会停止。未提供 `--snapshot` 时，既有 normal、initial 和
 resume 工作流语义保持不变。
 
-`codex-git-finalize-snapshot-verify.py` 是主入口同目录下的标准库-only companion，由主入口
+`git-finalize-snapshot-verify.py` 是主入口同目录下的标准库-only companion，由主入口
 固定定位和调用，不是独立发布命令；安装 Finalizer 时必须与主脚本一起部署。
 
 若首次发布已经创建 root commit、但 push 未确认完成，可用完整 HEAD OID 恢复同一次发布：
 
 ```bash
-codex-git-finalize \
+git-finalize \
   --resume-initial-publish <full-head-oid> \
   --remote origin \
   --repo /home/user/projects/example
@@ -145,7 +152,7 @@ codex-git-finalize \
 commit 尚未发布，可复用完整 HEAD OID 发布 `upstream..HEAD`，而不会再创建 commit：
 
 ```bash
-codex-git-finalize \
+git-finalize \
   --resume-publish <full-head-oid> \
   --repo /home/user/projects/example
 ```
@@ -163,7 +170,7 @@ Worktree Controller schema v2 已为 validated integration candidate 签发 publ
 validation evidence 全部从同一 lease 读取，不由 caller 重复声明：
 
 ```bash
-codex-git-finalize \
+git-finalize \
   --publish-integration-candidate <full-candidate-oid> \
   --repo /absolute/integration-candidate \
   --lease-id <controller-lease-uuid> \
@@ -185,7 +192,7 @@ Finalizer receipt 交回 Controller 后，由 Controller 持久化 publication r
 branch 不存在，使用显式首次发布入口；该入口不创建 commit：
 
 ```bash
-codex-git-finalize \
+git-finalize \
   --publish-existing-branch <full-head-oid> \
   --remote origin \
   --remote-branch feat/example \
@@ -202,7 +209,7 @@ heads 尚不可达的 commits 执行既有 commit-range 安全检查，再以 no
 验证的空 Gitea repository 时，使用独立的 existing-history first-publication 入口：
 
 ```bash
-codex-git-finalize \
+git-finalize \
   --publish-existing-history <full-head-oid> \
   --remote origin \
   --remote-branch main \
@@ -219,7 +226,7 @@ HEAD、history、index、worktree 不变，remote 只有目标 branch，且 loca
 target OID 时使用显式恢复入口；不要重跑 first-publication 或创建替代 commit：
 
 ```bash
-codex-git-finalize \
+git-finalize \
   --resume-existing-history-publish <full-head-oid> \
   --remote origin \
   --remote-branch main \
@@ -230,7 +237,7 @@ codex-git-finalize \
 worktree，也不复用 commit/publish mode：
 
 ```bash
-codex-git-finalize \
+git-finalize \
   --retire-remote-branch feat/example \
   --remote origin \
   --integrated-into origin/main \
@@ -265,7 +272,7 @@ normal、commit-only、verify-only、initial、initial-branch、publish-existing
 `--summary`，以单行确定性 JSON 代替原有阶段输出：
 
 ```bash
-codex-git-finalize \
+git-finalize \
   --summary \
   --repo /home/user/projects/example \
   --message "fix: describe the change" \
@@ -291,11 +298,6 @@ HEAD/remote/worktree、已完成阶段和是否仍需恢复；commit-only 另含
 5 条、每条最多 256 字符；失败原因最多 512 字符，省略数量通过对应 `*_omitted*` 字段显式
 报告。摘要不包含 diff、文件正文、commit message、凭据或完整命令日志。失败仍使用非零退出码；
 若序列化本身失败，fallback 会同时保留 Git 操作状态和原退出码。
-
-PreToolUse bridge 将 `--summary`、严格的 `--mode commit-only|verify-only`、通用
-`--publish-existing-branch`、`--resume-publish`、显式 remote retirement 及兼容的 root resume
-入口原样转发；其调用授权、路径校验、停止条件和输出
-上限不变。
 
 ### Exact synthetic fixture exceptions for existing history
 
@@ -329,19 +331,22 @@ the canonical approval), repository, matched path/blob/SHA256, detector, reason 
 `applied=true`. No content or credentials are included. Resume requires the same
 explicit exception file; a previous successful scan never disables later scans.
 
-## Codex PreToolUse bridge
+## Execution boundary
 
-Git Finalizer Hook 的版本化源、测试、只读漂移检查和显式恢复入口见
-[`hooks/README.md`](hooks/README.md)。
+Terminal and agent executors invoke the same `git-finalize` CLI as the current non-root user.
+The executor retains native approval and OS sandbox enforcement. No private session files,
+transcript parser, provider hook, or host execution bridge is required. A sandbox refusal must
+use the executor's native approval path, never a permission-mode override or an alternate proxy.
+The CLI retains explicit scope, sensitive-source review, worktree, commit and publication checks.
 
 ## Tool / Skill release pairing
 
 本仓库同时是三工具共同 Skill 与最小 release pairing 基础设施的 owner；不拥有 Context Loader
 或 Snapshot Runner 的实现。`tool_cli_contract.json`、`tool_skill_manifest.json`、
-`toolchain_compatibility.json` 和 `codex-skill-sync` 的合同、隔离安装与显式生产激活流程见
-[`docs/codex-skill-sync.md`](docs/codex-skill-sync.md)。Skill Sync 的 `CURRENT` 只指向一个完整
+`toolchain_compatibility.json` 和 `tool-skill-sync` 的合同、隔离安装与显式生产激活流程见
+[`docs/tool-skill-sync.md`](docs/tool-skill-sync.md)。Skill Sync 的 `CURRENT` 只指向一个完整
 ToolReleaseBundle；`--activate-production` 在完整验证后事务化同步稳定入口、active Skill 与
-Git Finalizer bridge，并为整组回滚保留 production `PREVIOUS`。
+所有 Finalizer sidecar，并为整组回滚保留 production `PREVIOUS`。
 
 ## Snapshot Runner dual-remote topology
 
@@ -399,7 +404,7 @@ upstream commit 已可解析。Upstream target 配置与 resolved upstream commi
 例如：
 
 ```bash
-codex-git-finalize \
+git-finalize \
   --repo /home/user/projects/example \
   --message "docs: archive original photo" \
   --allow-large-binary Attachments/photo.jpg \

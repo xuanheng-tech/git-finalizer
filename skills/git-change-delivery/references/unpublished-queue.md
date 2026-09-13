@@ -15,7 +15,7 @@ restore、clean 或 worktree/index 写入。Git Finalizer 只提供 publication 
 默认状态目录：
 
 ```text
-${XDG_STATE_HOME:-~/.local/state}/codex-exec/completed-unpublished/v1/
+${XDG_STATE_HOME:-~/.local/state}/toolchain/completed-unpublished/v1/
 ```
 
 目录必须为当前用户所有的普通目录且权限为 `0700`；`key`、`queue.lock`、`queue.jsonl` 和
@@ -27,17 +27,10 @@ current-state record；写入在 advisory lock 内原子替换。单条（含换
 `repo_ref`、`task_ref`、`thread_ref`、`record_id` 和 `path_ref` 使用 queue 私有 32-byte key
 计算 HMAC-SHA256 pseudonym。raw remote URL、task/thread ID 不落盘。
 
-identity 合同是 provider-neutral 的：显式 identity 永远优先。thread ID 取
-`--thread-id`、`AGENT_THREAD_ID`、`CODEX_THREAD_ID` 中第一个可用值；task ID 取
-`--task-id` 或 `AGENT_TASK_ID`。两者都提供时 helper 不读取任何 rollout，因此 Claude 或其他
-非 Codex provider 只要能给出自己的 task/thread identity 就能正常 record 与 finalize，不需要
-伪造 Codex 事件。
-
-只有在 task ID 未显式提供时，helper 才使用 Codex-only 的便利路径：从该 thread 对应的一个
-root rollout 中读取结构化 lifecycle envelope，要求恰有一个 unmatched `task_started.turn_id`；
-`task_complete` 与带同一 turn ID 的 `turn_aborted` 都是正式终态。helper 不读取或保存 message
-正文，不修改 rollout；真正存在多个未结束 turn 时仍 fail closed。该 thread 没有任何 rollout
-时，helper 报告需要显式 `--task-id`，而不是暴露 Codex 内部的 turn 计数条件。
+identity 使用一个统一的显式合同：thread ID 取 `--thread-id` 或 `AGENT_THREAD_ID`，
+task ID 取 `--task-id` 或 `AGENT_TASK_ID`，命令行参数优先。两者都必须为有界结构化标识；
+缺少或非法时 fail closed，不读取执行器会话文件、日志或消息。终端和任意 agent 使用完全
+相同的调用；调用者必须在同一任务的重试、暂停和恢复期间保持这两个标识稳定。
 
 record schema 固定包含：
 
@@ -176,7 +169,7 @@ python3 -B /home/hsd/.agents/skills/git-change-delivery/unpublished_queue.py \
 `validate` 对权限、JSONL、唯一/排序 ID、schema、state/finalization 组合、path bound、closure 和
 8-KiB 上限 fail closed。
 
-`migration-dry-run` 只接受显式的 frozen candidate JSON，不读取 Codex 历史，也不写
+`migration-dry-run` 只接受显式的 frozen candidate JSON，不扫描执行器历史，也不写
 `queue.jsonl`。输出去除 raw repo/task/thread identity，固定排序且不含运行时间；相同 queue key 与
 source bytes 得到字节级相同结果。`low|unknown` confidence 固定为
 `excluded_low_confidence`；缺 task/thread/machine-readable scope 的 high/medium candidate 固定为

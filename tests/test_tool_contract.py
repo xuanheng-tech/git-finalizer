@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import unittest
 
-from tooling import codex_skill_sync as sync
+from tooling import tool_skill_sync as sync
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,12 +22,12 @@ class ToolContractTests(unittest.TestCase):
         self.assertEqual(sync.read_json(manifest_path), manifest)
         version_match = re.search(
             r'^readonly VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$',
-            (ROOT / "codex-git-finalize").read_text(encoding="utf-8"),
+            (ROOT / "git-finalize").read_text(encoding="utf-8"),
             re.MULTILINE,
         )
         companion_version_match = re.search(
             r'^VERSION = "([0-9]+\.[0-9]+\.[0-9]+)"$',
-            (ROOT / "codex-git-finalize-integration-publish.py").read_text(
+            (ROOT / "git-finalize-integration-publish.py").read_text(
                 encoding="utf-8"
             ),
             re.MULTILINE,
@@ -39,7 +39,7 @@ class ToolContractTests(unittest.TestCase):
         assert companion_version_match is not None
         self.assertEqual(contract["schema_version"], 1)
         self.assertEqual(manifest["schema_version"], 2)
-        self.assertEqual(contract["contract_version"], 2)
+        self.assertEqual(contract["contract_version"], 3)
         self.assertEqual(contract["tool_name"], "git-finalizer")
         self.assertEqual(contract["tool_version"], manifest["tool_version"])
         self.assertEqual(contract["tool_version"], version_match.group(1))
@@ -104,12 +104,12 @@ class ToolContractTests(unittest.TestCase):
         compatibility = json.loads(
             (ROOT / "toolchain_compatibility.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(compatibility["toolchain_contract_version"], 3)
-        self.assertEqual(compatibility["context_loader_contract_version"], 1)
+        self.assertEqual(compatibility["toolchain_contract_version"], 4)
+        self.assertEqual(compatibility["context_loader_contract_version"], 2)
         # Snapshot Runner 2.0.0 removed the provider-named aliases: public CLI contract 2.
         self.assertEqual(compatibility["snapshot_runner_contract_version"], 2)
-        self.assertEqual(compatibility["git_finalizer_contract_version"], 2)
-        self.assertEqual(compatibility["worktree_controller_contract_version"], 1)
+        self.assertEqual(compatibility["git_finalizer_contract_version"], 3)
+        self.assertEqual(compatibility["worktree_controller_contract_version"], 2)
         self.assertEqual(
             compatibility["worktree_controller_status"],
             "available_external",
@@ -119,7 +119,7 @@ class ToolContractTests(unittest.TestCase):
             {
                 "canonical_owner": "git-finalizer",
                 "compatibility_shims": ["three-tool-git-workflow"],
-                "contract_version": 1,
+                "contract_version": 2,
                 "name": "git-change-delivery",
             },
         )

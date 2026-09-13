@@ -65,7 +65,7 @@ jobs:
               raise SystemExit(f"invalid release tag: {tag}")
           script_match = re.search(
               r'^readonly VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$',
-              Path("codex-git-finalize").read_text(),
+              Path("git-finalize").read_text(),
               re.MULTILINE,
           )
           readme_match = re.search(
@@ -90,20 +90,33 @@ jobs:
         run: |
           set -euo pipefail
           version=${RELEASE_TAG#v}
-          package=codex-git-finalizer-$version
+          package=git-finalizer-$version
           stage=.release-stage/$package
           rm -rf dist .release-stage
-          install -d -m 0755 dist "$stage/hooks"
-          install -m 0755 codex-git-finalize "$stage/codex-git-finalize"
-          install -m 0644 codex-git-finalize-snapshot-verify.py "$stage/codex-git-finalize-snapshot-verify.py"
-          install -m 0644 README.md CHANGELOG.md "$stage/"
-          install -m 0644 \
-            hooks/README.md \
-            hooks/codex_git_finalize_bridge.py \
-            hooks/deploy.py \
-            hooks/test_codex_git_finalize_bridge.py \
-            hooks/test_deploy.py \
-            "$stage/hooks/"
+          install -d -m 0755 dist "$stage"
+          STAGE="$stage" python3 -B - <<'PY_STAGE'
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import stat
+          from tooling.tool_skill_sync import SKILL_PAYLOAD, SKILL_NAME
+
+          stage = Path(os.environ["STAGE"])
+          manifest = json.loads(Path("tool_skill_manifest.json").read_text())
+          paths = set(manifest["executable"]["paths"])
+          paths.update({"README.md", "CHANGELOG.md", "tool_cli_contract.json",
+                        "tool_skill_manifest.json", "toolchain_compatibility.json"})
+          paths.update(f"skills/{SKILL_NAME}/{p}" for p in SKILL_PAYLOAD)
+          paths.add(manifest["compatibility_skill"]["path"])
+          paths.update(str(p) for p in Path("manifests").glob("*/tool_skill_manifest.json"))
+          for relative in sorted(paths):
+              source = Path(relative)
+              target = stage / relative
+              target.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(source, target)
+              target.chmod(stat.S_IMODE(source.stat().st_mode) & 0o755)
+          PY_STAGE
           source_date_epoch=$(git show -s --format=%ct HEAD)
           tar --sort=name --format=ustar --owner=0 --group=0 --numeric-owner \
             --mtime="@$source_date_epoch" -C .release-stage -cf - "$package" \
@@ -126,19 +139,18 @@ jobs:
           import tarfile
 
           version = os.environ["RELEASE_TAG"].removeprefix("v")
-          package = f"codex-git-finalizer-{version}"
+          package = f"git-finalizer-{version}"
           artifact = Path("dist") / f"{package}.tar.gz"
-          expected_files = {
-              f"{package}/CHANGELOG.md",
-              f"{package}/README.md",
-              f"{package}/codex-git-finalize",
-              f"{package}/codex-git-finalize-snapshot-verify.py",
-              f"{package}/hooks/README.md",
-              f"{package}/hooks/codex_git_finalize_bridge.py",
-              f"{package}/hooks/deploy.py",
-              f"{package}/hooks/test_codex_git_finalize_bridge.py",
-              f"{package}/hooks/test_deploy.py",
-          }
+          import json
+          from tooling.tool_skill_sync import SKILL_PAYLOAD, SKILL_NAME
+          manifest = json.loads(Path("tool_skill_manifest.json").read_text())
+          payload = set(manifest["executable"]["paths"])
+          payload.update({"README.md", "CHANGELOG.md", "tool_cli_contract.json",
+                          "tool_skill_manifest.json", "toolchain_compatibility.json"})
+          payload.update(f"skills/{SKILL_NAME}/{p}" for p in SKILL_PAYLOAD)
+          payload.add(manifest["compatibility_skill"]["path"])
+          payload.update(str(p) for p in Path("manifests").glob("*/tool_skill_manifest.json"))
+          expected_files = {f"{package}/{p}" for p in payload}
           with tarfile.open(artifact, "r:gz") as archive:
               members = archive.getmembers()
               files = {member.name for member in members if member.isfile()}
@@ -150,7 +162,7 @@ jobs:
                   for member in members
               ):
                   raise SystemExit("release package contains an unsafe path")
-              main = archive.getmember(f"{package}/codex-git-finalize")
+              main = archive.getmember(f"{package}/git-finalize")
               if stat.S_IMODE(main.mode) != 0o755:
                   raise SystemExit("Finalizer entry point is not executable in the release package")
               stream = archive.extractfile(main)

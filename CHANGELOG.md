@@ -59,6 +59,27 @@ section is invented for it.
   repository is preserved as a read-only archive and is no longer an active source; the
   private `ToolSkillManifest` continues to live here.
 
+## 1.0.0
+
+- Break the executable contract: use `git-finalize` and `tool-skill-sync` with neutral
+  sidecar and module names. Remove the private execution bridge from the product;
+  all callers use the same non-root CLI under their native execution permissions.
+- Require explicit task/thread identity or `AGENT_TASK_ID`/`AGENT_THREAD_ID` for the
+  unpublished queue; use the `toolchain/completed-unpublished/v1` state namespace.
+- Consume Snapshot Runner's `snapshot-runner/snapshots` evidence namespace.
+- Add explicit source-checkout selection for linked worktrees and preserve both
+  target sets during a governed executable rename and production rollback.
+- Include `tool-temp-dir` with a neutral state namespace and explicit registered
+  basename contract, retaining inode, ownership, mount and FD-bound cleanup gates.
+
+## 0.10.1
+
+- Validate absent explicit paths against the exact `HEAD -> index` deletion, with rename
+  detection disabled. Staged deletions and rename-old paths now survive preflight and
+  verify-only, and are retained without trying to stage the absent path again.
+- Keep invalid missing paths, historical deletions and out-of-scope staged changes blocked;
+  preserve the existing behavior for ignored copies and deliberately recreated files.
+
 ## 0.10.0 - 2026-09-12
 
 - Add explicit `--reviewed-sensitive-source` for normal, commit-only and verify-only operations.

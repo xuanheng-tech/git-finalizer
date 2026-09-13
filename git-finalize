@@ -2,7 +2,12 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="0.10.0"
+if ((EUID == 0)); then
+    printf 'ERROR: Git Finalizer must run as the current non-root user\n' >&2
+    exit 1
+fi
+
+readonly VERSION="1.0.0"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -24,7 +29,7 @@ if ((integration_publish_requested == 1)); then
         printf 'ERROR: cannot resolve Git Finalizer entrypoint\n' >&2
         exit 1
     }
-    integration_publish_companion=${finalizer_executable%/*}/codex-git-finalize-integration-publish.py
+    integration_publish_companion=${finalizer_executable%/*}/git-finalize-integration-publish.py
     [[ -f "$integration_publish_companion" && ! -L "$integration_publish_companion" ]] || {
         printf 'ERROR: integration publication companion is missing\n' >&2
         exit 1
@@ -49,7 +54,7 @@ if ((repository_bootstrap_requested == 1)); then
         printf 'ERROR: cannot resolve Git Finalizer entrypoint\n' >&2
         exit 1
     }
-    repository_bootstrap_companion=${finalizer_executable%/*}/codex-git-finalize-repo-bootstrap.py
+    repository_bootstrap_companion=${finalizer_executable%/*}/git-finalize-repo-bootstrap.py
     [[ -f "$repository_bootstrap_companion" &&
         ! -L "$repository_bootstrap_companion" ]] || {
         printf 'ERROR: repository bootstrap companion is missing\n' >&2
@@ -528,53 +533,53 @@ emit_summary() {
 usage() {
     cat <<'EOF'
 Usage:
-  codex-git-finalize --repo-plan --repo <absolute-repo>
+  git-finalize --repo-plan --repo <absolute-repo>
     --gitea-url <credential-free-url> [--gitea-profile <label>]
     --owner <user-or-org> --repo-name <name> --visibility <private|public>
     [--remote <name>] [--add-origin] [--summary]
-  codex-git-finalize --repo-ensure --repo <absolute-repo>
+  git-finalize --repo-ensure --repo <absolute-repo>
     --gitea-url <credential-free-url> [--gitea-profile <label>]
     --owner <user-or-org> --repo-name <name> --visibility <private|public>
     [--description <text>] [--remote <name>] [--add-origin] [--summary]
-  codex-git-finalize --repo <absolute-repo> --message <commit-message> [--dry-run] [--summary]
+  git-finalize --repo <absolute-repo> --message <commit-message> [--dry-run] [--summary]
     [--allow-test-fixture <repo-relative-path>]...
     [--allow-large-binary <repo-relative-path>]... -- <file>...
-  codex-git-finalize --mode commit-only --repo <absolute-repo>
+  git-finalize --mode commit-only --repo <absolute-repo>
     --message <commit-message> [--dry-run] [--summary]
     [--allow-test-fixture <repo-relative-path>]...
     [--allow-large-binary <repo-relative-path>]... -- <file>...
-  codex-git-finalize --initial-commit-only --repo <absolute-repo>
+  git-finalize --initial-commit-only --repo <absolute-repo>
     --message <commit-message> [--dry-run] [--summary]
     [--allow-test-fixture <repo-relative-path>]...
     [--allow-large-binary <repo-relative-path>]... -- <file>...
-  codex-git-finalize --mode verify-only --repo <absolute-repo> [--summary]
+  git-finalize --mode verify-only --repo <absolute-repo> [--summary]
     [--allow-test-fixture <repo-relative-path>]...
     [--allow-large-binary <repo-relative-path>]... -- <file>...
-  codex-git-finalize --initial-publish --remote <remote-name>
+  git-finalize --initial-publish --remote <remote-name>
     --repo <absolute-repo> --message <commit-message> [--dry-run] [--summary]
     [--allow-test-fixture <repo-relative-path>]...
     [--allow-large-binary <repo-relative-path>]... -- <file>...
-  codex-git-finalize --initial-branch-publish --remote <remote-name>
+  git-finalize --initial-branch-publish --remote <remote-name>
     --remote-branch <branch-name> --repo <absolute-repo> --message <commit-message>
     [--dry-run] [--summary] [--allow-test-fixture <repo-relative-path>]...
     [--allow-large-binary <repo-relative-path>]... -- <file>...
-  codex-git-finalize --resume-initial-publish <full-head-oid>
+  git-finalize --resume-initial-publish <full-head-oid>
     --remote <remote-name> --repo <absolute-repo> [--summary]
-  codex-git-finalize --resume-publish <full-head-oid>
+  git-finalize --resume-publish <full-head-oid>
     --repo <absolute-repo> [--summary]
-  codex-git-finalize --publish-existing-branch <full-head-oid>
+  git-finalize --publish-existing-branch <full-head-oid>
     --remote <remote-name> --remote-branch <branch-name>
     --repo <absolute-repo> [--summary]
-  codex-git-finalize --publish-existing-history <full-head-oid>
+  git-finalize --publish-existing-history <full-head-oid>
     --remote <remote-name> --remote-branch <branch-name>
     --repo <absolute-repo> [--summary] [--fixture-exceptions <absolute-json-file>]
-  codex-git-finalize --resume-existing-history-publish <full-head-oid>
+  git-finalize --resume-existing-history-publish <full-head-oid>
     --remote <remote-name> --remote-branch <branch-name>
     --repo <absolute-repo> [--summary] [--fixture-exceptions <absolute-json-file>]
-  codex-git-finalize --publish-integration-candidate <full-candidate-oid>
+  git-finalize --publish-integration-candidate <full-candidate-oid>
     --repo <absolute-candidate-worktree> --lease-id <controller-lease-uuid>
     --run-id <controller-run-id> [--summary]
-  codex-git-finalize --retire-remote-branch <branch-name-or-refs/heads/ref>
+  git-finalize --retire-remote-branch <branch-name-or-refs/heads/ref>
     --remote <remote-name>
     --integrated-into <branch-name-or-matching-remote/branch-or-refs/heads/ref>
     --expected-remote-oid <full-oid> --repo <absolute-repo> [--dry-run] [--summary]
@@ -668,7 +673,7 @@ fail_initial_after_commit() {
     printf 'ERROR: %s\n' "$*" >&2
     printf '本地 root commit %s 已保留；不得重跑 --initial-publish。\n' "$commit_hash" >&2
     printf '恢复入口:\n' >&2
-    printf '  codex-git-finalize --resume-initial-publish %s --remote %q --repo %q\n' \
+    printf '  git-finalize --resume-initial-publish %s --remote %q --repo %q\n' \
         "$commit_hash" "$initial_remote" "$repo" >&2
     exit 1
 }
@@ -759,7 +764,7 @@ fail_existing_history_publish() {
     printf '显式目标: %s/%s\n' "$branch_publish_remote" "$branch_publish_branch" >&2
     printf '当前 upstream: %s\n' "$observed_upstream" >&2
     printf '若远端仍为空或仅有 expected target，可使用同一 OID 恢复：\n' >&2
-    printf '  codex-git-finalize --resume-existing-history-publish %s --remote %q --remote-branch %q --repo %q\n' \
+    printf '  git-finalize --resume-existing-history-publish %s --remote %q --remote-branch %q --repo %q\n' \
         "$resume_expected_oid" "$branch_publish_remote" "$branch_publish_branch" "$repo" >&2
     exit 1
 }
@@ -775,10 +780,10 @@ fail_resume_retryable() {
     printf '本地 HEAD %s 保持不变；可安全再次运行同一恢复命令:\n' \
         "$resume_expected_oid" >&2
     if [[ "$resume_cli_option" == '--resume-publish' ]]; then
-        printf '  codex-git-finalize --resume-publish %s --repo %q\n' \
+        printf '  git-finalize --resume-publish %s --repo %q\n' \
             "$resume_expected_oid" "$repo" >&2
     else
-        printf '  codex-git-finalize --resume-initial-publish %s --remote %q --repo %q\n' \
+        printf '  git-finalize --resume-initial-publish %s --remote %q --repo %q\n' \
             "$resume_expected_oid" "$resume_remote" "$repo" >&2
     fi
     exit 1
@@ -898,7 +903,7 @@ load_source_reviews() {
     local phase=$1
     local executable helper output path receipt reason
     executable=$(realpath -e -- "${BASH_SOURCE[0]}") || fail '无法解析 Finalizer 入口'
-    helper=${executable%/*}/codex-git-finalize-source-review.py
+    helper=${executable%/*}/git-finalize-source-review.py
     [[ -f "$helper" && ! -L "$helper" ]] || fail '缺少 source review companion'
     output=$(/usr/bin/python3 -B "$helper" --review "$source_review_file" \
         --repo "$repo" --phase "$phase" --repository-id "$repository_id_arg" \
@@ -1021,19 +1026,28 @@ collect_staged_paths() {
     )
 }
 
-is_staged_deletion_with_ignored_worktree_copy() {
+is_staged_deletion() {
     local path=$1
-    local absolute_path=$repo/$path
     local diff_status
 
-    [[ -e "$absolute_path" || -L "$absolute_path" ]] || return 1
+    # A staged deletion is absent from the index. Disable rename detection so the
+    # old side of a rename is checked against HEAD as the same exact deletion.
     if git -C "$repo" --literal-pathspecs \
-        diff --cached --quiet --diff-filter=D -- "$path"; then
+        diff --cached --no-renames --no-ext-diff --no-textconv \
+            --quiet --diff-filter=D HEAD -- "$path"; then
         return 1
     else
         diff_status=$?
     fi
     ((diff_status == 1)) || return 1
+}
+
+is_retained_staged_deletion() {
+    local path=$1
+    local absolute_path=$repo/$path
+
+    is_staged_deletion "$path" || return 1
+    [[ -e "$absolute_path" || -L "$absolute_path" ]] || return 0
     git -C "$repo" check-ignore --quiet --no-index -- "$path"
 }
 
@@ -1268,7 +1282,7 @@ verify_local_candidate() {
     for index in "${!paths[@]}"; do
         path=${paths[$index]}
         absolute_path=${absolute_paths[$index]}
-        if [[ -n ${retained_ignored_deletions[$path]+present} ]]; then
+        if [[ -n ${retained_staged_deletions[$path]+present} ]]; then
             candidate_paths["$path"]=1
             candidate_count=$((candidate_count + 1))
             continue
@@ -4371,7 +4385,7 @@ while (($# > 0)); do
             shift
             ;;
         --version)
-            printf 'codex-git-finalize %s\n' "$VERSION"
+            printf 'git-finalize %s\n' "$VERSION"
             exit 0
             ;;
         --fixture-exceptions)
@@ -4639,7 +4653,7 @@ if ((snapshot_seen == 1)); then
     [[ -x /usr/bin/python3 ]] || fail 'snapshot 验证要求 /usr/bin/python3'
     finalizer_executable=$(realpath -e -- "${BASH_SOURCE[0]}") ||
         fail '无法解析 Finalizer 入口'
-    snapshot_verifier=${finalizer_executable%/*}/codex-git-finalize-snapshot-verify.py
+    snapshot_verifier=${finalizer_executable%/*}/git-finalize-snapshot-verify.py
     [[ -f "$snapshot_verifier" && ! -L "$snapshot_verifier" ]] ||
         fail '缺少 Finalizer snapshot verifier companion'
 fi
@@ -4704,7 +4718,7 @@ declare -a absolute_paths=()
 declare -a staged_paths=()
 declare -a paths_to_add=()
 declare -A allowed_paths=()
-declare -A retained_ignored_deletions=()
+declare -A retained_staged_deletions=()
 declare -a test_fixture_paths=()
 declare -A test_fixture_content_overrides=()
 declare -a large_binary_paths=()
@@ -4740,7 +4754,8 @@ for input_path in "${input_paths[@]}"; do
 
     if [[ ! -e "$lexical_path" && ! -L "$lexical_path" ]]; then
         git -C "$repo" --literal-pathspecs ls-files --error-unmatch -- "$relative_path" \
-            >/dev/null 2>&1 || fail "文件不存在且不是 tracked deletion: $input_path"
+            >/dev/null 2>&1 || is_staged_deletion "$relative_path" ||
+            fail "文件不存在且不是 tracked deletion: $input_path"
     fi
 
     allowed_paths["$relative_path"]=1
@@ -4875,8 +4890,8 @@ load_source_reviews worktree
 collect_staged_paths
 if ((initial_publish == 0 && initial_commit_only == 0)); then
     for path in "${paths[@]}"; do
-        if is_staged_deletion_with_ignored_worktree_copy "$path"; then
-            retained_ignored_deletions["$path"]=1
+        if is_retained_staged_deletion "$path"; then
+            retained_staged_deletions["$path"]=1
         else
             paths_to_add+=("$path")
         fi
@@ -4939,7 +4954,7 @@ if ((dry_run == 1)); then
             add_risk "真实运行会拒绝 $(printf '%q' "$path"): $reason"
             continue
         fi
-        if [[ -n ${retained_ignored_deletions[$path]+present} ]]; then
+        if [[ -n ${retained_staged_deletions[$path]+present} ]]; then
             continue
         fi
         if is_working_large_binary "$absolute_path" &&
@@ -5039,7 +5054,7 @@ for index in "${!paths[@]}"; do
         [[ -z ${reviewed_source_paths[$path]+present} ]]; then
         fail "拒绝敏感文件 $(printf '%q' "$path"): $reason"
     fi
-    if [[ -n ${retained_ignored_deletions[$path]+present} ]]; then
+    if [[ -n ${retained_staged_deletions[$path]+present} ]]; then
         continue
     fi
     if is_working_large_binary "$absolute_path" &&
@@ -5138,8 +5153,12 @@ summary_phase='staging'
 summary_default_failure_status='failed'
 printf '\n== 显式暂存 ==\n'
 for path in "${paths[@]}"; do
-    if [[ -n ${retained_ignored_deletions[$path]+present} ]]; then
-        printf '保留已暂存删除及本地忽略副本: %q\n' "$path"
+    if [[ -n ${retained_staged_deletions[$path]+present} ]]; then
+        if [[ -e "$repo/$path" || -L "$repo/$path" ]]; then
+            printf '保留已暂存删除及本地忽略副本: %q\n' "$path"
+        else
+            printf '保留已暂存删除: %q\n' "$path"
+        fi
     fi
 done
 if ((${#paths_to_add[@]} > 0)); then

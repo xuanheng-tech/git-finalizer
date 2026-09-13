@@ -2,14 +2,14 @@
 
 ## 入口与调用
 
-当前正式 command 是 `codex-project-context`；本机 stable entry 是
-`/home/hsd/.local/bin/codex-project-context`。调用前可用 `type -a`/`readlink -f` 核对，不使用
+当前正式 command 是 `project-context`；本机 stable entry 是
+`/home/hsd/.local/bin/project-context`。调用前可用 `type -a`/`readlink -f` 核对，不使用
 历史仓库 wrapper 作为 installed authority：
 
 ```bash
-/home/hsd/.local/bin/codex-project-context --repo <absolute-repo>
-/home/hsd/.local/bin/codex-project-context --repo <absolute-repo> --focus <topic> --path <repo-relative-path>
-/home/hsd/.local/bin/codex-project-context --repo <absolute-repo> --format json --path <repo-relative-path>
+/home/hsd/.local/bin/project-context --repo <absolute-repo>
+/home/hsd/.local/bin/project-context --repo <absolute-repo> --focus <topic> --path <repo-relative-path>
+/home/hsd/.local/bin/project-context --repo <absolute-repo> --format json --path <repo-relative-path>
 ```
 
 `--repo` 必须是现有、非 bare Git worktree 中的规范绝对路径。Markdown 格式要求它就是

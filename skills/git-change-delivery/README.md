@@ -36,5 +36,5 @@ delivery 集成资产，不拥有 Context Loader 或 Snapshot Runner 的实现�
 Queue 只持久化用户私有 control-plane metadata，不执行 Git finalization 或 worktree 清理。
 
 跨三工具的 binary/entry identity、Skill payload、CLI contract 和兼容性由仓库根目录的
-`codex-skill-sync` 验证。旧的 `deploy.py` 保留为已安装 Skill 的兼容检查/显式恢复入口；新发布
+`tool-skill-sync` 验证。旧的 `deploy.py` 保留为已安装 Skill 的兼容检查/显式恢复入口；新发布
 流程以完整 ToolReleaseBundle 的 pair-level `CURRENT` 原子切换为 authority，不得只更新 Skill。

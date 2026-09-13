@@ -286,11 +286,11 @@ state = Path(state_raw) if state_raw else Path.home() / ".local" / "state"
 if not state.is_absolute() or ".." in state.parts:
     fail("state home is not canonical")
 state = Path(os.path.abspath(state))
-store = state / "codex-exec" / "snapshots"
+store = state / "snapshot-runner" / "snapshots"
 directory = store / snapshot_id
 for path, description in (
     (state, "state home"),
-    (state / "codex-exec", "private Codex state"),
+    (state / "snapshot-runner", "private Snapshot Runner state"),
     (store, "snapshot store"),
     (directory, "snapshot directory"),
 ):

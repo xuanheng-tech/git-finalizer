@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.10.0"
+VERSION = "1.0.0"
 SUMMARY_SCHEMA_VERSION = 1
 NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 PLAN_DECISIONS = frozenset(
@@ -180,7 +180,7 @@ class GiteaClient:
         self.headers = {
             "Accept": "application/json",
             "Authorization": f"Basic {token}",
-            "User-Agent": f"codex-git-finalize/{VERSION}",
+            "User-Agent": f"git-finalize/{VERSION}",
         }
         self.opener = urllib.request.build_opener(_NoRedirect())
 
@@ -543,7 +543,7 @@ def execute(arguments: argparse.Namespace) -> tuple[int, dict[str, Any]]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="codex-git-finalize", description="Plan or ensure one empty Gitea repository"
+        prog="git-finalize", description="Plan or ensure one empty Gitea repository"
     )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--repo-plan", action="store_true")

@@ -87,7 +87,7 @@ class RepoFacts:
 def _default_state_dir() -> Path:
     state_home = os.environ.get("XDG_STATE_HOME")
     root = Path(state_home) if state_home else Path.home() / ".local" / "state"
-    return root / "codex-exec" / "completed-unpublished" / "v1"
+    return root / "toolchain" / "completed-unpublished" / "v1"
 
 
 def _now() -> str:
@@ -680,53 +680,6 @@ def _identity_refs(key: bytes, task_id: str, thread_id: str) -> tuple[str, str]:
     )
 
 
-def codex_rollouts(codex_home: Path, thread_id: str) -> list[Path]:
-    """Return the Codex rollout files that may record this thread, newest name last."""
-    if RAW_ID_RE.fullmatch(thread_id) is None:
-        raise QueueError("thread_id must be a bounded structured identifier")
-    sessions = codex_home / "sessions"
-    return sorted(sessions.rglob(f"*{thread_id}*.jsonl"))
-
-
-def resolve_current_task_id(codex_home: Path, thread_id: str) -> str:
-    candidates = codex_rollouts(codex_home, thread_id)
-    unmatched: list[str] = []
-    for path in candidates:
-        pending: dict[str, int] = {}
-        observed_thread = False
-        try:
-            with path.open("r", encoding="utf-8") as stream:
-                for line in stream:
-                    value = json.loads(line)
-                    if not isinstance(value, dict):
-                        continue
-                    payload = value.get("payload")
-                    if not isinstance(payload, dict):
-                        continue
-                    if value.get("type") == "session_meta" and payload.get("id") == thread_id:
-                        observed_thread = True
-                    if value.get("type") != "event_msg":
-                        continue
-                    turn = payload.get("turn_id")
-                    if not isinstance(turn, str) or not turn:
-                        continue
-                    subtype = payload.get("type")
-                    if subtype == "task_started":
-                        pending[turn] = pending.get(turn, 0) + 1
-                    elif subtype in {"task_complete", "turn_aborted"} and pending.get(turn, 0) > 0:
-                        pending[turn] -= 1
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise QueueError(f"cannot resolve current task lifecycle from {path.name}") from exc
-        if observed_thread:
-            unmatched.extend(turn for turn, count in pending.items() for _ in range(count))
-    unique = sorted(set(unmatched))
-    if len(unique) != 1:
-        raise QueueError(
-            f"expected exactly one unmatched task_started turn for current thread, found {len(unique)}"
-        )
-    return unique[0]
-
-
 def upsert(
     *,
     state_dir: Path,
@@ -1250,33 +1203,19 @@ def migration_dry_run(
 def _add_identity_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--task-id")
     parser.add_argument("--thread-id")
-    parser.add_argument("--codex-home", type=Path, default=Path.home() / ".codex")
 
 
 def _resolve_identity(arguments: argparse.Namespace) -> tuple[str, str]:
-    """Resolve one task/thread identity for any provider.
-
-    Explicit identity is the provider-neutral contract: a caller that already knows its
-    own task and thread passes them and no rollout is read. Deriving the task from Codex
-    rollout lifecycle is a Codex-only convenience, so a thread with no rollout is told to
-    supply the identity instead of failing on a Codex-internal condition.
-    """
-    thread_id = (
-        arguments.thread_id
-        or os.environ.get("AGENT_THREAD_ID")
-        or os.environ.get("CODEX_THREAD_ID")
-    )
+    """Resolve explicit task/thread identity without consulting executor state."""
+    thread_id = arguments.thread_id or os.environ.get("AGENT_THREAD_ID")
     if not thread_id:
         raise QueueError("thread identity is unavailable; pass --thread-id")
     task_id = arguments.task_id or os.environ.get("AGENT_TASK_ID")
-    if task_id:
-        return task_id, thread_id
-    if not codex_rollouts(arguments.codex_home, thread_id):
-        raise QueueError(
-            "no Codex rollout records this thread; pass --task-id (or set AGENT_TASK_ID) "
-            "to record a task from another provider"
-        )
-    return resolve_current_task_id(arguments.codex_home, thread_id), thread_id
+    if not task_id:
+        raise QueueError("task identity is unavailable; pass --task-id or set AGENT_TASK_ID")
+    if RAW_ID_RE.fullmatch(task_id) is None or RAW_ID_RE.fullmatch(thread_id) is None:
+        raise QueueError("task_id and thread_id must be bounded structured identifiers")
+    return task_id, thread_id
 
 
 def build_parser() -> argparse.ArgumentParser:

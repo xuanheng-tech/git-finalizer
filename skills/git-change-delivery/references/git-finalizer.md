@@ -21,7 +21,7 @@ Controller schema v2 integration candidate publication 也是独立接口。它�
 canonical checkout 发布，也不由 caller 另行选择 remote/main；只消费 Controller 已签发的同一
 publication lease，并把 verified receipt 交回 Controller 完成 lifecycle。
 
-选择模式不得扩大用户原有的 commit/push 授权：只验证使用 `--mode verify-only`，只授权本地 commit 使用 `--mode commit-only`，只有明确授权 commit 和 push 且任务达到交付状态才使用默认模式。调用绝对入口 `/home/hsd/bin/codex-git-finalize` 前，还必须满足：
+选择模式不得扩大用户原有的 commit/push 授权：只验证使用 `--mode verify-only`，只授权本地 commit 使用 `--mode commit-only`，只有明确授权 commit 和 push 且任务达到交付状态才使用默认模式。调用绝对入口 `/home/hsd/bin/git-finalize` 前，还必须满足：
 
 - 实现已完成，相关测试和检查实际通过；
 - Snapshot Runner 的相关审查已通过，阻断项已经解决；
@@ -29,38 +29,20 @@ publication lease，并把 verified receipt 交回 Controller 完成 lifecycle�
 - status 和 diff 已核对，候选范围保持聚焦；
 - `--` 后逐一列出每个允许验证或暂存的显式 repository-relative 文件路径。
 
-### 普通 Codex 原生调用契约（强制）
+### 统一原生调用合同
 
-对 verify-only、commit-only、normal、initial 和 resume 的所有非 `--dry-run` 调用：
+终端和所有执行器使用同一个绝对 CLI 入口、相同参数及当前 Linux 用户身份。将完整命令与
+精确仓库工作目录提交给执行器，由其原生审批和 OS 权限机制控制执行。不得伪造审批、改变
+权限配置、使用 root，或将生命周期拆成原始 Git 写命令。
 
-1. 使用当前会话的原生 shell 执行工具，把从 `/home/hsd/bin/codex-git-finalize` 到最后一个显式文件参数的完整命令放在同一个 `cmd` 中。
-2. `permission_mode=default` 的旧式路径在同一次工具调用中设置 `sandbox_permissions: "require_escalated"`、仓库 `workdir` 和与所选模式一致的 `justification`。若当前运行时已经以 `approval_policy=never` 的当前 Linux 用户 direct execution 产生 `permission_mode=bypassPermissions`，则只传完整命令与精确 `workdir`，不添加该工具合同拒绝的本地 escalation 字段。bridge 在 direct 路径拒绝 root、transcript escalation marker、其他 permission mode、wrapper 和未知参数；不得由 caller 自行切换 permission profile。
-3. 不得使用 PATH 简写、`bash -lc`、`sh -c`、其他 wrapper 或多个工具调用拼接 Finalizer 生命周期。
-4. 不得先在另一个权限边界执行一次再重试；Finalizer 的首次真实调用就必须走适用于当前会话的同一正式 bridge boundary。
-
-原生工具参数示例：
-
-```json
-{
-  "cmd": "/home/hsd/bin/codex-git-finalize --summary --repo /absolute/repo --message 'message' -- path/to/file",
-  "workdir": "/absolute/repo",
-  "sandbox_permissions": "require_escalated",
-  "justification": "允许 Git Finalizer 对已审查的显式文件执行 commit、fetch、push 和远端核验吗？",
-  "prefix_rule": ["/home/hsd/bin/codex-git-finalize"]
-}
+```bash
+/home/hsd/bin/git-finalize --summary --mode verify-only --repo /absolute/repo -- path/to/file
 ```
 
-Codex 已经以 current-user direct mode 运行时，对应调用只保留相同完整命令和精确工作目录：
-
-```json
-{
-  "cmd": "/home/hsd/bin/codex-git-finalize --summary --repo /absolute/repo --message 'message' -- path/to/file",
-  "workdir": "/absolute/repo"
-}
-```
-
-是否属于该路径由运行时产生的 `permission_mode=bypassPermissions` 和 bridge 验证决定，caller
-不得通过参数或配置自行声明。
+只有当前任务已明确授权的操作可以选择对应的 commit/publication 模式。执行器若因沙箱
+拒绝操作，应通过它支持的原生权限申请流程处理同一完整命令；没有合法执行能力时停止。
+CLI 不读取任何执行器的私有 transcript、session、规则文件或内部权限枚举，也不代理宿主
+提权。原生审批不能替代文件范围、敏感内容、Controller authority、远端和回滚检查。
 
 ### `--summary` 结果消费
 
@@ -83,12 +65,10 @@ verify-only、commit-only、normal、initial、initial-branch 和 resume 默认�
 
 出现非零退出码，`status` 为 `blocked`、`failed` 或 `partial`，结果不满足所选模式合同，warning 影响范围、安全或发布，存在 `resume`，摘要与实际状态不一致，或用户要求详细证据时必须展开。展开时保留 `final_phase`、`reason`、恢复引用和 `next_action`，并按现有停止或恢复流程处理；不得把模式约定的跳过描述为已执行，也不得把失败、不确定结果或未执行操作描述为成功。
 
-如果当前工具没有单命令 `require_escalated` 能力且运行时也未提供合法的 current-user direct `bypassPermissions`，停止发布并报告；不得切换到 `codex-admin`、sudo、root、伪造 permission mode 或通用网络权限。
-
 ### 本机 Git remote 与失败分流
 
 - 可先用 `git remote get-url --all <remote>` 和 `git remote get-url --push --all <remote>` 读取本地配置。若 endpoint host 是 `localhost`、`127.0.0.0/8` 或 `::1`，把它视为宿主机 loopback remote；不要修改 endpoint。
-- 对 loopback remote，旧式 `default` 路径的独立 `git ls-remote`、`git fetch`、`git push` 等命令必须在第一次调用时使用单命令 `require_escalated`；current-user direct 路径不得用原始 Git 远端命令绕过 Finalizer，应由完整 Finalizer 调用执行获授权的远端检查、push 与 post-verify。
+- 对 loopback remote，远端访问仍须遵守执行器原生权限边界。应由完整 Finalizer 调用执行获授权的远端检查、push 与 post-verify，不得以原始 Git 命令绕过门槛。
 - 沙箱内出现 `connection refused`、systemd bus 不可见、`ss` 看不到宿主机监听端口或类似结果时，只能判定为沙箱证据，不得判定 SSH/Gitea 已停止。不要启动、停止或修改 `ssh.service`、`gitea.service`，也不要改 remote、SSH key、防火墙或监听地址。
 - 只有同一条 Git 远端命令在沙箱外仍失败，才进入真实服务诊断；先进行只读的 endpoint、进程和日志核对，任何服务或系统变更仍需另行明确授权。
 
@@ -101,7 +81,7 @@ verify-only、commit-only、normal、initial、initial-branch 和 resume 默认�
 ### Verify only
 
 ```bash
-/home/hsd/bin/codex-git-finalize \
+/home/hsd/bin/git-finalize \
   --summary \
   --mode verify-only \
   --repo <absolute-repo> \
@@ -113,7 +93,7 @@ verify-only 要求已有 commit 的 attached local branch，但不要求 upstrea
 ### Commit only
 
 ```bash
-/home/hsd/bin/codex-git-finalize \
+/home/hsd/bin/git-finalize \
   --summary \
   --mode commit-only \
   --repo <absolute-repo> \
@@ -126,7 +106,7 @@ commit-only 用于已授权创建本地 commit、但未授权或暂不适合 pus
 unborn 仓库仅获本地 commit 授权、remote target 尚未明确时，使用：
 
 ```bash
-/home/hsd/bin/codex-git-finalize \
+/home/hsd/bin/git-finalize \
   --summary \
   --initial-commit-only \
   --repo <absolute-repo> \
@@ -143,7 +123,7 @@ unborn 仓库仅获本地 commit 授权、remote target 尚未明确时，使用
 调用格式：
 
 ```bash
-/home/hsd/bin/codex-git-finalize \
+/home/hsd/bin/git-finalize \
   --summary \
   --repo <absolute-repo> \
   --message <commit-message> \
@@ -162,7 +142,7 @@ Finalizer 在 commit 前 fetch 并核对远端 branch、upstream OID 和 ahead/b
 不得伪造 upstream 或创建空 commit；使用 `--publish-existing-branch`：
 
 ```bash
-/home/hsd/bin/codex-git-finalize \
+/home/hsd/bin/git-finalize \
   --summary \
   --publish-existing-branch <full-head-oid> \
   --remote <remote-name> \
@@ -182,7 +162,7 @@ fail closed，不自动重试、覆盖或切换到 force。
 完成显式 `--repo-plan` → `--repo-ensure` 后，本地已有 history 且目标 repository 仍完全空时：
 
 ```bash
-/home/hsd/bin/codex-git-finalize \
+/home/hsd/bin/git-finalize \
   --summary \
   --publish-existing-history <full-head-oid> \
   --remote <remote-name> \
@@ -200,7 +180,7 @@ remote 只有目标 branch，且 HEAD、upstream、remote OID 相同、ahead/beh
 若 push 中断或结果不确定，使用工具报告的同一完整 OID：
 
 ```bash
-/home/hsd/bin/codex-git-finalize \
+/home/hsd/bin/git-finalize \
   --summary \
   --resume-existing-history-publish <full-head-oid> \
   --remote <remote-name> \
@@ -216,7 +196,7 @@ resume 只接受 remote 仍完全空，或只有目标 ref 且其 OID 精确等�
 普通 attached branch 已有一个或多个连续 local ahead commits，且用户已明确授权继续 push 时使用：
 
 ```bash
-/home/hsd/bin/codex-git-finalize \
+/home/hsd/bin/git-finalize \
   --summary \
   --resume-publish <full-head-oid> \
   --repo <absolute-repo>
@@ -241,7 +221,7 @@ clean，HEAD、local branch、tag 和 Git 配置保持不变。push 或 post-ver
 上层 Controller 已完成 frozen intent claim、exact candidate validation 和 lease-acquire 后使用：
 
 ```bash
-/home/hsd/bin/codex-git-finalize \
+/home/hsd/bin/git-finalize \
   --summary \
   --publish-integration-candidate <full-candidate-oid> \
   --repo <absolute-candidate-worktree> \
@@ -271,7 +251,7 @@ release、registered disposable cleanup 和 guarded release。若进程中断，
 调用格式：
 
 ```bash
-/home/hsd/bin/codex-git-finalize \
+/home/hsd/bin/git-finalize \
   --summary \
   --initial-publish \
   --remote <remote-name> \
@@ -303,7 +283,7 @@ initial 和 resume 可以接受与所选 remote/branch 精确匹配的 configure
 仅当 `--initial-publish` 已经创建 root commit，但 initial push 失败或结果不确定时使用：
 
 ```bash
-/home/hsd/bin/codex-git-finalize \
+/home/hsd/bin/git-finalize \
   --summary \
   --resume-initial-publish <full-root-oid> \
   --remote <remote-name> \
@@ -327,7 +307,7 @@ push delete；成功结果必须是 `RETIREMENT_PREFLIGHT_PASSED`。两类 dry-r
 ## Remote feature branch retirement
 
 ```bash
-/home/hsd/bin/codex-git-finalize \
+/home/hsd/bin/git-finalize \
   --summary \
   --retire-remote-branch <branch-or-refs/heads/branch> \
   --remote <remote-name> \

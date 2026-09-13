@@ -27,7 +27,7 @@ class ChangelogTests(unittest.TestCase):
     def test_current_source_version_has_one_nonempty_changelog_section(self) -> None:
         script_match = re.search(
             r'^readonly VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$',
-            (ROOT / "codex-git-finalize").read_text(encoding="utf-8"),
+            (ROOT / "git-finalize").read_text(encoding="utf-8"),
             re.MULTILINE,
         )
         readme_match = re.search(

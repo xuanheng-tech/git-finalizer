@@ -4,24 +4,17 @@ default:
 check:
     bash tests/run.sh
     python3 -B -m unittest discover -s tests -p 'test_*.py'
-    python3 -B -m unittest discover -s hooks -p 'test_*.py'
     python3 -B skills/git-change-delivery/quick_validate.py skills/git-change-delivery
     python3 -B -m unittest discover -s skills/git-change-delivery -p 'test_*.py'
-    ./codex-skill-sync check --source-only git-finalizer
+    ./tool-skill-sync --source-repo git-finalizer="$PWD" check --source-only git-finalizer
 
 toolchain-check source_root="..":
-    ./codex-skill-sync --source-root "{{source_root}}" check --source-only context-loader
-    ./codex-skill-sync --source-root "{{source_root}}" check --source-only snapshot-runner
-    ./codex-skill-sync --source-root "{{source_root}}" check --source-only git-finalizer
+    ./tool-skill-sync --source-root "{{source_root}}" --source-repo git-finalizer="$PWD" check --source-only context-loader
+    ./tool-skill-sync --source-root "{{source_root}}" --source-repo git-finalizer="$PWD" check --source-only snapshot-runner
+    ./tool-skill-sync --source-root "{{source_root}}" --source-repo git-finalizer="$PWD" check --source-only git-finalizer
 
 shellcheck:
-    shellcheck --exclude=SC2016 -- codex-git-finalize codex-skill-sync tests/*.sh
-
-hook-check:
-    python3 -B hooks/deploy.py check
-
-hook-install:
-    python3 -B hooks/deploy.py install
+    shellcheck --exclude=SC2016 -- git-finalize tool-skill-sync tests/*.sh
 
 skill-check:
     python3 -B skills/git-change-delivery/deploy.py check

@@ -8,7 +8,7 @@ export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_NOSYSTEM=1
 
 project_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-finalizer=$project_root/codex-git-finalize
+finalizer=$project_root/git-finalize
 tmp_root=$(mktemp -d /tmp/git-finalizer-summary-eval-XXXXXX)
 current_case='startup'
 passed=0

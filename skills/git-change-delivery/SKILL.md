@@ -65,16 +65,16 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 | 明确要求规划或确保一个空 Gitea repository | `--repo-plan` / `--repo-ensure` | 与 publication 分离；仅显式 ensure 可创建 repository，绝不 commit/push |
 
 ```bash
-/home/hsd/bin/codex-git-finalize --summary --mode verify-only --repo <absolute-repo> -- <repo-relative-file>...
-/home/hsd/bin/codex-git-finalize --summary --mode commit-only --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
-/home/hsd/bin/codex-git-finalize --summary --initial-commit-only --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
-/home/hsd/bin/codex-git-finalize --summary --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
-/home/hsd/bin/codex-git-finalize --summary --resume-publish <full-head-oid> --repo <absolute-repo>
-/home/hsd/bin/codex-git-finalize --summary --publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
-/home/hsd/bin/codex-git-finalize --summary --publish-existing-history <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
-/home/hsd/bin/codex-git-finalize --summary --resume-existing-history-publish <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
-/home/hsd/bin/codex-git-finalize --summary --publish-integration-candidate <candidate-oid> --repo <candidate-worktree> --lease-id <uuid> --run-id <run>
-/home/hsd/bin/codex-git-finalize --summary --retire-remote-branch <branch> --remote <name> --integrated-into <branch> --expected-remote-oid <full-oid> --repo <absolute-repo> --dry-run
+/home/hsd/bin/git-finalize --summary --mode verify-only --repo <absolute-repo> -- <repo-relative-file>...
+/home/hsd/bin/git-finalize --summary --mode commit-only --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
+/home/hsd/bin/git-finalize --summary --initial-commit-only --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
+/home/hsd/bin/git-finalize --summary --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
+/home/hsd/bin/git-finalize --summary --resume-publish <full-head-oid> --repo <absolute-repo>
+/home/hsd/bin/git-finalize --summary --publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
+/home/hsd/bin/git-finalize --summary --publish-existing-history <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
+/home/hsd/bin/git-finalize --summary --resume-existing-history-publish <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
+/home/hsd/bin/git-finalize --summary --publish-integration-candidate <candidate-oid> --repo <candidate-worktree> --lease-id <uuid> --run-id <run>
+/home/hsd/bin/git-finalize --summary --retire-remote-branch <branch> --remote <name> --integrated-into <branch> --expected-remote-oid <full-oid> --repo <absolute-repo> --dry-run
 ```
 
 - 三种模式共用适用于各自执行边界的本地提交前检查；`verify-only` 不实际运行 commit hooks、签名或索引写入，因此不得声称验证了这些能力。
@@ -111,7 +111,7 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 Publication decision 只回答：当前任务结束前，是否应执行被明确授权的 Git Finalizer 操作。它不描述 Git 最终结果，也不得被当作“是否已经远端发布”的状态。任何任务在最终回复前都必须形成且只形成一个发布决定。涉及 Git 仓库修改时不得仅报告“未 commit/push”后结束；没有仓库修改的任务也必须按下列规则明确判定是否适用。按顺序选择首个符合的状态，后续状态不再适用：
 
 1. `not_applicable`：本轮是只读调查、没有仓库文件变化、不是 Git 仓库操作、只运行服务或查询状态，或所有临时变化均已安全清理。
-2. `publication_blocked`：任务本应进入已授权 finalization，但存在任务未完成，测试、验收或 Snapshot 未通过，cwd/repo 不一致，所选模式需要的远端分叉或不可访问，Hook/bridge 阻断，工作树无法安全分离，staged/index 异常，敏感内容、异常删除或未解释的范围外改动，或其他明确安全阻断。技术、范围或完成度阻断优先于“有意不发布”，不得用后者掩盖失败或异常。
+2. `publication_blocked`：任务本应进入已授权 finalization，但存在任务未完成，测试、验收或 Snapshot 未通过，cwd/repo 不一致，所选模式需要的远端分叉或不可访问，原生权限边界阻断，工作树无法安全分离，staged/index 异常，敏感内容、异常删除或未解释的范围外改动，或其他明确安全阻断。技术、范围或完成度阻断优先于“有意不发布”，不得用后者掩盖失败或异常。
 3. `intentionally_unpublished`：仓库修改不存在上述阻断，但用户明确要求不 commit/push、仅保留本地修改或未提交草稿，或者当前 explicit-only 合同下没有获得明确发布授权。此状态表示有意保留未发布结果，不是遗漏。
 4. `publish_now`：已获得明确且覆盖所选 Git 写模式的授权，实现完成，范围匹配的测试和验收通过，Snapshot Runner 无阻断，目标改动可与其他工作树改动安全分离，cwd/repo 及该模式要求的 upstream/远端状态可用，且不存在敏感内容、异常删除或未解释的范围外改动。当前应立即实际调用 Git Finalizer。`publish_now` 只是执行决策，不是最终结果；实际终态必须单独报告 Finalization outcome。
 
@@ -262,14 +262,13 @@ commit、push、stash、reset、restore 或 clean；最终回复应简短报告 
 - Snapshot Runner 只收集并发布供人工检查的只读快照；不修改目标仓库 Git 状态、不运行测试、不自动调用模型、不 commit/push。
 - Git Finalizer 只做适用的本地提交前验证、显式路径暂存、commit，以及由默认或显式发布/恢复接口授权的 fast-forward-safe push 和发布后验证；不加载上下文、不实施、不测试、不审查。
 
-### Git Finalizer 命令级 host boundary（强制）
+### Git Finalizer 原生执行边界（强制）
 
-- 普通 Codex 调用 `/home/hsd/bin/codex-git-finalize` 的任何非 `--dry-run` 模式时，第一次调用就必须把完整 Finalizer 命令作为一次原生 shell 工具调用提交。`permission_mode=default` 的旧式调用继续显式设置 `sandbox_permissions: "require_escalated"` 和面向用户的 `justification`；可选 `prefix_rule` 不能替代 escalation。
-- 当当前会话已经由 Codex 以 `approval_policy=never`、当前 Linux 用户 direct execution 运行，且 PreToolUse 明确产生 `permission_mode=bypassPermissions` 时，不得再添加当前工具合同不接受的本地 escalation 字段；直接提交同一完整 Finalizer 命令和精确 `workdir`。这不是通用 `danger-full-access` 放行：bridge 仍要求非 root、固定入口、直接命令、既有 allow rule、受支持参数和显式路径，并继续执行 Finalizer 全部门槛。不得自行切换 permission profile 来获得该模式。
-- 不得先在另一个权限边界试运行 Finalizer，也不得把它拆成 `git add`、`commit`、`fetch` 或 `push`。完整 Finalizer 进程必须在同一次 bridge-validated 调用中完成。
-- 若 remote host 是 `localhost`、`127.0.0.0/8` 或 `::1`，不得用原始 Git 远端命令绕过 Finalizer。只有旧式 `default` 路径的独立只读远端探测才申请单命令 escalation；direct 路径应让 Finalizer 自身完成获授权的远端检查和发布。读取 `git remote get-url` 等纯本地配置不需要 escalation。具体调用格式见 [Git Finalizer reference](references/git-finalizer.md)。
-- 沙箱内的 `connection refused`、无法访问 systemd bus、看不到宿主机监听端口等结果只说明沙箱边界，不能证明宿主机 SSH/Gitea 服务故障。不得据此启动、停止或修改服务，不得修改 remote、密钥、防火墙或监听地址。只有同一正式边界内的远端操作仍失败，才可进入真实服务诊断，并先保持只读。
-- 若既不能使用旧式单命令 escalation，也没有运行时提供的合法 current-user direct mode，停止并报告能力缺口；不得改用 `codex-admin`、sudo、root、伪造 `bypassPermissions` 或通用网络放行绕过。
+- 所有执行器通过同一个 `/home/hsd/bin/git-finalize` 绝对入口调用同一套参数合同，使用精确仓库工作目录和完整命令。
+- 原生审批与 OS 权限决定命令是否能执行；CLI 不检查或推断执行器私有会话状态。不得伪造审批、切换权限配置、使用 root 或额外宿主代理绕过边界。
+- 完整 Finalizer 生命周期由一次调用完成，不拆分为原始 Git 写命令。受沙箱限制时只使用执行器已有的正式权限申请机制；无合法能力时停止并报告。
+- loopback 远端也保持同样的权限边界。沙箱内连接失败不能证明宿主服务故障，不得据此修改服务、密钥、防火墙或 remote。
+- 具体参数、结果与恢复规则见 [Git Finalizer reference](references/git-finalizer.md)。
 
 Context Loader 与 Snapshot Runner 仍保持各自的只读及原有权限边界。
 

@@ -493,112 +493,61 @@ class QueueTest(unittest.TestCase):
         for name in ("key", "queue.lock", "queue.jsonl"):
             self.assertEqual(stat.S_IMODE((self.state / name).stat().st_mode), 0o600)
 
-    def test_current_task_resolution_uses_only_unmatched_lifecycle(self) -> None:
-        codex_home = self.root / "codex"
-        sessions = codex_home / "sessions" / "2026" / "08" / "09"
-        sessions.mkdir(parents=True)
-        thread = "11111111-1111-4111-8111-111111111111"
-        rollout = sessions / f"rollout-fixture-{thread}.jsonl"
-        events = (
-            {"type": "session_meta", "payload": {"id": thread}},
-            {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "old"}},
-            {"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "old"}},
-            {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "interrupted"}},
-            {"type": "event_msg", "payload": {"type": "turn_aborted", "turn_id": "interrupted", "reason": "interrupted"}},
-            {"type": "response_item", "payload": {"type": "message", "role": "user"}},
-            {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "current"}},
-        )
-        rollout.write_text(
-            "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
-        )
-
-        self.assertEqual(queue.resolve_current_task_id(codex_home, thread), "current")
-
-        with rollout.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps({"type": "event_msg", "payload": {"type": "task_started", "turn_id": "concurrent"}}) + "\n")
-        with self.assertRaisesRegex(queue.QueueError, "found 2"):
-            queue.resolve_current_task_id(codex_home, thread)
-
 
 class IdentityResolutionTest(unittest.TestCase):
-    """Identity resolution must serve Codex and non-Codex providers alike."""
+    """Every executor supplies the same explicit task/thread contract."""
 
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary.cleanup)
-        self.codex_home = Path(self.temporary.name) / "codex"
-        (self.codex_home / "sessions").mkdir(parents=True)
-        for name in ("AGENT_TASK_ID", "AGENT_THREAD_ID", "CODEX_THREAD_ID"):
-            os.environ.pop(name, None)
-            self.addCleanup(os.environ.pop, name, None)
+        from unittest.mock import patch
+        self.environment = patch.dict(os.environ, {}, clear=True)
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
 
     def _arguments(self, *, task_id=None, thread_id=None):
-        return argparse.Namespace(
-            task_id=task_id, thread_id=thread_id, codex_home=self.codex_home
-        )
+        return argparse.Namespace(task_id=task_id, thread_id=thread_id)
 
-    def _rollout(self, thread: str) -> None:
-        events = (
-            {"type": "session_meta", "payload": {"id": thread}},
-            {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "current"}},
-        )
-        (self.codex_home / "sessions" / f"rollout-{thread}.jsonl").write_text(
-            "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
-        )
+    def test_explicit_identity_uses_no_executor_files(self) -> None:
+        from unittest.mock import patch
+        for executor in ("terminal", "codex", "claude", "arbitrary-executor"):
+            with self.subTest(executor=executor), patch.object(
+                Path, "open", side_effect=AssertionError("identity must not open files")
+            ):
+                self.assertEqual(
+                    queue._resolve_identity(self._arguments(
+                        task_id=f"{executor}-task", thread_id=f"{executor}-thread"
+                    )),
+                    (f"{executor}-task", f"{executor}-thread"),
+                )
 
-    def test_codex_thread_still_derives_its_task_from_the_rollout(self) -> None:
-        self._rollout("codex-thread")
+    def test_generic_environment_identity(self) -> None:
+        os.environ.update(AGENT_TASK_ID="task-1", AGENT_THREAD_ID="thread-1")
+        self.assertEqual(queue._resolve_identity(self._arguments()), ("task-1", "thread-1"))
 
+    def test_arguments_take_precedence(self) -> None:
+        os.environ.update(AGENT_TASK_ID="environment-task", AGENT_THREAD_ID="environment-thread")
         self.assertEqual(
-            queue._resolve_identity(self._arguments(thread_id="codex-thread")),
-            ("current", "codex-thread"),
+            queue._resolve_identity(self._arguments(task_id="explicit", thread_id="explicit-thread")),
+            ("explicit", "explicit-thread"),
         )
 
-    def test_codex_thread_environment_fallback_is_preserved(self) -> None:
-        self._rollout("codex-thread")
-        os.environ["CODEX_THREAD_ID"] = "codex-thread"
-
-        self.assertEqual(
-            queue._resolve_identity(self._arguments()), ("current", "codex-thread")
-        )
-
-    def test_explicit_identity_records_without_any_rollout(self) -> None:
-        arguments = self._arguments(task_id="claude-turn-1", thread_id="claude-thread")
-
-        self.assertEqual(
-            queue._resolve_identity(arguments), ("claude-turn-1", "claude-thread")
-        )
-        self.assertEqual(queue.codex_rollouts(self.codex_home, "claude-thread"), [])
-
-    def test_provider_neutral_environment_identity_records_without_a_rollout(self) -> None:
-        os.environ["AGENT_TASK_ID"] = "claude-turn-2"
-        os.environ["AGENT_THREAD_ID"] = "claude-thread"
-
-        self.assertEqual(
-            queue._resolve_identity(self._arguments()), ("claude-turn-2", "claude-thread")
-        )
-
-    def test_explicit_task_wins_over_a_matching_rollout(self) -> None:
-        self._rollout("codex-thread")
-
-        self.assertEqual(
-            queue._resolve_identity(
-                self._arguments(task_id="explicit", thread_id="codex-thread")
-            ),
-            ("explicit", "codex-thread"),
-        )
-
-    def test_thread_without_a_rollout_is_told_to_supply_its_task(self) -> None:
-        with self.assertRaisesRegex(queue.QueueError, "pass --task-id"):
-            queue._resolve_identity(self._arguments(thread_id="claude-thread"))
-
-    def test_missing_thread_identity_still_fails_closed(self) -> None:
+    def test_missing_identity_fails_closed(self) -> None:
         with self.assertRaisesRegex(queue.QueueError, "thread identity is unavailable"):
             queue._resolve_identity(self._arguments())
+        with self.assertRaisesRegex(queue.QueueError, "pass --task-id"):
+            queue._resolve_identity(self._arguments(thread_id="thread-1"))
+
+    def test_retired_environment_cannot_supply_identity(self) -> None:
+        os.environ.update(CODEX_THREAD_ID="retired", CODEX_HOME="/nonexistent")
+        with self.assertRaisesRegex(queue.QueueError, "thread identity is unavailable"):
+            queue._resolve_identity(self._arguments(task_id="task-1"))
+
+    def test_malformed_identity_is_rejected_before_state_writes(self) -> None:
+        with self.assertRaisesRegex(queue.QueueError, "bounded structured identifiers"):
+            queue._resolve_identity(self._arguments(task_id="invalid\nidentity", thread_id="thread-1"))
 
 
-class NonCodexProviderQueueTest(QueueTest):
-    """A Claude-shaped session records and closes without any Codex rollout."""
+class ExplicitIdentityQueueTest(QueueTest):
+    """An explicit session records and retries through the shared queue contract."""
 
     def test_claude_session_records_and_closes_a_pending_record(self) -> None:
         action, record = self._upsert(

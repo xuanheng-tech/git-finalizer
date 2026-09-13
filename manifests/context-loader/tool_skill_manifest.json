@@ -3,29 +3,29 @@
     "owner": "git-finalizer",
     "path": "skills/git-change-delivery/SKILL.md"
   },
-  "canonical_skill_sha256": "774ab026348a1c6ce4fa09f8c0bb6f5c6459fcd85cb77c6841c73ed92777a5f0",
+  "canonical_skill_sha256": "034665e96c148fd36e2028bf6333cd65cb18b0c5e7ccb3f16b8912269303fd80",
   "compatibility_skill": {
     "name": "three-tool-git-workflow",
     "path": "skills/three-tool-git-workflow/SKILL.md",
     "sha256": "68503da0ffb2e94e487afc8bbc8320390da9bdf7a8e6e7e902f6f6ab426dd8cd"
   },
-  "compatible_toolchain_contract_version": 3,
+  "compatible_toolchain_contract_version": 4,
   "executable": {
     "entrypoints": [
-      "codex-project-context"
+      "project-context"
     ],
     "kind": "python_console_scripts"
   },
   "install_targets": {
     "skill_directory": "git-change-delivery",
     "stable_entries": [
-      "codex-project-context"
+      "project-context"
     ]
   },
-  "public_cli_contract_sha256": "0105f283196f334d7e9f2bc6da9414bd2b1a7582ed90915efeb2852033198511",
+  "public_cli_contract_sha256": "134a355edddd5fc3482caf6069592b93141f13df6ef32dfadd3d889ccc395745",
   "schema_version": 2,
-  "skill_contract_version": 1,
+  "skill_contract_version": 2,
   "tool_commit": "@release",
   "tool_name": "context-loader",
-  "tool_version": "0.1.8"
+  "tool_version": "1.0.0"
 }

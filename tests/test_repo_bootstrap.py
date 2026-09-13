@@ -17,7 +17,7 @@ import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
-    "repo_bootstrap", ROOT / "codex-git-finalize-repo-bootstrap.py"
+    "repo_bootstrap", ROOT / "git-finalize-repo-bootstrap.py"
 )
 assert SPEC is not None and SPEC.loader is not None
 bootstrap = importlib.util.module_from_spec(SPEC)
@@ -310,7 +310,7 @@ class RepositoryBootstrapTests(unittest.TestCase):
             code, receipt = self.execute(self.arguments(server), password=marker)
             self.assertEqual(code, 0)
             self.assertEqual(receipt["summary_schema_version"], 1)
-            self.assertEqual(receipt["finalizer_version"], "0.10.0")
+            self.assertEqual(receipt["finalizer_version"], "1.0.0")
             self.assertEqual(receipt["repository_id"], "controller-repository")
             self.assertEqual(receipt["allocation_id"], "allocation")
             self.assertEqual(receipt["task_key"], "task")
@@ -337,7 +337,7 @@ class RepositoryBootstrapTests(unittest.TestCase):
         with FakeGitea() as server:
             result = subprocess.run(
                 [
-                    str(ROOT / "codex-git-finalize"),
+                    str(ROOT / "git-finalize"),
                     "--repo-plan",
                     "--repo",
                     str(self.repo),

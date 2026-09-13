@@ -89,7 +89,7 @@ class FixtureExceptionTests(unittest.TestCase):
             self.git("status", "--porcelain=v1", "--untracked-files=all"),
         )
         command = [
-            str(ROOT / "codex-git-finalize"),
+            str(ROOT / "git-finalize"),
             "--summary",
             mode,
             before[0],
