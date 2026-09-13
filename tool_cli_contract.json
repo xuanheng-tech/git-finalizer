@@ -268,7 +268,12 @@
         "--remote-branch",
         "--repo",
         "--summary",
-        "--fixture-exceptions"
+        "--fixture-exceptions",
+        "--reviewed-sensitive-source",
+        "--repository-id",
+        "--allocation-id",
+        "--task-key",
+        "--authority-key"
       ],
       "name": "publish_existing_branch",
       "operation_class": "remote_mutation",
@@ -603,5 +608,5 @@
   ],
   "schema_version": 1,
   "tool_name": "git-finalizer",
-  "tool_version": "0.10.2"
+  "tool_version": "0.10.3"
 }

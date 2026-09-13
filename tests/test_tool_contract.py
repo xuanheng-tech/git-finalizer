@@ -44,6 +44,14 @@ class ToolContractTests(unittest.TestCase):
         self.assertEqual(contract["tool_version"], manifest["tool_version"])
         self.assertEqual(contract["tool_version"], version_match.group(1))
         self.assertEqual(contract["tool_version"], companion_version_match.group(1))
+        bootstrap_version = re.search(
+            r'^VERSION = "([0-9]+\.[0-9]+\.[0-9]+)"$',
+            (ROOT / "codex-git-finalize-repo-bootstrap.py").read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(bootstrap_version)
+        assert bootstrap_version is not None
+        self.assertEqual(contract["tool_version"], bootstrap_version.group(1))
         self.assertEqual(manifest["tool_commit"], "@release")
         self.assertEqual(
             manifest["public_cli_contract_sha256"],

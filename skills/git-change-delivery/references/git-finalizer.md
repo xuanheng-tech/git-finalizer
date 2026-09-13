@@ -360,9 +360,10 @@ receipt，result 只取 `REMOTE_BRANCH_RETIRED_VERIFIED`、`ALREADY_ABSENT_VERIF
 `RETIREMENT_PREFLIGHT_PASSED`、`RETIREMENT_BLOCKED` 或 `REMOTE_DELETE_UNVERIFIED`；工具不另建
 持久 audit store。
 
-## Reviewed sensitive Python source（0.10.0）
+## Reviewed sensitive Python source（0.10.3）
 
-当任务明确授权审查某个敏感命名的源码文件时，normal、commit-only、verify-only 可显式使用
+当任务明确授权审查某个敏感命名的源码文件时，normal、commit-only、verify-only 和
+publish-existing-branch 可显式使用
 `--reviewed-sensitive-source <absolute-json-file>`。它只豁免 exact Python 源码的
 credential/secret/token **路径标记**；`.env`、private/SSH key 路径、非 Python 文件不接受。
 既有 secret 内容扫描仍在工作区、index 和提交后运行，不能组合任何 fixture 内容例外。
@@ -407,6 +408,13 @@ Review 与 evidence 必须是 worktree/Git common directory 外部的 canonical 
 SHA256、源码/evidence/purpose 摘要和 identity；只有完整验证成功才报告 `content_scan=passed`。
 verify-only 仍不写 index/HEAD 或访问远端。Git filter/hook 改变已审查源码时停止；若 hook 已创建
 commit，receipt 保留 exact OID，禁止误报成功或自动重提。
+
+commit-only 之后首次发布同一 clean feature branch 时，向 `--publish-existing-branch`
+传入同一 review 文件、四项 Controller linkage，以及 `--` 后的原始完整 review scope。
+这份 scope 只绑定 review；Finalizer 仍扫描所有待发布 commit 和路径。HEAD 内容和每个待发布
+历史 blob 都必须匹配 review，旧版本不能借当前 review 放行；push 前再次验证 evidence 与
+有效期。此入口不创建新 commit，不接受 `--mode`、`--message` 或 `--dry-run`，不得组合
+fixture 内容例外。其他 existing/history/resume/integration 模式仍不消费此 review。
 
 ## Release 流程边界
 

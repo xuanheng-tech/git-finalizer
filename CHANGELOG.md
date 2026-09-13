@@ -59,6 +59,15 @@ section is invented for it.
   repository is preserved as a read-only archive and is no longer an active source; the
   private `ToolSkillManifest` continues to live here.
 
+## 0.10.3
+
+- Reuse the existing reviewed-sensitive-source validator for first publication of a clean
+  existing branch. Require the same exact repository, allocation, explicit scope, source hash,
+  evidence and validity; revalidate before push. Keep all secret detectors mandatory and reject
+  historical versions whose blob differs from the reviewed HEAD source.
+- Forward the review and exact scope through the host bridge without weakening any other
+  publication mode or permitting content exceptions alongside a source review.
+
 ## 0.10.2
 
 - Accept the existing exact fixture exception contract in `--publish-existing-branch`,

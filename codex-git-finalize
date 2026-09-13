@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="0.10.2"
+readonly VERSION="0.10.3"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -912,6 +912,10 @@ load_source_reviews() {
         [[ "$reason" == 'credential/secret/token 路径标记' ]] ||
             fail 'review 不接受 .env 或 private/SSH key 路径'
         reviewed_source_paths["$path"]=1
+        if [[ "$phase" == head ]]; then
+            reviewed_source_paths["$path"]=$(git -C "$repo" rev-parse "HEAD:$path") ||
+                fail '无法解析 reviewed source HEAD blob'
+        fi
         summary_source_reviews+=("$receipt")
     done <<<"$output"
 }
@@ -2376,7 +2380,8 @@ validate_existing_publish_range() {
                 existing_range_error="待发布 commit 包含异常文件路径: $(printf '%q' "$path")"
                 return 1
             fi
-            if reason=$(sensitive_path_reason "$path"); then
+            if reason=$(sensitive_path_reason "$path") &&
+                [[ -z ${reviewed_source_paths[$path]+present} ]]; then
                 existing_range_error="拒绝待发布敏感文件 $(printf '%q' "$path"): $reason"
                 return 1
             fi
@@ -2420,6 +2425,11 @@ validate_existing_publish_range() {
             fi
             if is_committed_large_binary "$object_oid"; then
                 existing_range_error="拒绝待发布的大于 5 MiB 明显二进制文件: $(printf '%q' "$path")"
+                return 1
+            fi
+            if [[ -n ${reviewed_source_paths[$path]+present} &&
+                "$object_oid" != "${reviewed_source_paths[$path]}" ]]; then
+                existing_range_error="reviewed source history blob mismatch: $(printf '%q' "$path")"
                 return 1
             fi
             excepted_detectors=${history_fixture_rules[$path:$object_oid]-}
@@ -3126,9 +3136,10 @@ resume_existing_publish() {
 
 publish_existing_branch_head() {
     local branch_head
+    local reviewed_path reason
     local push_state_error=''
 
-    paths=()
+    paths=("${input_paths[@]}")
     existing_publish_commit_output_override=''
     summary_phase='preflight'
     summary_mode_state='preflight'
@@ -3153,6 +3164,12 @@ publish_existing_branch_head() {
     ) || [[ "$branch_head" != "$resume_expected_oid" ]]; then
         fail 'existing-branch publish 的本地 branch ref 与 expected HEAD 不一致'
     fi
+    load_source_reviews head
+    for reviewed_path in "${!reviewed_source_paths[@]}"; do
+        if reason=$(staged_content_reason "${reviewed_source_paths[$reviewed_path]}"); then
+            fail "reviewed source 内容扫描阻断: $reason"
+        fi
+    done
     load_fixture_exceptions
     classify_branch_upstream \
         "$branch_publish_branch" "$branch_publish_remote" "$branch_publish_branch_ref"
@@ -3221,6 +3238,7 @@ publish_existing_branch_head() {
         printf 'all commits already reachable from captured remote heads\n'
     fi
     printf 'range safety checks: passed\n'
+    load_source_reviews head
     if ! check_initial_branch_remote_unchanged_absent; then
         fail "$branch_publish_remote_error；未执行 push"
     fi
@@ -4462,10 +4480,10 @@ fi
 ((repo_seen == 1)) || fail '必须指定 --repo'
 if ((source_review_seen == 1)); then
     ((initial_commit_only == 0 && initial_publish == 0 && initial_branch_publish == 0 &&
-        publish_existing_branch == 0 && publish_existing_history == 0 &&
+        publish_existing_history == 0 &&
         retire_remote_branch == 0 && resume_initial == 0 && resume_existing == 0 &&
         resume_existing_history == 0)) ||
-        fail '--reviewed-sensitive-source 只接受 normal/commit-only/verify-only'
+        fail '--reviewed-sensitive-source 只接受 normal/commit-only/verify-only/existing-branch'
     ((fixture_exceptions_seen == 0 && ${#allow_test_fixture_args[@]} == 0)) ||
         fail 'source review 不接受任何 secret 内容例外'
     ((repository_id_seen == 1 && allocation_id_seen == 1 && task_key_seen == 1 &&
@@ -4527,8 +4545,13 @@ elif ((publish_existing_branch == 1 || publish_existing_history == 1)); then
     ((${#allow_large_binary_args[@]} == 0)) ||
         fail '--publish-existing-branch 不接受 --allow-large-binary'
     ((snapshot_seen == 0)) || fail '--publish-existing-branch 不接受 --snapshot'
-    ((separator_seen == 0 && ${#input_paths[@]} == 0)) ||
-        fail '--publish-existing-branch 不接受文件列表或 -- 分隔符'
+    if ((publish_existing_branch == 1 && source_review_seen == 1)); then
+        ((separator_seen == 1 && ${#input_paths[@]} > 0)) ||
+            fail 'reviewed existing-branch publication 要求 exact review scope 文件列表'
+    else
+        ((separator_seen == 0 && ${#input_paths[@]} == 0)) ||
+            fail '--publish-existing-branch 不接受文件列表或 -- 分隔符'
+    fi
     ((remote_seen == 1)) || fail '--publish-existing-branch 必须指定 --remote'
     ((remote_branch_seen == 1)) ||
         fail '--publish-existing-branch 必须指定 --remote-branch'

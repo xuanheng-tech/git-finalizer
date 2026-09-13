@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -124,25 +125,62 @@ class ReviewedSourceTests(unittest.TestCase):
             "--authority-key",
             "source-review",
         ]
-        if mode is not None:
+        existing_branch = mode == "publish-existing-branch"
+        if existing_branch:
+            command += [
+                "--publish-existing-branch",
+                before[0],
+                "--remote",
+                "origin",
+                "--remote-branch",
+                "feature/reviewed-source",
+            ]
+        elif mode is not None:
             command += ["--mode", mode]
-        if mode != "verify-only":
+        if mode != "verify-only" and not existing_branch:
             command += ["--message", "Review synthetic source"]
         if approved:
             command += ["--reviewed-sensitive-source", str(self.file)]
+        command += list(extra)
+        if not existing_branch or approved or paths is not None:
+            command += ["--", *(paths or (self.path,))]
         result = subprocess.run(
-            command + list(extra) + ["--", *(paths or (self.path,))],
+            command,
             env=self.env,
             capture_output=True,
             text=True,
             timeout=30,
         )
         data = json.loads(result.stdout)
-        if mode is not None:
+        if mode is not None and not existing_branch:
             self.assertFalse(data["push"]["executed"])
-        if mode == "verify-only":
+        if mode == "verify-only" or existing_branch:
             self.assertEqual(before, self.state())
         return result.returncode, data
+
+    def prepare_branch_publication(self) -> Path:
+        remote = self.base / "remote.git"
+        self.git("init", "-q", "--bare", "--initial-branch=main", str(remote))
+        self.git("remote", "add", "origin", str(remote))
+        self.git("push", "-qu", "origin", "main")
+        self.git("switch", "-qc", "feature/reviewed-source")
+        return remote
+
+    def commit_fixture(self) -> None:
+        self.git("add", "--", self.path)
+        self.git("commit", "-qm", "Synthetic publication fixture")
+
+    def assert_publish_blocked(self, **kwargs) -> dict:
+        status, data = self.run_finalizer("publish-existing-branch", **kwargs)
+        self.assertNotEqual(status, 0, data)
+        self.assertEqual(data["status"], "blocked")
+        self.assertFalse(data["push"]["executed"])
+        self.assertFalse(data["commit"]["created"])
+        self.assertEqual(
+            self.git("ls-remote", "origin", "refs/heads/feature/reviewed-source"),
+            "",
+        )
+        return data
 
     def assert_blocked(self, **kwargs) -> dict:
         for mode in ("verify-only", "commit-only"):
@@ -169,6 +207,133 @@ class ReviewedSourceTests(unittest.TestCase):
 
     def test_missing_review_blocks(self) -> None:
         self.assert_blocked(approved=False)
+
+    def test_commit_review_publishes_same_exact_existing_branch(self) -> None:
+        remote = self.prepare_branch_publication()
+        receipts = []
+        for mode in ("verify-only", "commit-only", "publish-existing-branch"):
+            status, data = self.run_finalizer(mode)
+            self.assertEqual(status, 0, data)
+            receipts.append(data["reviewed_sensitive_sources"])
+        self.assertEqual(receipts[0], receipts[1])
+        self.assertEqual(receipts[1], receipts[2])
+        self.assertTrue(data["push"]["executed"])
+        self.assertFalse(data["commit"]["created"])
+        self.assertEqual(self.git("rev-list", "--count", "HEAD"), "2")
+        self.assertEqual(
+            self.git("rev-parse", "HEAD"),
+            self.git(
+                "--git-dir=" + str(remote), "rev-parse", "feature/reviewed-source"
+            ),
+        )
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.git("rev-parse", "@{u}"))
+
+    def test_publish_missing_review_and_scope_block(self) -> None:
+        self.prepare_branch_publication()
+        self.commit_fixture()
+        self.assert_publish_blocked(approved=False)
+        self.assert_publish_blocked(paths=(self.path, "README.md"))
+        self.assert_publish_blocked(extra=("--fixture-exceptions", str(self.file)))
+
+    def test_publish_review_identity_and_validity_match_commit_validation(self) -> None:
+        self.prepare_branch_publication()
+        original = copy.deepcopy(self.review)
+        changes = (
+            ("repository", "common_dir", str(self.base / "other.git")),
+            ("repository", "root_commit", "0" * 40),
+            ("allocation", "repository_id", "other-repository"),
+            ("allocation", "allocation_id", "other-allocation"),
+            ("allocation", "task_key", "other-task"),
+            ("allocation", "authority_key", "other-authority"),
+            ("allocation", "worktree_path", str(self.base / "other")),
+        )
+        for section, key, value in changes:
+            with self.subTest(section=section, key=key):
+                self.review = copy.deepcopy(original)
+                self.review[section][key] = value
+                self.write_review()
+                self.assert_blocked()
+        self.review = copy.deepcopy(original)
+        self.write_review()
+        status, data = self.run_finalizer("commit-only")
+        self.assertEqual(status, 0, data)
+        for section, key, value in changes:
+            with self.subTest(section=section, key=key, mode="publish"):
+                self.review = copy.deepcopy(original)
+                self.review[section][key] = value
+                self.write_review()
+                self.assert_publish_blocked()
+        self.review = copy.deepcopy(original)
+        now = datetime.now(timezone.utc)
+        self.review["reviewed_at"] = (now - timedelta(days=2)).isoformat()
+        self.review["expires_at"] = (now - timedelta(days=1)).isoformat()
+        self.write_review()
+        self.assert_publish_blocked()
+        self.review = copy.deepcopy(original)
+        self.review["reviews"][0]["purpose"] = ""
+        self.write_review()
+        self.assert_publish_blocked()
+
+    def test_publish_missing_or_changed_evidence_blocks(self) -> None:
+        self.prepare_branch_publication()
+        self.commit_fixture()
+        self.evidence.unlink()
+        self.assert_publish_blocked()
+        self.evidence.write_text("Changed evidence\n")
+        self.assert_publish_blocked()
+
+    def test_publish_same_path_changed_content_blocks(self) -> None:
+        self.prepare_branch_publication()
+        status, data = self.run_finalizer("commit-only")
+        self.assertEqual(status, 0, data)
+        self.source.write_text(self.source.read_text() + "# changed\n")
+        self.commit_fixture()
+        self.assert_publish_blocked()
+
+    def test_publish_different_path_cannot_reuse_review(self) -> None:
+        self.prepare_branch_publication()
+        self.source.rename(self.repo / "credential_other.py")
+        self.git("add", "credential_other.py")
+        self.git("commit", "-qm", "Synthetic different path")
+        self.assert_publish_blocked(paths=("credential_other.py",))
+
+    def test_publish_unreviewed_history_blob_blocks(self) -> None:
+        self.prepare_branch_publication()
+        reviewed_content = self.source.read_bytes()
+        self.source.write_bytes(reviewed_content + b"# unreviewed old version\n")
+        self.commit_fixture()
+        self.source.write_bytes(reviewed_content)
+        self.commit_fixture()
+        data = self.assert_publish_blocked()
+        self.assertIn("history blob mismatch", json.dumps(data))
+
+    def test_publish_scans_all_paths_beyond_review_scope(self) -> None:
+        self.prepare_branch_publication()
+        self.commit_fixture()
+        (self.repo / "credential_other.py").write_text("# unreviewed\n")
+        self.git("add", "credential_other.py")
+        self.git("commit", "-qm", "Synthetic other path")
+        self.assert_publish_blocked()
+
+    def test_publish_secret_content_blocks_even_with_exact_review(self) -> None:
+        self.prepare_branch_publication()
+        examples = (
+            "gh" + "p_" + "X" * 32,
+            "-" * 5 + "BEGIN PRIVATE KEY" + "-" * 5,
+            "ssh-" + "rsa " + "X" * 48,
+            "password" + ' = "synthetic-blocked-value"',
+        )
+        for content in examples:
+            with self.subTest(detector=examples.index(content)):
+                self.source.write_text("# " + content + "\n")
+                self.review["reviews"][0]["sha256"] = sha(self.source.read_bytes())
+                self.write_review()
+                self.commit_fixture()
+                data = self.assert_publish_blocked()
+                self.assertNotIn(content, json.dumps(data))
+                self.assertNotEqual(
+                    data["reviewed_sensitive_sources"][0]["content_scan"], "passed"
+                )
 
     def test_normal_publish_keeps_review_and_remote_verification(self) -> None:
         remote = self.base / "remote.git"

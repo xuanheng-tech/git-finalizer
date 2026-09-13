@@ -452,6 +452,38 @@ class GitFinalizerBridgeTest(unittest.TestCase):
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0], shlex.split(command))
 
+    def test_reviewed_existing_branch_forwards_same_review_and_exact_scope(
+        self,
+    ) -> None:
+        option = (
+            " --reviewed-sensitive-source /tmp/source-review.json"
+            " --repository-id test-repo --allocation-id test-allocation"
+            " --task-key test-task --authority-key test-task"
+        )
+        command = (
+            self.publish_existing_branch_command + option + " -- credential_transfer.py"
+        )
+        output, run = self.invoke_main(self.event(command))
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "allow")
+        self.assertEqual(run.call_args.args[0], shlex.split(command))
+        invalid = (
+            self.publish_existing_branch_command + option,
+            self.publish_existing_branch_command + option + " --",
+            self.publish_existing_branch_command + " -- credential_transfer.py",
+            command.replace(" --task-key test-task", ""),
+            command.replace("/tmp/source-review.json", "relative.json"),
+            command.replace(" -- ", " --fixture-exceptions /tmp/fixtures.json -- "),
+            command.replace(" -- ", " --mode verify-only -- "),
+            command.replace(" -- ", " --dry-run -- "),
+            command.replace("credential_transfer.py", "../credential_transfer.py"),
+            self.publish_existing_history_command
+            + option
+            + " -- credential_transfer.py",
+        )
+        for value in invalid:
+            with self.subTest(command=value), self.assertRaises(bridge.BridgeError):
+                bridge.validate_hook_event(self.event(value))
+
     def test_legitimate_self_release_scope_is_accepted_and_forwarded(self) -> None:
         prefix = self.command.rsplit(" -- ", 1)[0]
         command = (

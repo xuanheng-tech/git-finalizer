@@ -526,6 +526,9 @@ def parse_direct_finalizer(
             "--worktree-path",
             "--role",
             "--reviewed-sensitive-source",
+            "--publish-existing-branch",
+            "--remote",
+            "--remote-branch",
         }
         if (
             switches - {"--summary", "--dry-run"}
@@ -534,7 +537,7 @@ def parse_direct_finalizer(
             or not required_linkage <= set(parsed)
         ):
             raise BridgeError(
-                "Finalizer source review 仅用于带完整 linkage 的普通提交验证，不接受内容例外"
+                "Finalizer source review 仅用于带完整 linkage 的普通提交验证或 existing-branch，不接受内容例外"
             )
         if not Path(source_review).is_absolute() or any(
             c in source_review for c in ("\x00", "\n", "\r", "\t")
@@ -662,7 +665,13 @@ def parse_direct_finalizer(
         raise BridgeError(
             "Finalizer existing-commit/retirement operation 不接受 fixture 或 binary exception"
         )
-    if resume or publish_existing or retirement:
+    if publish_existing_oid is not None and source_review is not None:
+        if len(delimiters) != 1:
+            raise BridgeError(
+                "Finalizer reviewed existing-branch 要求 exact review scope 文件列表"
+            )
+        paths = _explicit_paths(path_values)
+    elif resume or publish_existing or retirement:
         if delimiters:
             raise BridgeError(
                 "Finalizer explicit lifecycle operation 不接受 -- 分隔符或文件路径"

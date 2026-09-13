@@ -2,11 +2,13 @@
 
 Codex Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`0.10.2`
+当前版本：`0.10.3`
 
 敏感命名的 Python 源码可通过显式 `--reviewed-sensitive-source` 提交定向审查证据。
+`--publish-existing-branch` 复用提交时相同的 exact review、Controller linkage 和文件 scope；
+发布前重新验证内容、证据和有效期，并继续扫描所有待发布 commit，拒绝未审查的历史版本。
 授权绑定仓库、Controller allocation、完整 scope 和 exact SHA256；内容扫描始终执行。
-格式及失效规则见 [source review contract](skills/git-change-delivery/references/git-finalizer.md#reviewed-sensitive-python-source0100)。
+格式及失效规则见 [source review contract](skills/git-change-delivery/references/git-finalizer.md#reviewed-sensitive-python-source0103)。
 
 ## Gitea repository bootstrap
 
