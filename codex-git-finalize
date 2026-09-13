@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="0.10.0"
+readonly VERSION="0.10.1"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -1021,19 +1021,28 @@ collect_staged_paths() {
     )
 }
 
-is_staged_deletion_with_ignored_worktree_copy() {
+is_staged_deletion() {
     local path=$1
-    local absolute_path=$repo/$path
     local diff_status
 
-    [[ -e "$absolute_path" || -L "$absolute_path" ]] || return 1
+    # A staged deletion is absent from the index. Disable rename detection so the
+    # old side of a rename is checked against HEAD as the same exact deletion.
     if git -C "$repo" --literal-pathspecs \
-        diff --cached --quiet --diff-filter=D -- "$path"; then
+        diff --cached --no-renames --no-ext-diff --no-textconv \
+            --quiet --diff-filter=D HEAD -- "$path"; then
         return 1
     else
         diff_status=$?
     fi
     ((diff_status == 1)) || return 1
+}
+
+is_retained_staged_deletion() {
+    local path=$1
+    local absolute_path=$repo/$path
+
+    is_staged_deletion "$path" || return 1
+    [[ -e "$absolute_path" || -L "$absolute_path" ]] || return 0
     git -C "$repo" check-ignore --quiet --no-index -- "$path"
 }
 
@@ -1268,7 +1277,7 @@ verify_local_candidate() {
     for index in "${!paths[@]}"; do
         path=${paths[$index]}
         absolute_path=${absolute_paths[$index]}
-        if [[ -n ${retained_ignored_deletions[$path]+present} ]]; then
+        if [[ -n ${retained_staged_deletions[$path]+present} ]]; then
             candidate_paths["$path"]=1
             candidate_count=$((candidate_count + 1))
             continue
@@ -4704,7 +4713,7 @@ declare -a absolute_paths=()
 declare -a staged_paths=()
 declare -a paths_to_add=()
 declare -A allowed_paths=()
-declare -A retained_ignored_deletions=()
+declare -A retained_staged_deletions=()
 declare -a test_fixture_paths=()
 declare -A test_fixture_content_overrides=()
 declare -a large_binary_paths=()
@@ -4740,7 +4749,8 @@ for input_path in "${input_paths[@]}"; do
 
     if [[ ! -e "$lexical_path" && ! -L "$lexical_path" ]]; then
         git -C "$repo" --literal-pathspecs ls-files --error-unmatch -- "$relative_path" \
-            >/dev/null 2>&1 || fail "文件不存在且不是 tracked deletion: $input_path"
+            >/dev/null 2>&1 || is_staged_deletion "$relative_path" ||
+            fail "文件不存在且不是 tracked deletion: $input_path"
     fi
 
     allowed_paths["$relative_path"]=1
@@ -4875,8 +4885,8 @@ load_source_reviews worktree
 collect_staged_paths
 if ((initial_publish == 0 && initial_commit_only == 0)); then
     for path in "${paths[@]}"; do
-        if is_staged_deletion_with_ignored_worktree_copy "$path"; then
-            retained_ignored_deletions["$path"]=1
+        if is_retained_staged_deletion "$path"; then
+            retained_staged_deletions["$path"]=1
         else
             paths_to_add+=("$path")
         fi
@@ -4939,7 +4949,7 @@ if ((dry_run == 1)); then
             add_risk "真实运行会拒绝 $(printf '%q' "$path"): $reason"
             continue
         fi
-        if [[ -n ${retained_ignored_deletions[$path]+present} ]]; then
+        if [[ -n ${retained_staged_deletions[$path]+present} ]]; then
             continue
         fi
         if is_working_large_binary "$absolute_path" &&
@@ -5039,7 +5049,7 @@ for index in "${!paths[@]}"; do
         [[ -z ${reviewed_source_paths[$path]+present} ]]; then
         fail "拒绝敏感文件 $(printf '%q' "$path"): $reason"
     fi
-    if [[ -n ${retained_ignored_deletions[$path]+present} ]]; then
+    if [[ -n ${retained_staged_deletions[$path]+present} ]]; then
         continue
     fi
     if is_working_large_binary "$absolute_path" &&
@@ -5138,8 +5148,12 @@ summary_phase='staging'
 summary_default_failure_status='failed'
 printf '\n== 显式暂存 ==\n'
 for path in "${paths[@]}"; do
-    if [[ -n ${retained_ignored_deletions[$path]+present} ]]; then
-        printf '保留已暂存删除及本地忽略副本: %q\n' "$path"
+    if [[ -n ${retained_staged_deletions[$path]+present} ]]; then
+        if [[ -e "$repo/$path" || -L "$repo/$path" ]]; then
+            printf '保留已暂存删除及本地忽略副本: %q\n' "$path"
+        else
+            printf '保留已暂存删除: %q\n' "$path"
+        fi
     fi
 done
 if ((${#paths_to_add[@]} > 0)); then

@@ -42,10 +42,10 @@
       "codex-git-finalize"
     ]
   },
-  "public_cli_contract_sha256": "927633b386f84e16ee26593f80fe91bedcaa41c958b81abaad81fbfbd37fcc49",
+  "public_cli_contract_sha256": "7d556cbf7499fee6c19ca81f5249a29c7de2fc1fc98aaaca4e4d73c06eecdbb5",
   "schema_version": 2,
   "skill_contract_version": 1,
   "tool_commit": "@release",
   "tool_name": "git-finalizer",
-  "tool_version": "0.10.0"
+  "tool_version": "0.10.1"
 }

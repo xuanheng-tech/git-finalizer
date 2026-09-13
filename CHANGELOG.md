@@ -59,6 +59,14 @@ section is invented for it.
   repository is preserved as a read-only archive and is no longer an active source; the
   private `ToolSkillManifest` continues to live here.
 
+## 0.10.1
+
+- Validate absent explicit paths against the exact `HEAD -> index` deletion, with rename
+  detection disabled. Staged deletions and rename-old paths now survive preflight and
+  verify-only, and are retained without trying to stage the absent path again.
+- Keep invalid missing paths, historical deletions and out-of-scope staged changes blocked;
+  preserve the existing behavior for ignored copies and deliberately recreated files.
+
 ## 0.10.0 - 2026-09-12
 
 - Add explicit `--reviewed-sensitive-source` for normal, commit-only and verify-only operations.

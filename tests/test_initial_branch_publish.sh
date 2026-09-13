@@ -329,7 +329,7 @@ import sys
 
 data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 branch = sys.argv[2]
-assert data["finalizer_version"] == "0.10.0"
+assert data["finalizer_version"] == "0.10.1"
 assert data["mode"] == "initial_branch"
 assert data["status"] == "success"
 assert data["branch"] == branch

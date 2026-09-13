@@ -2,7 +2,7 @@
 
 Codex Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`0.10.0`
+当前版本：`0.10.1`
 
 敏感命名的 Python 源码可通过显式 `--reviewed-sensitive-source` 提交定向审查证据。
 授权绑定仓库、Controller allocation、完整 scope 和 exact SHA256；内容扫描始终执行。
