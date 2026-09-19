@@ -37,9 +37,12 @@ release 算法，也不创建或移除 worktree。流程边界是：
 2. 读取适用规则；在正式变更任务开始时按需使用 Context Loader 获取确定性的本地仓库上下文。调用和失败处理见 [references/context-loader.md](references/context-loader.md)。
 3. 在三个交付工具之外实施最小范围变更，并运行从定向到必要完整度的实际测试与检查。记录真实结果；任何工具输出都不能替代测试。
 4. 按风险选择 Snapshot Runner 命令，默认显式使用 `--summary` 作首轮判断；仅在摘要异常、证据不足或任务需要具体内容时读取正式 artifact。命令选择、摘要充分性、展开条件和产物语义见 [references/snapshot-runner.md](references/snapshot-runner.md)。
-5. 需要复用 Finalizer 的本地提交前验证、执行已授权 Git 写入或显式退役远端 feature branch 时，按下表及 reference 选择独立接口；所有模式默认显式启用 `--summary`，结果消费、展开和停止语义见 [references/git-finalizer.md](references/git-finalizer.md)。
+5. 需要复用 Finalizer 的本地提交前验证、执行已授权 Git 写入或按 Controller plan 显式退役
+   local/remote feature branch 时，按下表及 reference 选择独立接口；所有模式默认显式启用
+   `--summary`，结果消费、展开和停止语义见 [references/git-finalizer.md](references/git-finalizer.md)。
 6. Git Finalizer 只返回 commit/publication evidence；上层 lifecycle 可据此继续 handoff、
-   integration 或 release。Finalizer 不创建/移除 worktree，也不删除 local branch。
+   integration、release 或 retirement receipt 登记。Finalizer 不创建/移除 worktree；只有显式
+   `--retire-local-branch` 可按 expected OID 删除一个已释放 branch ref。
 
 `toolchain_compatibility.json` 是总体 contract version 绑定。任一工具的 public contract 发生
 incompatible change 而未同步更新该文件时，兼容检查必须失败。
@@ -62,6 +65,7 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 | existing-history first push 中断或结果不确定，且 remote 为空或仅有 expected target | `--resume-existing-history-publish <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>` | 不创建 commit；精确恢复并验证 upstream/remote `0/0` |
 | Controller schema v2 已签发 integration publication lease，且 V1 intent 为 `VALIDATED` 或 V2 intent 为 lease-bound `PUBLISHING` | `--publish-integration-candidate <candidate-oid> --repo <candidate-worktree> --lease-id <uuid> --run-id <run>` | 不创建 commit；消费同一 lease，单锁精确 main push、remote verify、中断幂等恢复 |
 | 已完成 ancestry-provable integration，明确授权退役 remote feature ref | `--retire-remote-branch <branch> --remote <name> --integrated-into <branch> --expected-remote-oid <full-oid> --repo <absolute-repo>` | 不创建 commit；expected-OID compare-and-delete、远端 post-verify |
+| Controller 已签发 eligible retirement plan，明确授权退役 local feature ref | `--retire-local-branch <branch> --remote <name> --integrated-into <branch> --expected-local-oid <full-oid> --expected-integrated-oid <full-oid> --retirement-plan-id <sha256> --repo <absolute-repo>` | 不创建 commit；Controller state recheck、`update-ref` expected-OID CAS、local post-verify |
 | 明确要求规划或确保一个空 Gitea repository | `--repo-plan` / `--repo-ensure` | 与 publication 分离；仅显式 ensure 可创建 repository，绝不 commit/push |
 
 ```bash
@@ -75,6 +79,7 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 /home/hsd/bin/git-finalize --summary --resume-existing-history-publish <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
 /home/hsd/bin/git-finalize --summary --publish-integration-candidate <candidate-oid> --repo <candidate-worktree> --lease-id <uuid> --run-id <run>
 /home/hsd/bin/git-finalize --summary --retire-remote-branch <branch> --remote <name> --integrated-into <branch> --expected-remote-oid <full-oid> --repo <absolute-repo> --dry-run
+/home/hsd/bin/git-finalize --summary --retire-local-branch <branch> --remote <name> --integrated-into <branch> --expected-local-oid <full-oid> --expected-integrated-oid <full-oid> --retirement-plan-id <sha256> --repo <absolute-repo> --dry-run
 ```
 
 - 三种模式共用适用于各自执行边界的本地提交前检查；`verify-only` 不实际运行 commit hooks、签名或索引写入，因此不得声称验证了这些能力。
@@ -99,10 +104,10 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
   在 Controller repository lock 下执行精确 non-force push；remote 已是 candidate 时只恢复
   receipt，不重复 mutation。Finalizer 不更新 Controller lifecycle，receipt 必须交回上层完成
   lease-complete 和 guarded release。
-- remote retirement 是与 publish mode 分离的显式 remote mutation。它只接受非受保护、非
-  default 的 `refs/heads/*`，每次重新 fetch，要求 exact expected OID、ancestry、local lifecycle
-  与 CI gate 通过，使用 lease-bound compare-and-delete，随后验证 remote 缺失和本地状态不变；
-  不删除 local branch/worktree，不做 force push 或 semantic-equivalence retirement。
+- branch retirement 与 publish mode 分离。Controller plan-bound local retirement 和可选
+  plan-bound remote retirement 都在现有 repository lock 下复核 authority state；二者分别使用
+  exact OID CAS/lease 并独立 post-verify。只有 direct ancestry 可执行，绝不删除 worktree，也不
+  做 unconditional force push 或 semantic-equivalence retirement。
 - 不得重跑会创建提交的模式或重复制造 commit。
 - tag、Release、Artifact 和 deployment 继续属于独立 Release 流程，不并入任何 Git Finalizer 模式。
 

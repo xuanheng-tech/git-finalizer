@@ -2,7 +2,7 @@
 
 Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`1.0.0`
+当前版本：`1.1.0`
 
 共享 bundle 同时交付 `tool-skill-sync` 与 `tool-temp-dir`。临时目录使用
 `tool-temp-dir create <task-prefix>`，并通过 `validate-cleanup`、`dry-run-cleanup` 和
@@ -235,8 +235,20 @@ git-finalize \
   --repo /home/user/projects/example
 ```
 
-已完成集成的远端 feature branch 使用独立 retirement operation；它不删除本地 branch 或
+已完成并由 Worktree Controller 正式 release 的 feature branch 使用独立 retirement
+operation。Controller 生成 OID-bound plan；Finalizer 分别执行 local/remote ref mutation，不删除
 worktree，也不复用 commit/publish mode：
+
+```bash
+git-finalize \
+  --retire-local-branch feat/example \
+  --remote origin --integrated-into origin/main \
+  --expected-local-oid <full-feature-oid> \
+  --expected-integrated-oid <full-main-oid> \
+  --retirement-plan-id <controller-plan-sha256> \
+  --repo /home/user/projects/example \
+  --dry-run
+```
 
 ```bash
 git-finalize \
@@ -255,6 +267,13 @@ local upstream 依赖。需要 CI 时增加 `--ci-required --ci-status SUCCESS -
 以及 `--ci-verification-source tool_authenticated|human_authenticated_ui`；CI OID 必须等于 live
 integration target OID。
 
+plan-bound 操作还会在现有 Controller repository lock 下重新核验 allocation/intent/runtime
+authority digest；任何 Controller 状态漂移都会在 Git ref mutation 前 fail closed。local 删除
+只使用 `git update-ref -d <ref> <expected-oid>` 的 compare-and-delete，且验证目标缺失、其他 local
+refs、live remote、HEAD/index/worktree/tags 未变。local 与 remote summary/receipt 相互独立，
+允许任一侧完成后幂等续办，不声明原子性。cherry-equivalent、merge-only、UNIQUE/MIXED 以及历史
+未登记 refs 第一版仅由 Controller 分类报告，Finalizer 不自动删除。
+
 `--integrated-into` 接受 branch、完整 `refs/heads/*`，以及与 `--remote` 同名的
 `<remote>/<branch>` remote-tracking 写法；后者在 live remote 查询前规范化为
 `refs/heads/<branch>`。若远端 branch 名本身以 remote 名开头，使用完整 `refs/heads/*` 消除歧义。
@@ -263,9 +282,10 @@ integration target OID。
 `--force-with-lease=<ref>:<expected> <remote> :<ref>` compare-and-delete；它不是 unconditional
 force push。删除后工具实时确认 remote ref 缺失，执行 `fetch --prune`，并验证 remote-tracking
 ref 缺失、integration OID 未变、HEAD/index/worktree/tags 未变。`--summary` 的
-`mode_result.result` 为 `REMOTE_BRANCH_RETIRED_VERIFIED`、`ALREADY_ABSENT_VERIFIED`、
+remote `mode_result.result` 为 `REMOTE_BRANCH_RETIRED_VERIFIED`、`ALREADY_ABSENT_VERIFIED`、
 `RETIREMENT_PREFLIGHT_PASSED`、`RETIREMENT_BLOCKED` 或 `REMOTE_DELETE_UNVERIFIED`，同时构成
-deterministic retirement receipt；Finalizer 不另建持久 audit store。
+deterministic retirement receipt。local 对应 `LOCAL_BRANCH_RETIRED_VERIFIED` 和
+`LOCAL_DELETE_UNVERIFIED`；Finalizer 不另建持久 audit store，由 Controller 分别登记两类结果。
 
 ### 有界结果摘要
 

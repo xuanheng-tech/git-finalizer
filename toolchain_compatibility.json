@@ -1,9 +1,9 @@
 {
   "context_loader_contract_version": 2,
-  "git_finalizer_contract_version": 3,
+  "git_finalizer_contract_version": 4,
   "schema_version": 1,
   "snapshot_runner_contract_version": 2,
-  "toolchain_contract_version": 4,
+  "toolchain_contract_version": 5,
   "tools": {
     "context-loader": {
       "public_cli_contract_version": 2,
@@ -12,7 +12,7 @@
       "source_directory": "context-loader"
     },
     "git-finalizer": {
-      "public_cli_contract_version": 3,
+      "public_cli_contract_version": 4,
       "skill_contract_version": 2,
       "source_directory": "git-finalizer"
     },
@@ -38,6 +38,6 @@
     "contract_version": 2,
     "name": "git-change-delivery"
   },
-  "worktree_controller_contract_version": 2,
+  "worktree_controller_contract_version": 3,
   "worktree_controller_status": "available_external"
 }

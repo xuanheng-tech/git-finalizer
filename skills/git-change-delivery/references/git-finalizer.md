@@ -14,8 +14,9 @@ remote URL、日志和 receipt 均不得携带 token。bootstrap 成功不表示
 `--publish-existing-branch` 和 configured-upstream `--resume-publish` 都是独立接口；中断恢复只
 使用 `--resume-existing-history-publish`。
 
-远端 feature branch retirement 是独立操作，不属于 commit/publish mode。它只在明确授权下用
-expected-OID lease 退役已 ancestry-integrated 的远端 branch，不删除 local worktree/branch。
+feature branch retirement 是独立操作，不属于 commit/publish mode。Controller 先证明 release、
+占用清空和 direct ancestry；Finalizer 在明确授权下分别用 expected-OID CAS/lease 退役 local 或
+remote ref，且永不删除 worktree。
 
 Controller schema v2 integration candidate publication 也是独立接口。它不创建 commit，不从
 canonical checkout 发布，也不由 caller 另行选择 remote/main；只消费 Controller 已签发的同一
@@ -304,7 +305,27 @@ retirement 的 `--dry-run` 不同：它会执行 live `fetch`/`ls-remote` 并完
 push delete；成功结果必须是 `RETIREMENT_PREFLIGHT_PASSED`。两类 dry-run 都不能替代真实操作
 后的 post-verify。
 
-## Remote feature branch retirement
+## Local and remote feature branch retirement
+
+正常 lifecycle 先由 Controller 在 release 后生成计划。`CHERRY_EQUIVALENT`、`MERGE_ONLY`、
+`UNIQUE`、`MIXED` 和历史未登记 refs 只报告，不生成可执行计划。local 与 remote 是两个独立、
+可重试的 operation；每个 `--summary` 交回 Controller 分别登记，不能假设原子完成。
+
+```bash
+/home/hsd/bin/git-finalize \
+  --summary \
+  --retire-local-branch <branch-or-refs/heads/branch> \
+  --remote <remote-name> --integrated-into <branch> \
+  --expected-local-oid <full-feature-oid> \
+  --expected-integrated-oid <full-integration-oid> \
+  --retirement-plan-id <controller-plan-sha256> \
+  --repo <absolute-repo> --dry-run
+```
+
+local retirement 必须绑定 eligible Controller plan。Finalizer 持有现有 Controller repository
+lock，复核 allocation/intent/runtime authority digest、live integration OID、ancestry、checkout、
+upstream 和 exact local OID；实际删除只用 `git update-ref -d <ref> <expected-oid>`，然后验证目标
+缺失、其他 local refs、remote refs、HEAD/index/worktree/tags 均未漂移。
 
 ```bash
 /home/hsd/bin/git-finalize \

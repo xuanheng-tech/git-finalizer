@@ -59,6 +59,15 @@ section is invented for it.
   repository is preserved as a read-only archive and is no longer an active source; the
   private `ToolSkillManifest` continues to live here.
 
+## 1.1.0
+
+- Add Controller-plan-bound local branch retirement using exact-OID `update-ref` CAS, live ancestry,
+  checkout/upstream, remote, and post-mutation verification.
+- Bind optional remote retirement to the same immutable Controller state and integration OID while
+  keeping its existing standalone interface compatible.
+- Emit independent deterministic local/remote retirement results so partial completion is auditable
+  and safely resumable; semantic-equivalence and historical cleanup remain report-only upstream.
+
 ## 1.0.0
 
 - Break the executable contract: use `git-finalize` and `tool-skill-sync` with neutral

@@ -7,7 +7,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.0.0"
+readonly VERSION="1.1.0"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -140,6 +140,8 @@ summary_retirement_result='RETIREMENT_BLOCKED'
 summary_retirement_lease_bound=false
 summary_retirement_tags_unchanged=false
 summary_retirement_remote_tracking_absent=false
+summary_retirement_local_absent_after=''
+summary_retirement_plan_id=''
 declare -a summary_warnings=()
 declare -a summary_fixture_exceptions=()
 declare -a summary_source_reviews=()
@@ -196,6 +198,7 @@ render_summary() {
         "$summary_retirement_remote_absent_after" "$summary_retirement_result" \
         "$summary_retirement_lease_bound" "$summary_retirement_tags_unchanged" \
         "$summary_retirement_remote_tracking_absent" \
+        "$summary_retirement_local_absent_after" "$summary_retirement_plan_id" \
         "$(printf '%s\n' "${summary_fixture_exceptions[@]}")" \
         "$(printf '%s\n' "${summary_source_reviews[@]}")" \
         "${summary_warnings[@]}" <<'PY'
@@ -293,6 +296,8 @@ retirement_result = take(values)
 retirement_lease_bound = boolean(take(values))
 retirement_tags_unchanged = boolean(take(values))
 retirement_remote_tracking_absent = boolean(take(values))
+retirement_local_absent_after_raw = take(values)
+retirement_plan_id = take(values)
 fixture_exceptions = [json.loads(line) for line in take(values).splitlines() if line]
 source_reviews = [json.loads(line) for line in take(values).splitlines() if line]
 
@@ -456,14 +461,17 @@ elif mode == "verify-only":
             "unchanged": worktree_unchanged,
         },
     }
-elif mode == "retire_remote_branch":
+elif mode in {"retire_local_branch", "retire_remote_branch"}:
+    operation_name = "local" if mode == "retire_local_branch" else "remote"
     result["mode_result"] = {
-        "interface": "retire-remote-branch",
+        "interface": f"retire-{operation_name}-branch",
         "operation": retirement_operation or None,
         "remote": retirement_remote or None,
         "branch": retirement_branch or None,
-        "remote_ref": retirement_ref or None,
-        "expected_remote_oid": retirement_expected_oid or None,
+        f"{operation_name}_ref": retirement_ref or None,
+        f"expected_{operation_name}_oid": retirement_expected_oid or None,
+        "expected_oid": retirement_expected_oid or None,
+        "retirement_plan_id": retirement_plan_id or None,
         "integrated_into_ref": retirement_integrated_ref or None,
         "integrated_into_oid": retirement_integrated_oid or None,
         "ancestry_verified": optional_boolean(retirement_ancestry_raw),
@@ -474,6 +482,7 @@ elif mode == "retire_remote_branch":
         "ci_verified_at": retirement_ci_verified_at or None,
         "expected_oid_lease_bound": retirement_lease_bound,
         "remote_absent_after": optional_boolean(retirement_remote_absent_after_raw),
+        "local_absent_after": optional_boolean(retirement_local_absent_after_raw),
         "remote_tracking_ref_absent": retirement_remote_tracking_absent,
         "head": {
             "before": head_before or None,
@@ -489,6 +498,13 @@ elif mode == "retire_remote_branch":
         "tags_unchanged": retirement_tags_unchanged,
         "result": retirement_result,
     }
+    if retirement_plan_id:
+        receipt_material = ":".join(
+            (retirement_plan_id, operation_name, retirement_expected_oid)
+        )
+        result["mode_result"]["retirement_receipt_id"] = __import__("hashlib").sha256(
+            receipt_material.encode()
+        ).hexdigest()
 else:
     result["mode_result"] = {"post_verify": post_verify}
 if resume_required:
@@ -586,6 +602,11 @@ Usage:
     [--ci-required --ci-status SUCCESS --ci-commit-oid <full-oid>
       --ci-verification-source <tool_authenticated|human_authenticated_ui>
       [--ci-verified-at <timestamp>]]
+  git-finalize --retire-local-branch <branch-name-or-refs/heads/ref>
+    --remote <remote-name>
+    --integrated-into <branch-name-or-matching-remote/branch-or-refs/heads/ref>
+    --expected-local-oid <full-oid> --expected-integrated-oid <full-oid>
+    --retirement-plan-id <sha256> --repo <absolute-repo> [--dry-run] [--summary]
 
 Options:
   --repo-plan                    Read-only Gitea repository/bootstrap decision.
@@ -624,10 +645,17 @@ Options:
   --run-id <id>                 Exact Controller publication executor identity.
   --retire-remote-branch <branch>
                                  Retire one ancestry-integrated remote feature branch.
+  --retire-local-branch <branch>
+                                 CAS-retire one released local feature branch.
   --remote <name>                Required by initial, existing-branch, retirement, and root resume.
   --remote-branch <name>         Required by branch first-publish modes; must match local branch.
-  --integrated-into <branch>     Live remote branch proving retirement ancestry.
+  --integrated-into <branch>     Live remote branch proving retirement ancestry; accepts the
+                                 matching remote-tracking ref spelling.
   --expected-remote-oid <oid>    Exact remote feature OID used by the deletion lease.
+  --expected-local-oid <oid>     Exact local feature OID used by update-ref CAS.
+  --expected-integrated-oid <oid>
+                                 Exact integration target OID frozen by Controller.
+  --retirement-plan-id <sha256>  Exact eligible Controller retirement plan.
   --ci-required                  Require explicit green CI evidence for the integration OID.
   --ci-status <status>           CI status; retirement accepts only SUCCESS when required.
   --ci-commit-oid <oid>          Commit OID covered by the CI evidence.
@@ -1727,6 +1755,13 @@ query_initial_published_remote() {
 is_protected_branch() {
     case "$1" in
         main|master|trunk|production) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+is_special_lifecycle_branch() {
+    case "$1" in
+        rescue|rescue/*|archive|archive/*|recovery|recovery/*) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -3532,7 +3567,9 @@ normalize_integration_ref() {
     local value=$1
     local remote_name=$2
 
-    if [[ "$value" == "$remote_name/"* ]]; then
+    if [[ "$value" == "refs/remotes/$remote_name/"* ]]; then
+        value="refs/heads/${value#"refs/remotes/$remote_name/"}"
+    elif [[ "$value" == "$remote_name/"* ]]; then
         value=${value#"$remote_name/"}
     fi
     normalize_heads_ref "$value" '--integrated-into'
@@ -3561,6 +3598,54 @@ validate_retirement_oid() {
         retirement_validation_error="$label 必须是 $object_format 的完整小写十六进制 OID"
         return 1
     fi
+}
+
+acquire_retirement_plan_lock() {
+    local operation=$1
+    local common_dir
+    local controller_root
+    local lock_file
+    local executable
+    local verifier
+
+    ((retirement_plan_id_seen == 1)) || return 0
+    common_dir=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir) || {
+        retirement_validation_error='无法定位 Git common dir'
+        return 1
+    }
+    controller_root=$common_dir/worktree-controller/v1
+    lock_file=$controller_root/repo.lock
+    [[ -f "$lock_file" && ! -L "$lock_file" ]] || {
+        retirement_validation_error='Controller repo.lock 缺失或不安全'
+        return 1
+    }
+    exec {retirement_plan_lock_fd}<>"$lock_file" || {
+        retirement_validation_error='无法打开 Controller repo.lock'
+        return 1
+    }
+    flock -x "$retirement_plan_lock_fd" || {
+        retirement_validation_error='无法取得 Controller retirement 执行锁'
+        return 1
+    }
+    executable=$(realpath -e -- "${BASH_SOURCE[0]}") || {
+        retirement_validation_error='无法解析 Finalizer 入口'
+        return 1
+    }
+    verifier=${executable%/*}/git-finalize-retirement-plan.py
+    [[ -f "$verifier" && ! -L "$verifier" ]] || {
+        retirement_validation_error='缺少 retirement plan verifier companion'
+        return 1
+    }
+    if ! /usr/bin/python3 -B "$verifier" \
+        --repo "$repo" --plan-id "$retirement_plan_id_arg" --operation "$operation" \
+        --branch "$retirement_feature_branch" --remote "$retirement_remote" \
+        --integrated-into "$integrated_into_arg" \
+        --expected-oid "$retirement_expected_oid" \
+        --expected-integrated-oid "$expected_integrated_oid_arg"; then
+        retirement_validation_error='Controller retirement plan 已漂移或不匹配'
+        return 1
+    fi
+    summary_retirement_plan_id=$retirement_plan_id_arg
 }
 
 resolve_retirement_remote() {
@@ -3679,22 +3764,22 @@ capture_retirement_local_state() {
 
     retirement_local_error=''
     if ! symbolic_head=$(git -C "$repo" symbolic-ref --quiet HEAD 2>/dev/null); then
-        retirement_local_error='retire-remote-branch 要求 symbolic attached branch'
+        retirement_local_error='branch retirement 要求 symbolic attached branch'
         return 1
     fi
     if [[ "$symbolic_head" != refs/heads/* || "$symbolic_head" == 'refs/heads/' ]]; then
-        retirement_local_error='retire-remote-branch symbolic HEAD 不是本地 branch'
+        retirement_local_error='branch retirement symbolic HEAD 不是本地 branch'
         return 1
     fi
     retirement_symbolic_head_before=$symbolic_head
     if ! retirement_head_before=$(
         git -C "$repo" rev-parse --verify 'HEAD^{commit}' 2>/dev/null
     ); then
-        retirement_local_error='retire-remote-branch 要求已有可解析 HEAD commit'
+        retirement_local_error='branch retirement 要求已有可解析 HEAD commit'
         return 1
     fi
     if ! git -C "$repo" diff --cached --quiet; then
-        retirement_local_error='retire-remote-branch 要求 index/staged 状态干净'
+        retirement_local_error='branch retirement 要求 index/staged 状态干净'
         return 1
     fi
     if ! retirement_status_before=$(
@@ -3704,7 +3789,7 @@ capture_retirement_local_state() {
         return 1
     fi
     if [[ -n "$retirement_status_before" ]]; then
-        retirement_local_error='retire-remote-branch 要求 worktree 完全干净（包括 untracked 文件）'
+        retirement_local_error='branch retirement 要求 worktree 完全干净（包括 untracked 文件）'
         return 1
     fi
     retirement_index_before=$(git -C "$repo" ls-files --stage) || {
@@ -3809,19 +3894,23 @@ check_retirement_local_lifecycle() {
         git -C "$repo" show-ref --verify --hash "$retirement_feature_ref" 2>/dev/null
     ); then
         if ! local_only=$(
-            git -C "$repo" rev-list --count "$retirement_feature_oid..$retirement_feature_ref"
+            git -C "$repo" rev-list --count "$retirement_expected_oid..$retirement_feature_ref"
         ) || ! remote_only=$(
-            git -C "$repo" rev-list --count "$retirement_feature_ref..$retirement_feature_oid"
+            git -C "$repo" rev-list --count "$retirement_feature_ref..$retirement_expected_oid"
         ); then
-            retirement_local_error='无法验证 local/remote feature branch commit 差异'
+            retirement_local_error='无法验证 local/expected feature branch commit 差异'
             return 1
         fi
         if ((local_only > 0)); then
             retirement_local_error="local feature branch 仍有 $local_only 个 local-only commit"
             return 1
         fi
-        if ((remote_only > 0)) || [[ "$local_oid" != "$retirement_feature_oid" ]]; then
-            retirement_local_error='local feature branch 与 remote feature OID 不一致'
+        if ((remote_only > 0)) || [[ "$local_oid" != "$retirement_expected_oid" ]]; then
+            if ((retire_remote_branch == 1)); then
+                retirement_local_error='local feature branch 与 remote feature OID 不一致'
+            else
+                retirement_local_error='local feature branch 与 expected feature OID 不一致'
+            fi
             return 1
         fi
     fi
@@ -3910,7 +3999,8 @@ fail_retirement() {
     shift
 
     summary_retirement_result=$result
-    if [[ "$result" == 'REMOTE_DELETE_UNVERIFIED' ]]; then
+    if [[ "$result" == 'REMOTE_DELETE_UNVERIFIED' ||
+        "$result" == 'LOCAL_DELETE_UNVERIFIED' ]]; then
         summary_default_failure_status='failed'
         summary_next_action='inspect_remote_state_then_rerun_same_retirement'
     fi
@@ -3946,6 +4036,7 @@ retire_remote_branch_ref() {
     summary_retirement_ci_verified_at=$ci_verified_at_arg
     retirement_remote=$remote_arg
     retirement_expected_oid=$expected_remote_oid_arg
+    summary_retirement_plan_id=$retirement_plan_id_arg
 
     if ! normalize_heads_ref "$retire_remote_branch_arg" '--retire-remote-branch'; then
         fail_retirement RETIREMENT_BLOCKED "$normalized_ref_error"
@@ -3954,7 +4045,8 @@ retire_remote_branch_ref() {
     retirement_feature_ref=$normalized_ref
     summary_retirement_branch=$retirement_feature_branch
     summary_retirement_ref=$retirement_feature_ref
-    if is_protected_branch "$retirement_feature_branch"; then
+    if is_protected_branch "$retirement_feature_branch" ||
+        is_special_lifecycle_branch "$retirement_feature_branch"; then
         fail_retirement RETIREMENT_BLOCKED \
             "retire-remote-branch 拒绝受保护分支: $retirement_feature_branch"
     fi
@@ -3967,6 +4059,13 @@ retire_remote_branch_ref() {
         fail_retirement RETIREMENT_BLOCKED 'feature ref 与 integration target 不能相同'
     fi
     if ! validate_retirement_oid "$retirement_expected_oid" 'expected_remote_oid'; then
+        fail_retirement RETIREMENT_BLOCKED "$retirement_validation_error"
+    fi
+    if ((expected_integrated_oid_seen == 1)) &&
+        ! validate_retirement_oid "$expected_integrated_oid_arg" 'expected_integrated_oid'; then
+        fail_retirement RETIREMENT_BLOCKED "$retirement_validation_error"
+    fi
+    if ! acquire_retirement_plan_lock remote; then
         fail_retirement RETIREMENT_BLOCKED "$retirement_validation_error"
     fi
     if ! capture_retirement_local_state; then
@@ -3999,12 +4098,29 @@ retire_remote_branch_ref() {
     fi
     retirement_integration_oid_before=$retirement_integration_oid
     summary_retirement_integrated_oid=$retirement_integration_oid
+    if ((expected_integrated_oid_seen == 1)) &&
+        [[ "$retirement_integration_oid" != "$expected_integrated_oid_arg" ]]; then
+        fail_retirement RETIREMENT_BLOCKED \
+            'live integration target OID 与 expected_integrated_oid 不一致'
+    fi
     if ! validate_retirement_ci; then
         fail_retirement RETIREMENT_BLOCKED "$retirement_ci_error"
     fi
 
     retirement_tracking_ref="refs/remotes/$retirement_remote/$retirement_feature_branch"
     if ((retirement_feature_present == 0)); then
+        if ((retirement_plan_id_seen == 1)); then
+            if ! git -C "$repo" cat-file -e "$retirement_expected_oid^{commit}" 2>/dev/null ||
+                ! git -C "$repo" merge-base --is-ancestor \
+                    "$retirement_expected_oid" "$retirement_integration_oid"; then
+                fail_retirement RETIREMENT_BLOCKED \
+                    'plan-bound expected feature OID 无法证明已 ancestry-integrated'
+            fi
+            summary_retirement_ancestry=true
+            if ! check_retirement_local_lifecycle; then
+                fail_retirement RETIREMENT_BLOCKED "$retirement_local_error"
+            fi
+        fi
         summary_phase='post_verify'
         if ! verify_retirement_remote_absent; then
             fail_retirement REMOTE_DELETE_UNVERIFIED "$retirement_verify_error"
@@ -4105,6 +4221,282 @@ retire_remote_branch_ref() {
     summary_next_action='none'
 }
 
+capture_retirement_other_local_refs() {
+    retirement_other_local_refs_before=$(
+        git -C "$repo" for-each-ref --format='%(objectname)%09%(refname)' refs/heads |
+            while IFS=$'\t' read -r oid ref_name; do
+                [[ "$ref_name" == "$retirement_feature_ref" ]] ||
+                    printf '%s\t%s\n' "$oid" "$ref_name"
+            done
+    ) || {
+        retirement_local_error='无法记录 retirement 前其他 local branch refs'
+        return 1
+    }
+}
+
+verify_retirement_local_absent() {
+    local other_refs
+    local line
+    local worktree_output
+
+    retirement_verify_error=''
+    if git -C "$repo" show-ref --verify --quiet "$retirement_feature_ref"; then
+        retirement_verify_error='post-delete local feature ref 仍存在'
+        return 1
+    fi
+    if ! worktree_output=$(git -C "$repo" worktree list --porcelain); then
+        retirement_verify_error='post-delete 无法核验 worktree checkout'
+        return 1
+    fi
+    while IFS= read -r line; do
+        if [[ "$line" == "branch $retirement_feature_ref" ]]; then
+            retirement_verify_error='post-delete 目标 branch 被 worktree checkout'
+            return 1
+        fi
+    done <<<"$worktree_output"
+    other_refs=$(
+        git -C "$repo" for-each-ref --format='%(objectname)%09%(refname)' refs/heads |
+            while IFS=$'\t' read -r oid ref_name; do
+                [[ "$ref_name" == "$retirement_feature_ref" ]] ||
+                    printf '%s\t%s\n' "$oid" "$ref_name"
+            done
+    ) || {
+        retirement_verify_error='无法记录 retirement 后其他 local branch refs'
+        return 1
+    }
+    if [[ "$other_refs" != "$retirement_other_local_refs_before" ]]; then
+        retirement_verify_error='retirement 前后其他 local branch refs 发生变化'
+        return 1
+    fi
+    if ! query_retirement_refs; then
+        retirement_verify_error=$retirement_remote_error
+        return 1
+    fi
+    if ((retirement_integration_present == 0)) ||
+        [[ "$retirement_integration_oid" != "$retirement_integration_oid_before" ]]; then
+        retirement_verify_error='post-delete integration target 缺失或 OID 发生变化'
+        return 1
+    fi
+    if ((retirement_feature_present != retirement_feature_present_before)) ||
+        { ((retirement_feature_present == 1)) &&
+            [[ "$retirement_feature_oid" != "$retirement_feature_oid_before" ]]; }; then
+        retirement_verify_error='local retirement 期间 live remote feature ref 发生变化'
+        return 1
+    fi
+    if ! run_git_remote_command 'git fetch --prune --no-tags <remote>' \
+        git -C "$repo" fetch --prune --no-tags "$retirement_remote"; then
+        retirement_verify_error='post-delete fetch --prune 失败'
+        return 1
+    fi
+    if git -C "$repo" show-ref --verify --quiet "$retirement_tracking_ref"; then
+        if ((retirement_feature_present == 0)); then
+            retirement_verify_error='remote 已 absent 但 remote-tracking feature ref 仍存在'
+            return 1
+        fi
+        summary_retirement_remote_tracking_absent=false
+    else
+        if ((retirement_feature_present == 1)); then
+            retirement_verify_error='live remote feature 存在但 tracking ref 缺失'
+            return 1
+        fi
+        summary_retirement_remote_tracking_absent=true
+    fi
+    summary_retirement_remote_absent_after=$(
+        ((retirement_feature_present == 0)) && printf true || printf false
+    )
+    summary_retirement_local_absent_after=true
+    if ! verify_retirement_local_unchanged; then
+        return 1
+    fi
+}
+
+run_retirement_local_delete() {
+    summary_retirement_lease_bound=true
+    run_git_mutation 'git update-ref -d <local-ref> <expected-oid>' \
+        git -C "$repo" update-ref -d "$retirement_feature_ref" "$retirement_expected_oid"
+}
+
+retire_local_branch_ref() {
+    local normalized_branch
+    local normalized_ref
+    local local_oid
+
+    summary_mode_state='preflight'
+    summary_retirement_operation=$([[ "$dry_run" == 1 ]] && printf dry_run || printf delete)
+    summary_retirement_remote=$remote_arg
+    summary_retirement_expected_oid=$expected_local_oid_arg
+    summary_retirement_plan_id=$retirement_plan_id_arg
+    retirement_remote=$remote_arg
+    retirement_expected_oid=$expected_local_oid_arg
+
+    if ! normalize_heads_ref "$retire_local_branch_arg" '--retire-local-branch'; then
+        fail_retirement RETIREMENT_BLOCKED "$normalized_ref_error"
+    fi
+    retirement_feature_branch=$normalized_branch
+    retirement_feature_ref=$normalized_ref
+    summary_retirement_branch=$retirement_feature_branch
+    summary_retirement_ref=$retirement_feature_ref
+    if is_protected_branch "$retirement_feature_branch" ||
+        is_special_lifecycle_branch "$retirement_feature_branch"; then
+        fail_retirement RETIREMENT_BLOCKED \
+            "retire-local-branch 拒绝受保护分支: $retirement_feature_branch"
+    fi
+    if ! normalize_integration_ref "$integrated_into_arg" "$retirement_remote"; then
+        fail_retirement RETIREMENT_BLOCKED "$normalized_ref_error"
+    fi
+    retirement_integration_ref=$normalized_ref
+    summary_retirement_integrated_ref=$retirement_integration_ref
+    if [[ "$retirement_feature_ref" == "$retirement_integration_ref" ]]; then
+        fail_retirement RETIREMENT_BLOCKED 'feature ref 与 integration target 不能相同'
+    fi
+    if ! validate_retirement_oid "$retirement_expected_oid" 'expected_local_oid' ||
+        ! validate_retirement_oid "$expected_integrated_oid_arg" 'expected_integrated_oid'; then
+        fail_retirement RETIREMENT_BLOCKED "$retirement_validation_error"
+    fi
+    if ! acquire_retirement_plan_lock local; then
+        fail_retirement RETIREMENT_BLOCKED "$retirement_validation_error"
+    fi
+    if ! capture_retirement_local_state; then
+        fail_retirement RETIREMENT_BLOCKED "$retirement_local_error"
+    fi
+    if ! resolve_retirement_remote || ! query_retirement_default_branch; then
+        fail_retirement RETIREMENT_BLOCKED "$retirement_remote_error"
+    fi
+    if [[ "$retirement_feature_ref" == "$retirement_default_ref" ]]; then
+        fail_retirement RETIREMENT_BLOCKED \
+            "retire-local-branch 拒绝 remote default branch: $retirement_feature_branch"
+    fi
+
+    summary_phase='remote_preflight'
+    if ! run_git_remote_command 'git fetch --prune --no-tags <remote>' \
+        git -C "$repo" fetch --prune --no-tags "$retirement_remote"; then
+        fail_retirement RETIREMENT_BLOCKED 'retirement preflight fetch 失败'
+    fi
+    if ! query_retirement_refs; then
+        fail_retirement RETIREMENT_BLOCKED "$retirement_remote_error"
+    fi
+    if ((retirement_integration_present == 0)) ||
+        [[ "$retirement_integration_oid" != "$expected_integrated_oid_arg" ]]; then
+        fail_retirement RETIREMENT_BLOCKED \
+            'live integration target 缺失或与 expected_integrated_oid 不一致'
+    fi
+    retirement_integration_oid_before=$retirement_integration_oid
+    summary_retirement_integrated_oid=$retirement_integration_oid
+    if ((retirement_feature_present == 1)) &&
+        [[ "$retirement_feature_oid" != "$retirement_expected_oid" ]]; then
+        fail_retirement RETIREMENT_BLOCKED 'live remote feature OID 与 expected_local_oid 不一致'
+    fi
+    retirement_feature_present_before=$retirement_feature_present
+    retirement_feature_oid_before=$retirement_feature_oid
+    retirement_tracking_ref="refs/remotes/$retirement_remote/$retirement_feature_branch"
+    if ! git -C "$repo" cat-file -e "$retirement_expected_oid^{commit}" 2>/dev/null ||
+        ! git -C "$repo" merge-base --is-ancestor \
+            "$retirement_expected_oid" "$retirement_integration_oid"; then
+        fail_retirement RETIREMENT_BLOCKED \
+            'expected local feature OID 无法证明已 ancestry-integrated'
+    fi
+    summary_retirement_ancestry=true
+    if ! check_retirement_local_lifecycle; then
+        fail_retirement RETIREMENT_BLOCKED "$retirement_local_error"
+    fi
+    if ! capture_retirement_other_local_refs; then
+        fail_retirement RETIREMENT_BLOCKED "$retirement_local_error"
+    fi
+
+    if ! local_oid=$(
+        git -C "$repo" show-ref --verify --hash "$retirement_feature_ref" 2>/dev/null
+    ); then
+        summary_phase='post_verify'
+        if ! verify_retirement_local_absent; then
+            fail_retirement LOCAL_DELETE_UNVERIFIED "$retirement_verify_error"
+        fi
+        summary_post_verify='passed'
+        summary_remote_conclusion='local_branch_already_absent_verified'
+        summary_retirement_result='ALREADY_ABSENT_VERIFIED'
+        summary_mode_state='verified'
+        summary_completed_through='post_verify'
+        summary_next_action='none'
+        return 0
+    fi
+    if [[ "$local_oid" != "$retirement_expected_oid" ]]; then
+        fail_retirement RETIREMENT_BLOCKED 'live local feature OID 与 expected_local_oid 不一致'
+    fi
+
+    if ((dry_run == 1)); then
+        if ! check_retirement_local_lifecycle || ! query_retirement_refs; then
+            fail_retirement RETIREMENT_BLOCKED \
+                "${retirement_local_error:-$retirement_remote_error}"
+        fi
+        if [[ "$retirement_integration_oid" != "$retirement_integration_oid_before" ]] ||
+            ((retirement_feature_present != retirement_feature_present_before)) ||
+            { ((retirement_feature_present == 1)) &&
+                [[ "$retirement_feature_oid" != "$retirement_feature_oid_before" ]]; }; then
+            fail_retirement RETIREMENT_BLOCKED 'dry-run 复查发现 refs 已变化'
+        fi
+        if ! verify_retirement_local_unchanged; then
+            fail_retirement RETIREMENT_BLOCKED "$retirement_verify_error"
+        fi
+        summary_retirement_local_absent_after=false
+        summary_retirement_remote_absent_after=$(
+            ((retirement_feature_present == 0)) && printf true || printf false
+        )
+        summary_retirement_result='RETIREMENT_PREFLIGHT_PASSED'
+        summary_remote_conclusion='retirement_preflight_passed'
+        summary_post_verify='skipped_by_dry_run'
+        summary_mode_state='dry_run_complete'
+        summary_completed_through='preflight'
+        summary_next_action='run_without_dry_run_after_review'
+        return 0
+    fi
+
+    if ! check_retirement_local_lifecycle ||
+        ! local_oid=$(
+            git -C "$repo" show-ref --verify --hash "$retirement_feature_ref" 2>/dev/null
+        ); then
+        if git -C "$repo" show-ref --verify --quiet "$retirement_feature_ref"; then
+            fail_retirement RETIREMENT_BLOCKED "$retirement_local_error"
+        fi
+        summary_phase='post_verify'
+        if ! verify_retirement_local_absent; then
+            fail_retirement LOCAL_DELETE_UNVERIFIED "$retirement_verify_error"
+        fi
+        summary_post_verify='passed'
+        summary_remote_conclusion='local_branch_already_absent_verified'
+        summary_retirement_result='ALREADY_ABSENT_VERIFIED'
+        summary_mode_state='verified'
+        summary_completed_through='post_verify'
+        summary_next_action='none'
+        return 0
+    fi
+    if [[ "$local_oid" != "$retirement_expected_oid" ]] || ! query_retirement_refs ||
+        [[ "$retirement_integration_oid" != "$retirement_integration_oid_before" ]] ||
+        ((retirement_feature_present != retirement_feature_present_before)) ||
+        { ((retirement_feature_present == 1)) &&
+            [[ "$retirement_feature_oid" != "$retirement_feature_oid_before" ]]; }; then
+        fail_retirement RETIREMENT_BLOCKED \
+            'delete 前 local/remote refs 已变化；expected-OID CAS gate 拒绝继续'
+    fi
+
+    summary_phase='local_mutation'
+    if ! run_retirement_local_delete; then
+        if git -C "$repo" show-ref --verify --quiet "$retirement_feature_ref"; then
+            fail_retirement RETIREMENT_BLOCKED 'lease-bound local update-ref 删除被拒绝'
+        fi
+    fi
+
+    summary_phase='post_verify'
+    summary_post_verify='failed'
+    if ! verify_retirement_local_absent; then
+        fail_retirement LOCAL_DELETE_UNVERIFIED "$retirement_verify_error"
+    fi
+    summary_post_verify='passed'
+    summary_remote_conclusion='local_branch_retired_verified'
+    summary_retirement_result='LOCAL_BRANCH_RETIRED_VERIFIED'
+    summary_mode_state='verified'
+    summary_completed_through='post_verify'
+    summary_next_action='none'
+}
+
 if ((summary_requested == 1)); then
     if [[ ! -x /usr/bin/python3 ]]; then
         printf 'ERROR: --summary requires /usr/bin/python3\n' >&2
@@ -4134,8 +4526,12 @@ mode_arg=''
 remote_arg=''
 remote_branch_arg=''
 retire_remote_branch_arg=''
+retire_local_branch_arg=''
 integrated_into_arg=''
 expected_remote_oid_arg=''
+expected_local_oid_arg=''
+expected_integrated_oid_arg=''
+retirement_plan_id_arg=''
 ci_status_arg='NOT_REQUIRED'
 ci_commit_oid_arg=''
 ci_verification_source_arg='not_required'
@@ -4153,6 +4549,7 @@ publish_existing_branch=0
 publish_existing_history=0
 resume_existing_history=0
 retire_remote_branch=0
+retire_local_branch=0
 resume_initial=0
 resume_existing=0
 ci_required=0
@@ -4168,8 +4565,12 @@ mode_seen=0
 remote_seen=0
 remote_branch_seen=0
 retire_remote_branch_seen=0
+retire_local_branch_seen=0
 integrated_into_seen=0
 expected_remote_oid_seen=0
+expected_local_oid_seen=0
+expected_integrated_oid_seen=0
+retirement_plan_id_seen=0
 ci_required_seen=0
 ci_status_seen=0
 ci_commit_oid_seen=0
@@ -4306,6 +4707,15 @@ while (($# > 0)); do
             retire_remote_branch_seen=1
             shift 2
             ;;
+        --retire-local-branch)
+            (($# >= 2)) || fail '--retire-local-branch 缺少 branch'
+            ((retire_local_branch_seen == 0)) ||
+                fail '--retire-local-branch 只能指定一次'
+            retire_local_branch_arg=$2
+            retire_local_branch=1
+            retire_local_branch_seen=1
+            shift 2
+            ;;
         --resume-initial-publish)
             (($# >= 2)) || fail '--resume-initial-publish 缺少 expected HEAD OID'
             ((resume_seen == 0)) || fail '--resume-initial-publish 只能指定一次'
@@ -4351,6 +4761,30 @@ while (($# > 0)); do
                 fail '--expected-remote-oid 只能指定一次'
             expected_remote_oid_arg=$2
             expected_remote_oid_seen=1
+            shift 2
+            ;;
+        --expected-local-oid)
+            (($# >= 2)) || fail '--expected-local-oid 缺少 OID'
+            ((expected_local_oid_seen == 0)) ||
+                fail '--expected-local-oid 只能指定一次'
+            expected_local_oid_arg=$2
+            expected_local_oid_seen=1
+            shift 2
+            ;;
+        --expected-integrated-oid)
+            (($# >= 2)) || fail '--expected-integrated-oid 缺少 OID'
+            ((expected_integrated_oid_seen == 0)) ||
+                fail '--expected-integrated-oid 只能指定一次'
+            expected_integrated_oid_arg=$2
+            expected_integrated_oid_seen=1
+            shift 2
+            ;;
+        --retirement-plan-id)
+            (($# >= 2)) || fail '--retirement-plan-id 缺少 ID'
+            ((retirement_plan_id_seen == 0)) ||
+                fail '--retirement-plan-id 只能指定一次'
+            retirement_plan_id_arg=$2
+            retirement_plan_id_seen=1
             shift 2
             ;;
         --ci-required)
@@ -4462,7 +4896,9 @@ if ((mode_seen == 1)); then
         *) fail "--mode 仅支持 commit-only 或 verify-only: $mode_arg" ;;
     esac
 fi
-if ((retire_remote_branch == 1)); then
+if ((retire_local_branch == 1)); then
+    summary_mode='retire_local_branch'
+elif ((retire_remote_branch == 1)); then
     summary_mode='retire_remote_branch'
 elif ((publish_existing_history == 1)); then
     summary_mode='publish_existing_history'
@@ -4486,7 +4922,8 @@ fi
 if ((source_review_seen == 1)); then
     ((initial_commit_only == 0 && initial_publish == 0 && initial_branch_publish == 0 &&
         publish_existing_history == 0 &&
-        retire_remote_branch == 0 && resume_initial == 0 && resume_existing == 0 &&
+        retire_remote_branch == 0 && retire_local_branch == 0 &&
+        resume_initial == 0 && resume_existing == 0 &&
         resume_existing_history == 0)) ||
         fail '--reviewed-sensitive-source 只接受 normal/commit-only/verify-only/existing-branch'
     ((fixture_exceptions_seen == 0 && ${#allow_test_fixture_args[@]} == 0)) ||
@@ -4502,39 +4939,57 @@ if ((commit_only == 1 || verify_only == 1)); then
     ((initial_commit_only == 0 && initial_publish == 0 &&
         initial_branch_publish == 0 &&
         publish_existing_branch == 0 && publish_existing_history == 0 &&
-        retire_remote_branch == 0 && resume_initial == 0 &&
+        retire_remote_branch == 0 && retire_local_branch == 0 && resume_initial == 0 &&
         resume_existing == 0 && resume_existing_history == 0)) ||
         fail "--mode $mode_arg 不接受其他发布模式"
 fi
-if ((retire_remote_branch == 1)); then
+if ((retire_remote_branch == 1 || retire_local_branch == 1)); then
+    ((retire_remote_branch + retire_local_branch == 1)) ||
+        fail 'local/remote retirement 入口只能指定一个'
     ((initial_commit_only == 0 && initial_publish == 0 &&
         initial_branch_publish == 0 &&
         publish_existing_branch == 0 && publish_existing_history == 0 &&
         resume_initial == 0 && resume_existing == 0 && resume_existing_history == 0)) ||
-        fail '--retire-remote-branch 不接受其他发布入口'
-    ((mode_seen == 0)) || fail '--retire-remote-branch 不接受 --mode'
-    ((message_seen == 0)) || fail '--retire-remote-branch 不接受 --message'
+        fail 'branch retirement 不接受其他发布入口'
+    ((mode_seen == 0)) || fail 'branch retirement 不接受 --mode'
+    ((message_seen == 0)) || fail 'branch retirement 不接受 --message'
     ((${#allow_test_fixture_args[@]} == 0)) ||
-        fail '--retire-remote-branch 不接受 --allow-test-fixture'
+        fail 'branch retirement 不接受 --allow-test-fixture'
     ((${#allow_large_binary_args[@]} == 0)) ||
-        fail '--retire-remote-branch 不接受 --allow-large-binary'
-    ((snapshot_seen == 0)) || fail '--retire-remote-branch 不接受 --snapshot'
+        fail 'branch retirement 不接受 --allow-large-binary'
+    ((snapshot_seen == 0)) || fail 'branch retirement 不接受 --snapshot'
     ((separator_seen == 0 && ${#input_paths[@]} == 0)) ||
-        fail '--retire-remote-branch 不接受文件列表或 -- 分隔符'
-    ((remote_seen == 1)) || fail '--retire-remote-branch 必须指定 --remote'
+        fail 'branch retirement 不接受文件列表或 -- 分隔符'
+    ((remote_seen == 1)) || fail 'branch retirement 必须指定 --remote'
     ((remote_branch_seen == 0)) ||
-        fail '--retire-remote-branch 不接受 --remote-branch'
+        fail 'branch retirement 不接受 --remote-branch'
     ((integrated_into_seen == 1)) ||
-        fail '--retire-remote-branch 必须指定 --integrated-into'
-    ((expected_remote_oid_seen == 1)) ||
-        fail '--retire-remote-branch 必须指定 --expected-remote-oid'
-    if ((ci_required == 1)); then
+        fail 'branch retirement 必须指定 --integrated-into'
+    if ((retire_local_branch == 1)); then
+        ((expected_local_oid_seen == 1 && expected_remote_oid_seen == 0)) ||
+            fail '--retire-local-branch 要求且仅接受 --expected-local-oid'
+        ((expected_integrated_oid_seen == 1)) ||
+            fail '--retire-local-branch 必须指定 --expected-integrated-oid'
+        ((retirement_plan_id_seen == 1)) ||
+            fail '--retire-local-branch 必须指定 --retirement-plan-id'
+        ((ci_required_seen == 0 && ci_status_seen == 0 && ci_commit_oid_seen == 0 &&
+            ci_verification_source_seen == 0 && ci_verified_at_seen == 0)) ||
+            fail '--retire-local-branch 不接受 CI evidence 参数'
+    else
+        ((expected_remote_oid_seen == 1 && expected_local_oid_seen == 0)) ||
+            fail '--retire-remote-branch 要求且仅接受 --expected-remote-oid'
+        if ((retirement_plan_id_seen == 1)); then
+            ((expected_integrated_oid_seen == 1)) ||
+                fail 'plan-bound remote retirement 要求 --expected-integrated-oid'
+        fi
+    fi
+    if ((retire_remote_branch == 1 && ci_required == 1)); then
         ((ci_status_seen == 1)) || fail '--ci-required 必须指定 --ci-status'
         ((ci_commit_oid_seen == 1)) || fail '--ci-required 必须指定 --ci-commit-oid'
         ((ci_verification_source_seen == 1)) ||
             fail '--ci-required 必须指定 --ci-verification-source'
-    elif ((ci_status_seen == 1 || ci_commit_oid_seen == 1 ||
-        ci_verification_source_seen == 1 || ci_verified_at_seen == 1)); then
+    elif ((retire_remote_branch == 1 && (ci_status_seen == 1 || ci_commit_oid_seen == 1 ||
+        ci_verification_source_seen == 1 || ci_verified_at_seen == 1))); then
         fail 'CI evidence 参数要求同时指定 --ci-required'
     fi
 elif ((publish_existing_branch == 1 || publish_existing_history == 1)); then
@@ -4627,18 +5082,25 @@ else
         fail '--remote-branch 只允许与 --initial-branch-publish 一起使用'
     ((snapshot_seen == 0)) || fail '--snapshot 只允许与 --initial-publish 一起使用'
 fi
-if ((retire_remote_branch == 0)); then
+if ((retire_remote_branch == 0 && retire_local_branch == 0)); then
     ((integrated_into_seen == 0)) ||
-        fail '--integrated-into 只允许与 --retire-remote-branch 一起使用'
+        fail '--integrated-into 只允许与 branch retirement 一起使用'
     ((expected_remote_oid_seen == 0)) ||
         fail '--expected-remote-oid 只允许与 --retire-remote-branch 一起使用'
+    ((expected_local_oid_seen == 0)) ||
+        fail '--expected-local-oid 只允许与 --retire-local-branch 一起使用'
+    ((expected_integrated_oid_seen == 0)) ||
+        fail '--expected-integrated-oid 只允许与 branch retirement 一起使用'
+    ((retirement_plan_id_seen == 0)) ||
+        fail '--retirement-plan-id 只允许与 branch retirement 一起使用'
     ((ci_required_seen == 0 && ci_status_seen == 0 && ci_commit_oid_seen == 0 &&
         ci_verification_source_seen == 0 && ci_verified_at_seen == 0)) ||
         fail 'CI evidence 参数只允许与 --retire-remote-branch 一起使用'
 fi
 if ((initial_publish == 1 || initial_branch_publish == 1 ||
     publish_existing_branch == 1 || publish_existing_history == 1 ||
-    resume_existing_history == 1 || retire_remote_branch == 1 || resume_initial == 1)); then
+    resume_existing_history == 1 || retire_remote_branch == 1 ||
+    retire_local_branch == 1 || resume_initial == 1)); then
     [[ -n "$remote_arg" && "$remote_arg" != -* &&
         "$remote_arg" != *$'\n'* && "$remote_arg" != *$'\r'* && "$remote_arg" != *$'\t'* ]] ||
         fail '--remote 必须是有效的 remote 名'
@@ -4652,15 +5114,26 @@ if ((initial_branch_publish == 1 || publish_existing_branch == 1 ||
 fi
 if ((resume_initial == 0 && resume_existing == 0 && resume_existing_history == 0 &&
     publish_existing_branch == 0 && publish_existing_history == 0 &&
-    retire_remote_branch == 0)); then
+    retire_remote_branch == 0 && retire_local_branch == 0)); then
     if ((verify_only == 0)); then
         [[ -n ${message//[[:space:]]/} ]] || fail 'commit message 不能为空'
     fi
     ((${#input_paths[@]} > 0)) || fail '文件列表不能为空'
 fi
-if ((retire_remote_branch == 1)); then
+if ((retire_remote_branch == 1 || retire_local_branch == 1)); then
     [[ -n "$integrated_into_arg" ]] || fail '--integrated-into 不能为空'
-    [[ -n "$expected_remote_oid_arg" ]] || fail '--expected-remote-oid 不能为空'
+    if ((retire_remote_branch == 1)); then
+        [[ -n "$expected_remote_oid_arg" ]] || fail '--expected-remote-oid 不能为空'
+    else
+        [[ -n "$expected_local_oid_arg" ]] || fail '--expected-local-oid 不能为空'
+    fi
+    if ((expected_integrated_oid_seen == 1)); then
+        [[ -n "$expected_integrated_oid_arg" ]] || fail '--expected-integrated-oid 不能为空'
+    fi
+    if ((retirement_plan_id_seen == 1)); then
+        [[ "$retirement_plan_id_arg" =~ ^[0-9a-f]{64}$ ]] ||
+            fail '--retirement-plan-id 要求 64 位小写十六进制 ID'
+    fi
     [[ "$ci_verified_at_arg" != *$'\n'* && "$ci_verified_at_arg" != *$'\r'* &&
         "$ci_verified_at_arg" != *$'\t'* && ${#ci_verified_at_arg} -le 128 ]] ||
         fail '--ci-verified-at 必须是最多 128 字符的单行值'
@@ -4675,6 +5148,10 @@ fi
 for command_name in git realpath stat grep sed; do
     require_command "$command_name"
 done
+if ((retirement_plan_id_seen == 1)); then
+    require_command flock
+    [[ -x /usr/bin/python3 ]] || fail 'Controller retirement plan 验证要求 /usr/bin/python3'
+fi
 if ((snapshot_seen == 1)); then
     [[ -x /usr/bin/python3 ]] || fail 'snapshot 验证要求 /usr/bin/python3'
     finalizer_executable=$(realpath -e -- "${BASH_SOURCE[0]}") ||
@@ -4718,6 +5195,10 @@ fi
 
 if ((resume_initial == 1)); then
     resume_initial_publish
+    exit 0
+fi
+if ((retire_local_branch == 1)); then
+    retire_local_branch_ref
     exit 0
 fi
 if ((retire_remote_branch == 1)); then

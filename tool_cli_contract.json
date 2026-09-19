@@ -366,6 +366,8 @@
         "--remote",
         "--integrated-into",
         "--expected-remote-oid",
+        "--expected-integrated-oid",
+        "--retirement-plan-id",
         "--ci-required",
         "--ci-status",
         "--ci-commit-oid",
@@ -393,9 +395,41 @@
         "RETIREMENT_BLOCKED",
         "REMOTE_DELETE_UNVERIFIED"
       ]
+    },
+    {
+      "flags": [
+        "--retire-local-branch",
+        "--remote",
+        "--integrated-into",
+        "--expected-local-oid",
+        "--expected-integrated-oid",
+        "--retirement-plan-id",
+        "--repo",
+        "--dry-run",
+        "--summary"
+      ],
+      "name": "retire_local_branch",
+      "operation_class": "local_mutation",
+      "preconditions": [
+        "eligible_controller_retirement_plan",
+        "controller_authority_state_unchanged",
+        "clean_attached_worktree",
+        "refs_heads_only",
+        "unprotected_non_default_branch",
+        "live_expected_local_oid_match_or_absent",
+        "exact_integration_oid_and_ancestry",
+        "no_checkout_or_upstream_lifecycle_blocker"
+      ],
+      "result_statuses": [
+        "LOCAL_BRANCH_RETIRED_VERIFIED",
+        "ALREADY_ABSENT_VERIFIED",
+        "RETIREMENT_PREFLIGHT_PASSED",
+        "RETIREMENT_BLOCKED",
+        "LOCAL_DELETE_UNVERIFIED"
+      ]
     }
   ],
-  "contract_version": 3,
+  "contract_version": 4,
   "flags": {
     "entrypoint": "git-finalize",
     "metadata": [
@@ -413,10 +447,11 @@
     "force_push",
     "protected_branch_mutation",
     "default_branch_retirement",
+    "local_branch_retirement_without_controller_plan",
     "tag_mutation",
     "semantic_equivalence_retirement"
   ],
   "schema_version": 1,
   "tool_name": "git-finalizer",
-  "tool_version": "1.0.0"
+  "tool_version": "1.1.0"
 }

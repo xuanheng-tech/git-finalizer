@@ -39,7 +39,7 @@ class ToolContractTests(unittest.TestCase):
         assert companion_version_match is not None
         self.assertEqual(contract["schema_version"], 1)
         self.assertEqual(manifest["schema_version"], 2)
-        self.assertEqual(contract["contract_version"], 3)
+        self.assertEqual(contract["contract_version"], 4)
         self.assertEqual(contract["tool_name"], "git-finalizer")
         self.assertEqual(contract["tool_version"], manifest["tool_version"])
         self.assertEqual(contract["tool_version"], version_match.group(1))
@@ -92,10 +92,14 @@ class ToolContractTests(unittest.TestCase):
                 "resume_existing_history_publish",
                 "integration_candidate_publish",
                 "retire_remote_branch",
+                "retire_local_branch",
             },
         )
         self.assertEqual(
             commands["retire_remote_branch"]["operation_class"], "remote_mutation"
+        )
+        self.assertEqual(
+            commands["retire_local_branch"]["operation_class"], "local_mutation"
         )
         self.assertEqual(
             commands["integration_candidate_publish"]["operation_class"],
@@ -112,12 +116,12 @@ class ToolContractTests(unittest.TestCase):
         compatibility = json.loads(
             (ROOT / "toolchain_compatibility.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(compatibility["toolchain_contract_version"], 4)
+        self.assertEqual(compatibility["toolchain_contract_version"], 5)
         self.assertEqual(compatibility["context_loader_contract_version"], 2)
         # Snapshot Runner 2.0.0 removed the provider-named aliases: public CLI contract 2.
         self.assertEqual(compatibility["snapshot_runner_contract_version"], 2)
-        self.assertEqual(compatibility["git_finalizer_contract_version"], 3)
-        self.assertEqual(compatibility["worktree_controller_contract_version"], 2)
+        self.assertEqual(compatibility["git_finalizer_contract_version"], 4)
+        self.assertEqual(compatibility["worktree_controller_contract_version"], 3)
         self.assertEqual(
             compatibility["worktree_controller_status"],
             "available_external",

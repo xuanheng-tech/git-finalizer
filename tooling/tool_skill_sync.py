@@ -430,7 +430,7 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
         if manifest["compatibility_skill"]["sha256"] != compatibility_sha:
             raise SyncError("compatibility Skill SHA mismatch")
         compatibility_version = sources.compatibility.get("toolchain_contract_version")
-        if compatibility_version not in {1, 2, 3, 4}:
+        if compatibility_version not in {1, 2, 3, 4, 5}:
             raise SyncError("unsupported toolchain compatibility contract version")
         if (
             manifest.get("compatible_toolchain_contract_version")
@@ -464,7 +464,8 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
                     "v1 requires Worktree Controller contract to remain null/planned"
                 )
         elif (
-            controller_contract != (2 if compatibility_version >= 4 else 1)
+            controller_contract
+            != (3 if compatibility_version >= 5 else 2 if compatibility_version >= 4 else 1)
             or controller_status != "available_external"
         ):
             raise SyncError(
