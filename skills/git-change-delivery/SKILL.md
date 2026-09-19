@@ -107,7 +107,9 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 - branch retirement 与 publish mode 分离。Controller plan-bound local retirement 和可选
   plan-bound remote retirement 都在现有 repository lock 下复核 authority state；二者分别使用
   exact OID CAS/lease 并独立 post-verify。只有 direct ancestry 可执行，绝不删除 worktree，也不
-  做 unconditional force push 或 semantic-equivalence retirement。
+  做 unconditional force push 或 semantic-equivalence retirement。remote retirement 仍是
+  lease-bound compare-and-delete，且不删除 local branch/worktree；local retirement 只能通过
+  独立的 plan-bound 接口删除一个精确 OID 的已释放 local branch ref。
 - 不得重跑会创建提交的模式或重复制造 commit。
 - tag、Release、Artifact 和 deployment 继续属于独立 Release 流程，不并入任何 Git Finalizer 模式。
 
