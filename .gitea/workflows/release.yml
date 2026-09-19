@@ -82,7 +82,10 @@ jobs:
           PY
 
       - name: Run project checks
-        run: just check
+        run: |
+          set -euo pipefail
+          chown -R ubuntu:ubuntu "$GITHUB_WORKSPACE"
+          sudo -u ubuntu -H env "PATH=$PATH" just check
 
       - name: Build deterministic release package
         env:
