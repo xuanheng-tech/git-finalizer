@@ -2,7 +2,7 @@
 
 ## 共同边界
 
-唯一公共入口 `/home/hsd/bin/snapshot-runner` 必须以绝对路径直接调用（五个子命令：四个证据收集命令加一个 `read`），并通过原生权限机制使用 `require_escalated`；不得使用 PATH 简写、`bash -lc`、`sh -c` 或其他 wrapper。它们收集目标仓库的只读证据，不对目标仓库执行 Git 写入。
+唯一公共入口 `$HOME/bin/snapshot-runner` 必须以绝对路径直接调用（五个子命令：四个证据收集命令加一个 `read`），并通过原生权限机制使用 `require_escalated`；不得使用 PATH 简写、`bash -lc`、`sh -c` 或其他 wrapper。它们收集目标仓库的只读证据，不对目标仓库执行 Git 写入。
 
 Runner 会在目标仓库之外创建本地状态和内容寻址产物。默认位置为 `~/.local/state/snapshot-runner/snapshots/<snapshot-id>/`；若设置了绝对 `XDG_STATE_HOME`，则使用其下的 `snapshot-runner/snapshots/`。状态目录必须已存在、由当前用户拥有且权限为 `0700`。
 
@@ -27,7 +27,7 @@ Runner 处于 prepare-only 模式，不自动调用模型。自动脱敏只能�
 ### `snapshot-runner repo-status`
 
 ```bash
-/home/hsd/bin/snapshot-runner repo-status --repo <absolute-repo> --summary
+$HOME/bin/snapshot-runner repo-status --repo <absolute-repo> --summary
 ```
 
 用于在改动很多、来源不明或状态复杂时建立仓库状态快照。摘要通常足以快速确认仓库、工作树和 upstream 状态；无异常时无需打开 artifact。小而明确的局部任务不必机械调用。
@@ -35,7 +35,7 @@ Runner 处于 prepare-only 模式，不自动调用模型。自动脱敏只能�
 ### `snapshot-runner diff-audit`
 
 ```bash
-/home/hsd/bin/snapshot-runner diff-audit --repo <absolute-repo> --summary
+$HOME/bin/snapshot-runner diff-audit --repo <absolute-repo> --summary
 ```
 
 用于审查当前 worktree 的 staged、unstaged 和 untracked 变更。摘要可先判断范围、计数和 gap；涉及代码语义、精确 diff、删除或 file-context 时仍须读取正式证据。对 unborn HEAD，使用空树基线。发布前通常用它证明当前 diff 与授权范围一致；它不替代实际测试，也不自行给出代码正确性结论。
@@ -43,7 +43,7 @@ Runner 处于 prepare-only 模式，不自动调用模型。自动脱敏只能�
 ### `snapshot-runner branch-review`
 
 ```bash
-/home/hsd/bin/snapshot-runner branch-review --repo <absolute-repo> <local-base-branch-or-tag> --summary
+$HOME/bin/snapshot-runner branch-review --repo <absolute-repo> <local-base-branch-or-tag> --summary
 ```
 
 用于相对一个明确的本地 base branch 或 tag 审查当前已提交分支。摘要可先筛查 commit、diff 和 delete 计数；需要审查实际分支内容时不得省略 artifact。base 必须唯一解析为现有本地 branch 或 tag；Runner 以唯一 merge base 到目标 HEAD 的范围收集 commits、diff 和相关上下文。unborn 目标分支不适用。不要用猜测的默认分支、远端名称或未验证 ref 代替显式 base。
@@ -51,7 +51,7 @@ Runner 处于 prepare-only 模式，不自动调用模型。自动脱敏只能�
 ### `snapshot-runner test-triage`
 
 ```bash
-/home/hsd/bin/snapshot-runner test-triage --repo <absolute-repo> <repo-relative-log-path> --summary
+$HOME/bin/snapshot-runner test-triage --repo <absolute-repo> <repo-relative-log-path> --summary
 ```
 
 仅在测试已经实际运行且需要分类失败日志时使用。摘要只提供日志规模和证据状态，不代表测试通过或失败；诊断时必须读取必要日志证据。日志必须是仓库内安全的相对路径、普通 UTF-8 文本且不被判定为敏感路径；超过当前 2 MiB 上限时保留 head/tail 并记录中间省略。该命令不运行测试，也不能把日志分类转换成“测试通过”。
@@ -59,7 +59,7 @@ Runner 处于 prepare-only 模式，不自动调用模型。自动脱敏只能�
 ### `snapshot-runner read`
 
 ```bash
-/home/hsd/bin/snapshot-runner read --repo <absolute-repo> --field <field> [--path <repo-relative-path>]
+$HOME/bin/snapshot-runner read --repo <absolute-repo> --field <field> [--path <repo-relative-path>]
 ```
 
 按需读取既有 content-addressed snapshot 的字段或有界文件内容，是把摘要展开为具体证据的正式通道。它要求快照已存在且 `--path` 不逃逸仓库；`read` 不收集新快照、不接受 `--summary`，其输出同样受截断与 evidence gap 语义约束。仅在摘要或 `snapshot.json` 仍不足以支持当前判断时使用。

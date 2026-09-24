@@ -68,6 +68,33 @@ Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released
   repository is preserved as a read-only archive and is no longer an active source; the
   private `ToolSkillManifest` continues to live here.
 
+## 1.3.0
+
+- Fix the production upgrade/activation sequencing gap. `install <console-script-tool>
+  --activate-production` used to fail after an `upgrade` because deriving the retired target
+  set from the superseded CURRENT bundle asserted the installed entrypoint version against that
+  old manifest ("installed entrypoints do not match"). Target-set derivation for transition
+  bookkeeping (previous bundle during activation, current/previous during rollback, and both
+  inside the failure-restore path) no longer applies that installed-version assertion; the
+  assertion remains mandatory against the incoming bundle, in post-activation verification, and
+  in byte-level retired-target and backup-restore checks. The supported production upgrade is
+  now a single call: `upgrade <tool>` followed by `install <tool> --activate-production`.
+- Make the canonical Skill payload portable: every runtime entrypoint reference in the
+  hash-bearing payload now uses `$HOME`-rooted absolute paths
+  (`$HOME/bin/git-finalize`, `$HOME/.local/bin/project-context`,
+  `$HOME/bin/snapshot-runner`, `$HOME/.agents/skills/git-change-delivery/`) instead of
+  host-specific `/home/hsd` literals, and the execution-boundary bullet names the generic
+  native permission-and-review channel instead of one product's `auto-review` surface. Host
+  documentation that intentionally records this machine's layout (root README canonical-source
+  line, released CHANGELOG sections) and historical evidence keep their literals. The canonical
+  payload tree is now `9c05e5b279731a37b3ce15e2fbda7ae9962f81355cbafb86fa410f28ec19f527`,
+  rebound in all three ToolSkillManifests in the same change.
+- Add the released 1.2.0 canonical payload tree to `RELEASED_CANONICAL_SKILL_SHA256` in both
+  registries (deploy.py and tool_skill_sync), keeping released-canonical upgrades permitted;
+  the drifted pre-migration tree remains unregistered by design.
+- Replace the hardcoded home path in the temp-directory negative test with the runtime home
+  directory, removing the last `/home/hsd` literal that encoded environment rather than fact.
+
 ## 1.2.0
 
 - Fold the installed-live authorization-persistence policy into the source canonical Skill. The

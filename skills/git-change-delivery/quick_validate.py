@@ -101,7 +101,7 @@ FINALIZER_MODE_MARKERS = (
     "expected-OID compare-and-delete",
     "lease-bound compare-and-delete",
     "不删除 local branch/worktree",
-    "原生权限请求和 auto-review",
+    "原生权限请求与原生审核通道",
     "不要先在沙箱内制造一次预期失败",
     "commit signing、hooks",
     "runtime permission/reviewer 只提供执行能力",

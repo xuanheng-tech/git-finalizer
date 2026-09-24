@@ -14,7 +14,7 @@
 live 目标位于：
 
 ```text
-/home/hsd/.agents/skills/git-change-delivery/
+$HOME/.agents/skills/git-change-delivery/
 ```
 
 旧名称 source/live 的 `three-tool-git-workflow/SKILL.md` 只是 deprecated compatibility shim；

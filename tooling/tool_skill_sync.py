@@ -48,8 +48,10 @@ RELEASED_CANONICAL_SKILL_SHA256 = frozenset(
     {
         # Provider-neutral payload of the first shipped canonical line.
         "ff6d5bea2807b2c884c2ec5bee441e5fe8060abd9d03c0520c57ce39fe37adb5",
-        # Canonical payload carried by the two subsequently tagged releases.
+        # Canonical payload carried by the two tagged releases of that line.
         "3c8679b6cfd6578da41007feeea43e7ff83e8152e3daea9ab9154055642a92e2",
+        # Canonical payload carried by the merged live-policy release.
+        "7b85ec9da739bd60f76736ae6352e642dbf880bbd089058cce4cf7a9c0b5c665",
     }
 )
 
@@ -1293,6 +1295,7 @@ def production_target_sources(
     agents_root: Path,
     bin_dir: Path | None,
     hooks_dir: Path,
+    assert_installed_version: bool = True,
 ) -> tuple[dict[Path, Path], Path | None]:
     manifest = read_json(bundle / "tool_skill_manifest.json")
     entrypoints = validate_install_targets(manifest, allow_legacy=True)
@@ -1317,12 +1320,13 @@ def production_target_sources(
 
     executable = manifest["executable"]
     if executable["kind"] == "python_console_scripts":
-        binary = installed_binary_state(entrypoints, bin_dir)
-        if binary["version"] != manifest["tool_version"]:
-            raise SyncError(
-                f"installed entrypoints do not match {manifest['tool_name']} "
-                f"{manifest['tool_version']}"
-            )
+        if assert_installed_version:
+            binary = installed_binary_state(entrypoints, bin_dir)
+            if binary["version"] != manifest["tool_version"]:
+                raise SyncError(
+                    f"installed entrypoints do not match {manifest['tool_name']} "
+                    f"{manifest['tool_version']}"
+                )
         return targets, bin_dir
 
     if bin_dir is None:
@@ -1704,9 +1708,16 @@ def activate_production_bundle(
     )
     previous_targets = {}
     if previous_bundle is not None:
+        # Transition bookkeeping only: the retired target set is a static
+        # property of the previous manifest. Installed-version consistency is
+        # asserted against the incoming bundle and by the post-activation
+        # verification, never against the superseded release.
         previous_targets, _ = production_target_sources(
-            previous_bundle, agents_root=agents_root, bin_dir=live_bin_dir,
+            previous_bundle,
+            agents_root=agents_root,
+            bin_dir=live_bin_dir,
             hooks_dir=hooks_dir,
+            assert_installed_version=False,
         )
     retired = set(previous_targets) - set(targets)
     for target in retired:
@@ -1904,16 +1915,21 @@ def install(
             )
     except BaseException:
         if production_backup is not None:
+            # Failure cleanup must never be blocked by pairing assertions;
+            # these calls only rebuild the target set for byte-verified
+            # restoration from the recorded backup.
             targets, _ = production_target_sources(
                 bundle,
                 agents_root=agents_root or Path(),
                 bin_dir=bin_dir,
                 hooks_dir=hooks_dir or Path(),
+                assert_installed_version=False,
             )
             if current is not None:
                 previous_targets, _ = production_target_sources(
                     current, agents_root=agents_root or Path(), bin_dir=bin_dir,
                     hooks_dir=hooks_dir or Path(),
+                    assert_installed_version=False,
                 )
                 targets.update(previous_targets)
             restore_production_pair(production_backup, tuple(targets))
@@ -1971,12 +1987,14 @@ def rollback(
             agents_root=agents_root,
             bin_dir=bin_dir,
             hooks_dir=hooks_dir,
+            assert_installed_version=False,
         )
         previous_targets, _ = production_target_sources(
             previous,
             agents_root=agents_root,
             bin_dir=bin_dir,
             hooks_dir=hooks_dir,
+            assert_installed_version=False,
         )
         retired = set(current_targets) - set(previous_targets)
         all_targets = tuple(set(current_targets) | set(previous_targets))

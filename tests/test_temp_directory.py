@@ -153,7 +153,7 @@ class TempDirToolTest(unittest.TestCase):
                 )
 
     def test_non_tmp_unregistered_and_name_mismatch_are_rejected(self) -> None:
-        self.assert_error("outside_tmp", temp_tool.validate_cleanup, "/home/hsd")
+        self.assert_error("outside_tmp", temp_tool.validate_cleanup, str(Path.home()))
 
         unregistered = Path(
             f"/tmp/tool-task-unittest-unregistered-{secrets.token_hex(8)}"

@@ -24,7 +24,7 @@ publication lease，并把 verified receipt 交回 Controller 完成 lifecycle�
 
 选择模式不得扩大当前任务或适用持续授权所明确覆盖的 commit/push 边界：只验证使用
 `--mode verify-only`，只授权本地 commit 使用 `--mode commit-only`，只有明确授权 commit 和
-push 且任务达到交付状态才使用默认模式。调用绝对入口 `/home/hsd/bin/git-finalize` 前，还必须满足：
+push 且任务达到交付状态才使用默认模式。调用绝对入口 `$HOME/bin/git-finalize` 前，还必须满足：
 
 - 实现已完成，相关测试和检查实际通过；
 - Snapshot Runner 的相关审查已通过，阻断项已经解决；
@@ -39,7 +39,7 @@ push 且任务达到交付状态才使用默认模式。调用绝对入口 `/hom
 权限配置、使用 root，或将生命周期拆成原始 Git 写命令。
 
 ```bash
-/home/hsd/bin/git-finalize --summary --mode verify-only --repo /absolute/repo -- path/to/file
+$HOME/bin/git-finalize --summary --mode verify-only --repo /absolute/repo -- path/to/file
 ```
 
 只有按 [明确发布授权](../SKILL.md#明确发布授权) 判定为当前有效且覆盖对应操作的授权，才可选择
@@ -89,7 +89,7 @@ verify-only、commit-only、normal、initial、initial-branch 和 resume 默认�
 ### Verify only
 
 ```bash
-/home/hsd/bin/git-finalize \
+$HOME/bin/git-finalize \
   --summary \
   --mode verify-only \
   --repo <absolute-repo> \
@@ -101,7 +101,7 @@ verify-only 要求已有 commit 的 attached local branch，但不要求 upstrea
 ### Commit only
 
 ```bash
-/home/hsd/bin/git-finalize \
+$HOME/bin/git-finalize \
   --summary \
   --mode commit-only \
   --repo <absolute-repo> \
@@ -114,7 +114,7 @@ commit-only 用于已授权创建本地 commit、但未授权或暂不适合 pus
 unborn 仓库仅获本地 commit 授权、remote target 尚未明确时，使用：
 
 ```bash
-/home/hsd/bin/git-finalize \
+$HOME/bin/git-finalize \
   --summary \
   --initial-commit-only \
   --repo <absolute-repo> \
@@ -131,7 +131,7 @@ unborn 仓库仅获本地 commit 授权、remote target 尚未明确时，使用
 调用格式：
 
 ```bash
-/home/hsd/bin/git-finalize \
+$HOME/bin/git-finalize \
   --summary \
   --repo <absolute-repo> \
   --message <commit-message> \
@@ -150,7 +150,7 @@ Finalizer 在 commit 前 fetch 并核对远端 branch、upstream OID 和 ahead/b
 不得伪造 upstream 或创建空 commit；使用 `--publish-existing-branch`：
 
 ```bash
-/home/hsd/bin/git-finalize \
+$HOME/bin/git-finalize \
   --summary \
   --publish-existing-branch <full-head-oid> \
   --remote <remote-name> \
@@ -170,7 +170,7 @@ fail closed，不自动重试、覆盖或切换到 force。
 完成显式 `--repo-plan` → `--repo-ensure` 后，本地已有 history 且目标 repository 仍完全空时：
 
 ```bash
-/home/hsd/bin/git-finalize \
+$HOME/bin/git-finalize \
   --summary \
   --publish-existing-history <full-head-oid> \
   --remote <remote-name> \
@@ -188,7 +188,7 @@ remote 只有目标 branch，且 HEAD、upstream、remote OID 相同、ahead/beh
 若 push 中断或结果不确定，使用工具报告的同一完整 OID：
 
 ```bash
-/home/hsd/bin/git-finalize \
+$HOME/bin/git-finalize \
   --summary \
   --resume-existing-history-publish <full-head-oid> \
   --remote <remote-name> \
@@ -204,7 +204,7 @@ resume 只接受 remote 仍完全空，或只有目标 ref 且其 OID 精确等�
 普通 attached branch 已有一个或多个连续 local ahead commits，且用户已明确授权继续 push 时使用：
 
 ```bash
-/home/hsd/bin/git-finalize \
+$HOME/bin/git-finalize \
   --summary \
   --resume-publish <full-head-oid> \
   --repo <absolute-repo>
@@ -229,7 +229,7 @@ clean，HEAD、local branch、tag 和 Git 配置保持不变。push 或 post-ver
 上层 Controller 已完成 frozen intent claim、exact candidate validation 和 lease-acquire 后使用：
 
 ```bash
-/home/hsd/bin/git-finalize \
+$HOME/bin/git-finalize \
   --summary \
   --publish-integration-candidate <full-candidate-oid> \
   --repo <absolute-candidate-worktree> \
@@ -259,7 +259,7 @@ release、registered disposable cleanup 和 guarded release。若进程中断，
 调用格式：
 
 ```bash
-/home/hsd/bin/git-finalize \
+$HOME/bin/git-finalize \
   --summary \
   --initial-publish \
   --remote <remote-name> \
@@ -291,7 +291,7 @@ initial 和 resume 可以接受与所选 remote/branch 精确匹配的 configure
 仅当 `--initial-publish` 已经创建 root commit，但 initial push 失败或结果不确定时使用：
 
 ```bash
-/home/hsd/bin/git-finalize \
+$HOME/bin/git-finalize \
   --summary \
   --resume-initial-publish <full-root-oid> \
   --remote <remote-name> \
@@ -319,7 +319,7 @@ push delete；成功结果必须是 `RETIREMENT_PREFLIGHT_PASSED`。两类 dry-r
 可重试的 operation；每个 `--summary` 交回 Controller 分别登记，不能假设原子完成。
 
 ```bash
-/home/hsd/bin/git-finalize \
+$HOME/bin/git-finalize \
   --summary \
   --retire-local-branch <branch-or-refs/heads/branch> \
   --remote <remote-name> --integrated-into <branch> \
@@ -335,7 +335,7 @@ upstream 和 exact local OID；实际删除只用 `git update-ref -d <ref> <expe
 缺失、其他 local refs、remote refs、HEAD/index/worktree/tags 均未漂移。
 
 ```bash
-/home/hsd/bin/git-finalize \
+$HOME/bin/git-finalize \
   --summary \
   --retire-remote-branch <branch-or-refs/heads/branch> \
   --remote <remote-name> \

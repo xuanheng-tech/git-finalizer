@@ -47,6 +47,8 @@ RELEASED_CANONICAL_SKILL_SHA256 = frozenset(
         "ff6d5bea2807b2c884c2ec5bee441e5fe8060abd9d03c0520c57ce39fe37adb5",
         # 1.1.0/1.1.1 released canonical payload (tag v1.1.0, tag v1.1.1).
         "3c8679b6cfd6578da41007feeea43e7ff83e8152e3daea9ab9154055642a92e2",
+        # 1.2.0 released canonical payload (tag v1.2.0).
+        "7b85ec9da739bd60f76736ae6352e642dbf880bbd089058cce4cf7a9c0b5c665",
     }
 )
 

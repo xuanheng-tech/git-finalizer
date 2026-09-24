@@ -914,6 +914,87 @@ class SkillSyncTests(unittest.TestCase):
 
         self.assertEqual(verified["tool_name"], "git-finalizer")
 
+    def _bump_console_source_release(self, version: str) -> None:
+        repo = self.sources_root / "snapshot-runner"
+        project = repo / "pyproject.toml"
+        project.write_text(
+            project.read_text(encoding="utf-8").replace(
+                'version = "1.4.0"', f'version = "{version}"'
+            ),
+            encoding="utf-8",
+        )
+        contract_path = repo / "tool_cli_contract.json"
+        contract = sync.read_json(contract_path)
+        contract["tool_version"] = version
+        write_json(contract_path, contract)
+        manifest_path = repo / "tool_skill_manifest.json"
+        manifest = sync.read_json(manifest_path)
+        manifest["tool_version"] = version
+        manifest["public_cli_contract_sha256"] = sync.sha256_file(contract_path)
+        write_json(manifest_path, manifest)
+
+    def test_single_call_activation_follows_console_upgrade(self) -> None:
+        self._install_production("snapshot-runner")
+        self._rewrite_entry("snapshot-runner", "1.5.0")
+        self._bump_console_source_release("1.5.0")
+
+        result = sync.install(
+            self.sources,
+            "snapshot-runner",
+            self.install_root,
+            allow_dirty_source=True,
+            activate_production=True,
+            agents_root=self.agents_root,
+            bin_dir=self.bin_dir,
+            hooks_dir=self.hooks_dir,
+        )
+
+        self.assertEqual(result["status"], "INSTALLED")
+        sync.verify_production_bundle(
+            self._current("snapshot-runner"),
+            agents_root=self.agents_root,
+            bin_dir=self.bin_dir,
+            hooks_dir=self.hooks_dir,
+        )
+        second = sync.install(
+            self.sources,
+            "snapshot-runner",
+            self.install_root,
+            allow_dirty_source=True,
+            activate_production=True,
+            agents_root=self.agents_root,
+            bin_dir=self.bin_dir,
+            hooks_dir=self.hooks_dir,
+        )
+        self.assertEqual(second["status"], "ACTIVATED")
+
+    def test_activation_still_refuses_binary_that_matches_neither_release(self) -> None:
+        self._install_production("snapshot-runner")
+        self._rewrite_entry("snapshot-runner", "1.5.0")
+        self._bump_console_source_release("1.5.0")
+        self._rewrite_entry("snapshot-runner", "9.9.9")
+        current_before = self._current("snapshot-runner")
+        skill_marker = (
+            self.agents_root / "skills" / sync.SKILL_NAME / "SKILL.md"
+        )
+        skill_before = skill_marker.read_bytes()
+
+        with self.assertRaises(sync.SyncError) as caught:
+            sync.install(
+                self.sources,
+                "snapshot-runner",
+                self.install_root,
+                allow_dirty_source=True,
+                activate_production=True,
+                agents_root=self.agents_root,
+                bin_dir=self.bin_dir,
+                hooks_dir=self.hooks_dir,
+            )
+
+        self.assertIn("do not match", str(caught.exception))
+        self.assertEqual(self._current("snapshot-runner"), current_before)
+        self.assertEqual(skill_marker.read_bytes(), skill_before)
+
     def test_production_activation_installs_verified_binary_hook_and_skill(
         self,
     ) -> None:

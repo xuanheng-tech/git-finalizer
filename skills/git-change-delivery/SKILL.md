@@ -71,17 +71,17 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 | 明确要求规划或确保一个空 Gitea repository | `--repo-plan` / `--repo-ensure` | 与 publication 分离；仅显式 ensure 可创建 repository，绝不 commit/push |
 
 ```bash
-/home/hsd/bin/git-finalize --summary --mode verify-only --repo <absolute-repo> -- <repo-relative-file>...
-/home/hsd/bin/git-finalize --summary --mode commit-only --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
-/home/hsd/bin/git-finalize --summary --initial-commit-only --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
-/home/hsd/bin/git-finalize --summary --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
-/home/hsd/bin/git-finalize --summary --resume-publish <full-head-oid> --repo <absolute-repo>
-/home/hsd/bin/git-finalize --summary --publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
-/home/hsd/bin/git-finalize --summary --publish-existing-history <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
-/home/hsd/bin/git-finalize --summary --resume-existing-history-publish <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
-/home/hsd/bin/git-finalize --summary --publish-integration-candidate <candidate-oid> --repo <candidate-worktree> --lease-id <uuid> --run-id <run>
-/home/hsd/bin/git-finalize --summary --retire-remote-branch <branch> --remote <name> --integrated-into <branch> --expected-remote-oid <full-oid> --repo <absolute-repo> --dry-run
-/home/hsd/bin/git-finalize --summary --retire-local-branch <branch> --remote <name> --integrated-into <branch> --expected-local-oid <full-oid> --expected-integrated-oid <full-oid> --retirement-plan-id <sha256> --repo <absolute-repo> --dry-run
+$HOME/bin/git-finalize --summary --mode verify-only --repo <absolute-repo> -- <repo-relative-file>...
+$HOME/bin/git-finalize --summary --mode commit-only --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
+$HOME/bin/git-finalize --summary --initial-commit-only --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
+$HOME/bin/git-finalize --summary --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
+$HOME/bin/git-finalize --summary --resume-publish <full-head-oid> --repo <absolute-repo>
+$HOME/bin/git-finalize --summary --publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
+$HOME/bin/git-finalize --summary --publish-existing-history <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
+$HOME/bin/git-finalize --summary --resume-existing-history-publish <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
+$HOME/bin/git-finalize --summary --publish-integration-candidate <candidate-oid> --repo <candidate-worktree> --lease-id <uuid> --run-id <run>
+$HOME/bin/git-finalize --summary --retire-remote-branch <branch> --remote <name> --integrated-into <branch> --expected-remote-oid <full-oid> --repo <absolute-repo> --dry-run
+$HOME/bin/git-finalize --summary --retire-local-branch <branch> --remote <name> --integrated-into <branch> --expected-local-oid <full-oid> --expected-integrated-oid <full-oid> --retirement-plan-id <sha256> --repo <absolute-repo> --dry-run
 ```
 
 - 三种模式共用适用于各自执行边界的本地提交前检查；`verify-only` 不实际运行 commit hooks、签名或索引写入，因此不得声称验证了这些能力。
@@ -288,10 +288,10 @@ commit、push、stash、reset、restore 或 clean；最终回复应简短报告 
 
 ### Git Finalizer 原生执行边界（强制）
 
-- 所有执行器通过同一个 `/home/hsd/bin/git-finalize` 绝对入口调用同一套参数合同，使用精确仓库工作目录和完整命令。
+- 所有执行器通过同一个 `$HOME/bin/git-finalize` 绝对入口调用同一套参数合同，使用精确仓库工作目录和完整命令。
 - 原生审批与 OS 权限决定命令是否能执行；CLI 不检查或推断执行器私有会话状态。不得伪造审批、切换权限配置、使用 root 或额外宿主代理绕过边界。
 - 完整 Finalizer 生命周期由一次调用完成，不拆分为原始 Git 写命令。任何可能写入 index、
-  commit、ref 或 remote 的 Finalizer 接口，都从一开始通过执行器已有的原生权限请求和 auto-review
+  commit、ref 或 remote 的 Finalizer 接口，都从一开始通过执行器已有的原生权限请求与原生审核通道
   提交这一条完整命令；不要先在沙箱内制造一次预期失败，也不要为绕过权限关闭 commit signing、hooks
   或其他既有安全设置。runtime permission/reviewer 只提供执行能力，不授予 task/business authority。
   原生 reviewer 拒绝、失败或无合法执行能力时 fail closed；结果不明时 fail closed，不得重复创建
