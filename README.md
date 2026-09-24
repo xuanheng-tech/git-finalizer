@@ -2,7 +2,7 @@
 
 Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`1.1.0`
+当前版本：`1.1.1`
 
 共享 bundle 同时交付 `tool-skill-sync` 与 `tool-temp-dir`。临时目录使用
 `tool-temp-dir create <task-prefix>`，并通过 `validate-cleanup`、`dry-run-cleanup` 和

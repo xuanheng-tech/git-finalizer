@@ -59,6 +59,28 @@ section is invented for it.
   repository is preserved as a read-only archive and is no longer an active source; the
   private `ToolSkillManifest` continues to live here.
 
+## 1.1.1
+
+- Re-pin the mirrored Context Loader and Snapshot Runner `ToolSkillManifest` files to the live
+  canonical Skill payload hash. Commit `4084e22` had edited `skills/git-change-delivery/SKILL.md`
+  and resynchronized only the root manifest, leaving both mirrors on the superseded
+  `ff6d5bea…` binding and breaking the documented invariant that all three manifests bind the
+  same canonical Skill payload.
+- Add a fail-closed quality gate: `tests/test_tool_contract.py` now validates the canonical Skill
+  binding, the compatibility Skill binding, the skill contract version and the toolchain contract
+  pin for every `ToolSkillManifest` in the repository (root plus both mirrors). Previously only
+  the root manifest was asserted, and `just check` — the single `quality.yml` step — could not
+  observe mirror drift because `tool-skill-sync check` requires sibling source trees.
+- Widen the release preflight. Before any release mutation, `release.yml` now additionally
+  requires the tag to equal the CLI contract `tool_version`, the root manifest `tool_version`,
+  every companion `VERSION`, the toolchain compatibility `git_finalizer_contract_version`, and
+  the root manifest's byte-exact `public_cli_contract_sha256` binding of the shipped contract.
+- Keep both mirror `tool_version` pins at the released sibling contracts (Context Loader 1.0.0,
+  Snapshot Runner 2.0.0). A previously uncommitted attempt to pin Snapshot Runner 2.1.0 was
+  based on the superseded contract-v4 revision and would have regressed
+  `compatible_toolchain_contract_version`; the newer sibling 2.3.0 contract-3 re-pin is deferred
+  until the toolchain contract advance rule is recorded.
+
 ## 1.1.0
 
 - Add Controller-plan-bound local branch retirement using exact-OID `update-ref` CAS, live ancestry,

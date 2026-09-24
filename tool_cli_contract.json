@@ -453,5 +453,5 @@
   ],
   "schema_version": 1,
   "tool_name": "git-finalizer",
-  "tool_version": "1.1.0"
+  "tool_version": "1.1.1"
 }

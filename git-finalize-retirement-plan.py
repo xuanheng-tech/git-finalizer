@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 AUTHORITY_DIRECTORIES = (
     "records",
     "bindings",
