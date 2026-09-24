@@ -39,6 +39,18 @@ SKILL_PAYLOAD = (
 HEX_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 FULL_GIT_OID = re.compile(r"[0-9a-f]{40,64}\Z")
 SAFE_NAME = re.compile(r"[a-z0-9][a-z0-9._-]*\Z")
+# Payload-tree digests of previously released canonical Skill lines that may
+# legally sit in production before an upgrade. Mirrors deploy.py in the Skill
+# bundle; tests/test_tool_contract.py locks the two registries equal. Never
+# add a digest produced by local hand-editing.
+RELEASED_CANONICAL_SKILL_SHA256 = frozenset(
+    {
+        # 1.0.0 provider-neutral payload through the pre-1.1.0 canonical line.
+        "ff6d5bea2807b2c884c2ec5bee441e5fe8060abd9d03c0520c57ce39fe37adb5",
+        # 1.1.0/1.1.1 released canonical payload (tag v1.1.0, tag v1.1.1).
+        "3c8679b6cfd6578da41007feeea43e7ff83e8152e3daea9ab9154055642a92e2",
+    }
+)
 
 
 class SyncError(Exception):
@@ -1577,6 +1589,73 @@ def restore_production_pair(backup: Path, expected_targets: Sequence[Path]) -> N
                 temporary.unlink()
 
 
+def installed_skill_tree(agents_root: Path, bundle: Path) -> str | None:
+    manifest = read_json(bundle / "tool_skill_manifest.json")
+    installed_skill_name = (
+        COMPATIBILITY_SKILL_NAME
+        if manifest.get("schema_version") == 1
+        else SKILL_NAME
+    )
+    skill_root = agents_root / "skills" / installed_skill_name
+    present = [
+        skill_root / relative
+        for relative in SKILL_PAYLOAD
+        if (skill_root / relative).exists() or (skill_root / relative).is_symlink()
+    ]
+    if not present:
+        return None
+    if len(present) != len(SKILL_PAYLOAD):
+        missing = ", ".join(
+            relative
+            for relative in SKILL_PAYLOAD
+            if not (skill_root / relative).exists()
+            and not (skill_root / relative).is_symlink()
+        )
+        raise SyncError(
+            "installed production Skill is incomplete; preserve and classify the "
+            f"missing payload files before activation: {missing}"
+        )
+    return tree_sha256(skill_root, SKILL_PAYLOAD)
+
+
+def validate_production_skill_trusted(
+    bundle: Path,
+    agents_root: Path,
+    *,
+    previous_bundle: Path | None,
+) -> None:
+    live_tree = installed_skill_tree(agents_root, bundle)
+    if live_tree is None:
+        return
+    bundle_tree = verify_bundle(bundle)["skill_sha"]
+    if live_tree == bundle_tree:
+        return
+    if live_tree in RELEASED_CANONICAL_SKILL_SHA256:
+        return
+    if previous_bundle is not None:
+        if verify_bundle(previous_bundle)["skill_sha"] == live_tree:
+            return
+    manifest = read_json(bundle / "tool_skill_manifest.json")
+    installed_skill_name = (
+        COMPATIBILITY_SKILL_NAME
+        if manifest.get("schema_version") == 1
+        else SKILL_NAME
+    )
+    skill_root = agents_root / "skills" / installed_skill_name
+    drifted = ", ".join(
+        f"{relative} live={sha256_file(skill_root / relative)}"
+        for relative in SKILL_PAYLOAD
+        if sha256_file(skill_root / relative) != sha256_file(bundle / relative)
+    )
+    raise SyncError(
+        f"unknown content drift in installed production Skill (live_tree={live_tree} "
+        f"bundle_tree={bundle_tree} accepted_released_trees="
+        f"{', '.join(sorted(RELEASED_CANONICAL_SKILL_SHA256))}); preserve and "
+        "classify these files first, activation refuses to overwrite them: "
+        + drifted
+    )
+
+
 def replace_production_pair(targets: dict[Path, Path]) -> None:
     staged: dict[Path, Path] = {}
     try:
@@ -1616,6 +1695,11 @@ def activate_production_bundle(
         agents_root=agents_root,
         bin_dir=bin_dir,
         hooks_dir=hooks_dir,
+    )
+    validate_production_skill_trusted(
+        bundle,
+        agents_root,
+        previous_bundle=previous_bundle,
     )
     previous_targets = {}
     if previous_bundle is not None:

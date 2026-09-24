@@ -97,6 +97,15 @@ Skill Sync。入口改名时必须已有验证过的旧 bundle；先验证新入
 旧 pair；成功后才更新 managed `CURRENT` 与 production `PREVIOUS`。`rollback
 --activate-production` 同步恢复完整 pair，禁止只回退 Skill。
 
+production Skill 写入受 trusted-state gate 约束，与 `deploy.py install` 共用同一判定语义
+（payload tree digest 公式与 accepted registry 由测试锁定一致）：任一激活写入前，installed
+payload tree 必须等于本次 bundle、等于 `RELEASED_CANONICAL_SKILL_SHA256` 中已发布 canonical
+谱系、等于 CURRENT pointer bundle（受管回切/重装），或整个 Skill 尚不存在；否则以
+`unknown content drift` fail closed，逐文件输出 live digest，backup 也不会创建。payload
+不完整（部分 managed 文件缺失）同样拒绝。`rollback --activate-production` 在恢复前对
+CURRENT pair 做逐 target 验证，同样拒绝已漂移的 production 状态。人工漂移必须先捕获分类，
+再显式处置，任何生产入口都不静默覆盖。
+
 ## Unified release gate
 
 三个 owner 的发布按以下 gate 执行；每步失败停止：

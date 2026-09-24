@@ -105,6 +105,16 @@ Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released
   managed-file set; idempotent reinstall and upgrades from a released canonical line stay
   allowed. Previously the only protection against silently overwriting installed-only policy
   text was the incidental unknown-path abort triggered by a transient `__pycache__`.
+- Close the production-activation bypass. `tool-skill-sync install --activate-production`
+  applies the same trusted-state rule before capture/replace: the installed payload tree must
+  equal the incoming bundle, a released canonical lineage entry, the CURRENT-pointer bundle
+  (managed re-activation or rollback transition), or the Skill must be absent; unknown content
+  drift and incomplete payloads fail closed without creating a backup. `rollback
+  --activate-production` was already gated by per-target verification of the CURRENT pair.
+  Tests lock the shared semantics: the two `RELEASED_CANONICAL_SKILL_SHA256` registries and
+  the two payload-tree implementations (deploy.py and `tool_skill_sync`) must stay equal, and
+  hand-edited production payloads are refused by every activation entrypoint with bytes
+  preserved.
 - Converge the CLI contract with enforced behavior without changing the declared surface
   version: `verify_only`, `commit_only`, `normal_publish` and `publish_existing_branch` now all
   declare `--repository-id`/`--allocation-id`/`--task-key`/`--authority-key` plus the

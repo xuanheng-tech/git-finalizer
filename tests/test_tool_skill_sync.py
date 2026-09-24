@@ -999,6 +999,153 @@ class SkillSyncTests(unittest.TestCase):
         self.assertEqual(smoke.returncode, 0, smoke.stderr)
         self.assertIn(sync.VERSION, smoke.stdout)
 
+    def test_production_activation_refuses_hand_edited_skill_without_changes(
+        self,
+    ) -> None:
+        self._install_production("git-finalizer")
+        skill = self.agents_root / "skills" / sync.SKILL_NAME
+        edited = skill / "SKILL.md"
+        edited.write_bytes(b"# locally hand-enriched policy\n")
+        state = {
+            path.relative_to(skill).as_posix(): path.read_bytes()
+            for path in skill.rglob("*")
+            if path.is_file()
+        }
+        production_root = (
+            self.install_root / "tools" / "git-finalizer" / "production"
+        )
+        backups_before = (
+            len(list((production_root / "backups").iterdir()))
+            if (production_root / "backups").exists()
+            else 0
+        )
+
+        with self.assertRaises(sync.SyncError) as caught:
+            self._install_production("git-finalizer")
+
+        self.assertIn("unknown content drift", str(caught.exception))
+        self.assertIn("live=", str(caught.exception))
+        self.assertEqual(
+            {
+                path.relative_to(skill).as_posix(): path.read_bytes()
+                for path in skill.rglob("*")
+                if path.is_file()
+            },
+            state,
+        )
+        self.assertEqual(
+            len(list((production_root / "backups").iterdir()))
+            if (production_root / "backups").exists()
+            else 0,
+            backups_before,
+        )
+
+    def test_production_activation_refuses_incomplete_skill(self) -> None:
+        self._install_production("git-finalizer")
+        skill = self.agents_root / "skills" / sync.SKILL_NAME
+        before = {
+            path.relative_to(skill).as_posix(): path.read_bytes()
+            for path in skill.rglob("*")
+            if path.is_file() and path.name != "context-loader.md"
+        }
+        (skill / "references" / "context-loader.md").unlink()
+
+        with self.assertRaises(sync.SyncError) as caught:
+            self._install_production("git-finalizer")
+
+        self.assertIn("incomplete", str(caught.exception))
+        self.assertFalse((skill / "references" / "context-loader.md").exists())
+        self.assertEqual(
+            {
+                path.relative_to(skill).as_posix(): path.read_bytes()
+                for path in skill.rglob("*")
+                if path.is_file()
+            },
+            before,
+        )
+
+    def test_production_activation_upgrades_accepted_canonical_lineage(self) -> None:
+        self._install_production("git-finalizer")
+        accepted_tree = sync.verify_bundle(self._current("git-finalizer"))["skill_sha"]
+        skill_source = (
+            self.sources_root / "git-finalizer" / "skills" / sync.SKILL_NAME
+        )
+        (skill_source / "references" / "unpublished-queue.md").write_text(
+            "# extended\n", encoding="utf-8"
+        )
+        self._update_skill_manifest_hashes()
+        self._commit(self.sources_root / "git-finalizer")
+        sync.install(
+            self.sources,
+            "git-finalizer",
+            self.install_root,
+            allow_dirty_source=True,
+        )
+        bundle = self._current("git-finalizer")
+        original = sync.RELEASED_CANONICAL_SKILL_SHA256
+        sync.RELEASED_CANONICAL_SKILL_SHA256 = frozenset({accepted_tree})
+        try:
+            backup, verified = sync.activate_production_bundle(
+                bundle,
+                "git-finalizer",
+                self.install_root / "tools" / "git-finalizer" / "production",
+                agents_root=self.agents_root,
+                bin_dir=self.bin_dir,
+                hooks_dir=self.hooks_dir,
+                previous_bundle=None,
+            )
+        finally:
+            sync.RELEASED_CANONICAL_SKILL_SHA256 = original
+
+        self.assertIsNotNone(backup)
+        self.assertEqual(
+            sync.tree_sha256(
+                self.agents_root / "skills" / sync.SKILL_NAME, sync.SKILL_PAYLOAD
+            ),
+            verified["skill_sha256"],
+        )
+
+    def test_production_rollback_refuses_hand_edited_skill(self) -> None:
+        self._install_production("git-finalizer")
+        skill_source = (
+            self.sources_root / "git-finalizer" / "skills" / sync.SKILL_NAME
+        )
+        (skill_source / "references" / "unpublished-queue.md").write_text(
+            "# second release\n", encoding="utf-8"
+        )
+        self._update_skill_manifest_hashes()
+        self._commit(self.sources_root / "git-finalizer")
+        self._install_production("git-finalizer")
+        skill = self.agents_root / "skills" / sync.SKILL_NAME
+        (skill / "SKILL.md").write_bytes(b"# hand drift\n")
+        before = {
+            path.relative_to(skill).as_posix(): path.read_bytes()
+            for path in skill.rglob("*")
+            if path.is_file()
+        }
+        current_before = self._current("git-finalizer")
+
+        with self.assertRaises(sync.SyncError) as caught:
+            sync.rollback(
+                "git-finalizer",
+                self.install_root,
+                activate_production=True,
+                agents_root=self.agents_root,
+                bin_dir=self.bin_dir,
+                hooks_dir=self.hooks_dir,
+            )
+
+        self.assertIn("SHA mismatch", str(caught.exception))
+        self.assertEqual(
+            {
+                path.relative_to(skill).as_posix(): path.read_bytes()
+                for path in skill.rglob("*")
+                if path.is_file()
+            },
+            before,
+        )
+        self.assertEqual(self._current("git-finalizer"), current_before)
+
     def test_production_verification_failure_restores_active_pair(self) -> None:
         binary = self.bin_dir / "git-finalize"
         skill = self.agents_root / "skills" / sync.SKILL_NAME / "SKILL.md"

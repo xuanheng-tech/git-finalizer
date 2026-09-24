@@ -245,6 +245,10 @@ class ToolContractTests(unittest.TestCase):
         payload_digest = sync.tree_sha256(skill_dir, sync.SKILL_PAYLOAD)
         deploy_digest = deploy.payload_tree_digest(skill_dir)
         self.assertEqual(payload_digest, deploy_digest)
+        self.assertEqual(
+            set(sync.RELEASED_CANONICAL_SKILL_SHA256),
+            set(deploy.RELEASED_CANONICAL_SKILL_SHA256),
+        )
         manifest_paths = [ROOT / "tool_skill_manifest.json"]
         manifest_paths.extend(
             sorted((ROOT / "manifests").glob("*/tool_skill_manifest.json"))
