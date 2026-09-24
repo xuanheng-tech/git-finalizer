@@ -37,6 +37,18 @@ SOURCE_ONLY_FILES = (
 )
 EXPECTED_LIVE_DIRS = {"references"}
 COMPATIBILITY_FILES = {"SKILL.md": 0o600}
+# Payload-tree digests of previously released canonical Skill lines that may
+# legally sit in the live directory before an upgrade. Append the released
+# digest when a new canonical payload ships; never add a digest that was
+# produced by local hand-editing.
+RELEASED_CANONICAL_SKILL_SHA256 = frozenset(
+    {
+        # 1.0.0 provider-neutral payload through the pre-1.1.0 canonical line.
+        "ff6d5bea2807b2c884c2ec5bee441e5fe8060abd9d03c0520c57ce39fe37adb5",
+        # 1.1.0/1.1.1 released canonical payload (tag v1.1.0, tag v1.1.1).
+        "3c8679b6cfd6578da41007feeea43e7ff83e8152e3daea9ab9154055642a92e2",
+    }
+)
 
 
 class DeploymentError(Exception):
@@ -167,6 +179,51 @@ def validate_existing_live_structure(live_dir: Path) -> None:
         target = live_dir / name
         if target.exists() or target.is_symlink():
             regular_owned_file(target, "live target")
+
+
+def payload_tree_digest(directory: Path) -> str:
+    lines: list[str] = []
+    for relative in MANAGED_FILES:
+        path = directory / relative
+        regular_owned_file(path, "payload file")
+        lines.append(f"{sha256(path)}  {relative}\n")
+    return hashlib.sha256("".join(lines).encode()).hexdigest()
+
+
+def validate_live_content_trusted(source_dir: Path, live_dir: Path) -> None:
+    if not live_dir.exists():
+        return
+    present = [
+        name
+        for name in MANAGED_FILES
+        if (live_dir / name).exists() or (live_dir / name).is_symlink()
+    ]
+    if not present:
+        return
+    if len(present) != len(MANAGED_FILES):
+        missing = sorted(set(MANAGED_FILES) - set(present))
+        raise DeploymentError(
+            "installed Skill is incomplete; preserve it and classify the missing "
+            "managed files before installing: " + ", ".join(missing)
+        )
+    live_digest = payload_tree_digest(live_dir)
+    source_digest = payload_tree_digest(source_dir)
+    if live_digest == source_digest:
+        return
+    if live_digest in RELEASED_CANONICAL_SKILL_SHA256:
+        return
+    drifted = ", ".join(
+        f"{name} live={sha256(live_dir / name)}"
+        for name in MANAGED_FILES
+        if sha256(live_dir / name) != sha256(source_dir / name)
+    )
+    raise DeploymentError(
+        f"unknown content drift in installed Skill payload (live_tree={live_digest} "
+        f"source_tree={source_digest} accepted_released_trees="
+        f"{', '.join(sorted(RELEASED_CANONICAL_SKILL_SHA256))}); preserve and "
+        "classify these files first, installation refuses to overwrite them: "
+        + drifted
+    )
 
 
 def check_compatibility(source_dir: Path, live_dir: Path) -> bool:
@@ -352,6 +409,7 @@ def install(
     validate_live_container(live_dir, allow_missing=True)
     validate_live_container(compatibility_live_dir, allow_missing=True)
     validate_existing_live_structure(live_dir)
+    validate_live_content_trusted(source_dir, live_dir)
     validate_existing_compatibility_structure(compatibility_live_dir)
 
     parent = live_dir.parent

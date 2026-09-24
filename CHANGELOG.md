@@ -13,6 +13,15 @@ section is invented for it.
 
 ## Unreleased
 
+No pending unreleased changes are recorded. The bullets previously listed here described work
+already contained in the trees released as 1.1.0 and 1.1.1 (including the tool formerly named
+`codex-skill-sync`, renamed `tool-skill-sync` in 1.0.0 and shipped at its declared 2.0.0), and
+the tool-version numbers quoted in them (1.2.0/1.3.0/1.5.0) were pre-rename source versions of
+that same component. The authoritative per-version record remains the dated sections below; per
+the header rule this note does not backfill or rewrite those records.
+
+Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released trees):
+
 - Update `codex-skill-sync` to 1.5.0 with a declared canonical uv installation policy.
   `tools.<tool>.uv_install_policy` in `toolchain_compatibility.json` is authoritative for the
   entrypoint bin directory, package index and `--no-build`, so `upgrade` normalizes a drifted
@@ -58,6 +67,60 @@ section is invented for it.
   public tree was consolidated into that path. The former private Snapshot Runner
   repository is preserved as a read-only archive and is no longer an active source; the
   private `ToolSkillManifest` continues to live here.
+
+## 1.2.0
+
+- Fold the installed-live authorization-persistence policy into the source canonical Skill. The
+  installed copy under `~/.agents/skills/git-change-delivery/` carried hand-enriched text that
+  never existed in any canonical revision: 持续授权 semantics (persistence across pause, resume,
+  context compression and Agent handoff; one standing authorization covering local commit plus
+  push to a named private remote branch without per-step re-authorization; no merge, public
+  release or production deployment implied), the credential-authority paragraph and the
+  SKILL.md anchor-link in `references/git-finalizer.md`, the expanded trigger sentence, and
+  the single-command native-permission/auto-review fail-closed bullet. The merge is a three-way
+  reconciliation against the shared base revision; every canonical 1.1.x branch-retirement
+  statement is retained, so neither side loses content. `quick_validate.py` adopts the installed
+  superset (12 additional markers) and keeps validating the same section scopes.
+- Update `references/snapshot-runner.md` to the released Snapshot Runner 2.3.1 / public CLI
+  contract 3 surface: five subcommands (four evidence collectors plus the on-demand `read`
+  expansion command) and the corrected `--summary` applicability.
+- Rebind the canonical Skill payload: all three `ToolSkillManifest` files now pin the merged
+  payload tree `7b85ec9da739bd60f76736ae6352e642dbf880bbd089058cce4cf7a9c0b5c665`.
+- Re-pin both mirror manifests from the released sibling git tags (authoritative; the siblings'
+  Gitea releases are not the release record): Context Loader 1.3.1 with public CLI contract 3
+  bound byte-exactly at `82f1580f…`, Snapshot Runner 2.3.1 with public CLI contract 3 bound at
+  `2852388c…`. `toolchain_compatibility.json` moves `context_loader_contract_version` and
+  `snapshot_runner_contract_version` (and the per-tool `public_cli_contract_version` bindings)
+  to 3 accordingly, so `just toolchain-check` validates green against current sibling sources for
+  the first time. The superseded uncommitted 2.1.0 re-pin attempt remains preserved outside the
+  tree and is not applied.
+- Record the contract promotion rule in `docs/tool-skill-sync.md`: per-tool public CLI contract
+  advances update the per-tool bindings and manifest byte pins without changing
+  `toolchain_contract_version`; `toolchain_contract_version` (unchanged at 5 in this release)
+  moves only when cross-tool binding semantics change, atomically with the supported-version
+  set in `tool_skill_sync`, all manifests and tests.
+- Make Skill deployment drift-safe. `deploy.py install` now refuses, before any write and with
+  per-file digests, an installed payload whose tree digest is neither the source tree nor a
+  released canonical tree from `RELEASED_CANONICAL_SKILL_SHA256`, and refuses an incomplete
+  managed-file set; idempotent reinstall and upgrades from a released canonical line stay
+  allowed. Previously the only protection against silently overwriting installed-only policy
+  text was the incidental unknown-path abort triggered by a transient `__pycache__`.
+- Converge the CLI contract with enforced behavior without changing the declared surface
+  version: `verify_only`, `commit_only`, `normal_publish` and `publish_existing_branch` now all
+  declare `--repository-id`/`--allocation-id`/`--task-key`/`--authority-key` plus the
+  `controller_linkage_required_with_reviewed_sensitive_source` precondition, matching the
+  parser; `--help` no longer calls the linkage flags unconditionally optional; and the contract
+  declares the truthful per-command exit-code surface (`0`/`1` for bash-owned commands,
+  `0`/`2`/`3` for the exec-forwarded repo-bootstrap pair, `0`/`1`/`2` for the exec-forwarded
+  integration publisher).
+- Update `docs/process/phase-closure.md`: Plan-bound local branch retirement exists since
+  1.1.0 (explicit, Controller-gated, never automatic worktree cleanup), the Worktree Controller
+  is `available_external` under the v5 binding, releases exist only through the tag-triggered
+  `release.yml`, and tool phases must record the installed-live versus source canonical Skill
+  tree-hash comparison.
+- Define terminology going forward: `live` means the installed copy; the 1.1.1 section's phrase
+  "live canonical Skill" meant the then-current source canonical payload, not the installed
+  copy; the glossary lives in `skills/git-change-delivery/README.md`.
 
 ## 1.1.1
 

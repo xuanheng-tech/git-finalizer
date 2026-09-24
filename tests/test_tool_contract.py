@@ -168,9 +168,10 @@ class ToolContractTests(unittest.TestCase):
             (ROOT / "toolchain_compatibility.json").read_text(encoding="utf-8")
         )
         self.assertEqual(compatibility["toolchain_contract_version"], 5)
-        self.assertEqual(compatibility["context_loader_contract_version"], 2)
-        # Snapshot Runner 2.0.0 removed the provider-named aliases: public CLI contract 2.
-        self.assertEqual(compatibility["snapshot_runner_contract_version"], 2)
+        self.assertEqual(compatibility["context_loader_contract_version"], 3)
+        # Sibling contracts advanced to v3 (Context Loader 1.3.1, Snapshot Runner 2.3.1);
+        # per-tool contract advances do not move toolchain_contract_version by themselves.
+        self.assertEqual(compatibility["snapshot_runner_contract_version"], 3)
         self.assertEqual(compatibility["git_finalizer_contract_version"], 4)
         self.assertEqual(compatibility["worktree_controller_contract_version"], 3)
         self.assertEqual(
@@ -186,6 +187,81 @@ class ToolContractTests(unittest.TestCase):
                 "name": "git-change-delivery",
             },
         )
+
+    def test_reviewed_source_commands_declare_controller_linkage(self) -> None:
+        contract = json.loads(
+            (ROOT / "tool_cli_contract.json").read_text(encoding="utf-8")
+        )
+        commands = {command["name"]: command for command in contract["commands"]}
+        linkage = ["--repository-id", "--allocation-id", "--task-key", "--authority-key"]
+        precondition = "controller_linkage_required_with_reviewed_sensitive_source"
+        for name in (
+            "verify_only",
+            "commit_only",
+            "normal_publish",
+            "publish_existing_branch",
+        ):
+            with self.subTest(command=name):
+                command = commands[name]
+                self.assertIn("--reviewed-sensitive-source", command["flags"])
+                for flag in linkage:
+                    self.assertIn(flag, command["flags"])
+                self.assertIn(precondition, command["preconditions"])
+        help_text = (ROOT / "git-finalize").read_text(encoding="utf-8")
+        for flag in linkage:
+            self.assertIn(f"{flag} <", help_text)
+        self.assertNotIn(
+            "Optional Worktree Controller repository linkage.", help_text
+        )
+
+    def test_contract_declares_truthful_exit_code_surface(self) -> None:
+        contract = json.loads(
+            (ROOT / "tool_cli_contract.json").read_text(encoding="utf-8")
+        )
+        exit_codes = contract["exit_codes"]
+        self.assertEqual(
+            sorted(key for key in exit_codes if key != "scope"),
+            ["0", "1", "2", "3"],
+        )
+        bash_lines = (ROOT / "git-finalize").read_text(encoding="utf-8").splitlines()
+        bash_codes = {
+            match.group(1)
+            for line in bash_lines
+            if (match := re.search(r"^\s*exit ([0-9])$", line)) is not None
+        }
+        self.assertEqual(bash_codes, {"0", "1"})
+        self.assertIn("bash-owned commands", exit_codes["scope"])
+
+    def test_skill_payload_digests_agree_across_authorities(self) -> None:
+        import importlib
+        import sys
+
+        skill_dir = ROOT / "skills" / "git-change-delivery"
+        sys.path.insert(0, str(skill_dir))
+        try:
+            deploy = importlib.import_module("deploy")
+        finally:
+            sys.path.remove(str(skill_dir))
+        payload_digest = sync.tree_sha256(skill_dir, sync.SKILL_PAYLOAD)
+        deploy_digest = deploy.payload_tree_digest(skill_dir)
+        self.assertEqual(payload_digest, deploy_digest)
+        manifest_paths = [ROOT / "tool_skill_manifest.json"]
+        manifest_paths.extend(
+            sorted((ROOT / "manifests").glob("*/tool_skill_manifest.json"))
+        )
+        for manifest_path in manifest_paths:
+            manifest = sync.read_json(manifest_path)
+            with self.subTest(manifest=str(manifest_path.relative_to(ROOT))):
+                self.assertEqual(manifest["canonical_skill_sha256"], payload_digest)
+
+    def test_promotion_rule_and_glossary_are_documented(self) -> None:
+        doc = (ROOT / "docs" / "tool-skill-sync.md").read_text(encoding="utf-8")
+        self.assertIn("## Contract 升格规则", doc)
+        readme = (
+            ROOT / "skills" / "git-change-delivery" / "README.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("source canonical", readme)
+        self.assertIn("RELEASED_CANONICAL_SKILL_SHA256", readme)
 
     def test_phase_closure_sop_links_existing_template(self) -> None:
         sop = ROOT / "docs" / "process" / "phase-closure.md"

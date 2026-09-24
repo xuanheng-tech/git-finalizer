@@ -108,11 +108,7 @@ class SkillDeploymentTest(unittest.TestCase):
         self.assertEqual(stderr, "")
         self.assertIn("drift SKILL.md", stdout)
 
-    def test_install_recovers_missing_and_drifted_managed_files(self) -> None:
-        self.live.mkdir(mode=0o755)
-        (self.live / "references").mkdir(mode=0o755)
-        (self.live / "SKILL.md").write_bytes(b"old\n")
-        (self.live / "SKILL.md").chmod(0o644)
+    def test_install_creates_clean_live_from_scratch(self) -> None:
         other_skill = self.skills_root / "other-skill" / "SKILL.md"
         other_skill.parent.mkdir()
         other_skill.write_bytes(b"preserve exactly\n")
@@ -122,7 +118,6 @@ class SkillDeploymentTest(unittest.TestCase):
 
         self.assertEqual(status, 0)
         self.assertEqual(stderr, "")
-        self.assertIn("installed SKILL.md", stdout)
         self.assertEqual(stat.S_IMODE(self.live.stat().st_mode), 0o700)
         self.assertEqual(
             stat.S_IMODE((self.live / "references").stat().st_mode), 0o700
@@ -136,17 +131,90 @@ class SkillDeploymentTest(unittest.TestCase):
             deploy.sha256(self.compatibility_live / "SKILL.md"),
             deploy.sha256(self.compatibility_source / "SKILL.md"),
         )
-        self.assertEqual(
-            {
-                path.relative_to(self.compatibility_live).as_posix()
-                for path in self.compatibility_live.rglob("*")
-                if path.is_file()
-            },
-            {"SKILL.md"},
-        )
         self.assertFalse(
             any(path.name.startswith(".") for path in self.live.rglob("*"))
         )
+
+    def test_install_is_idempotent_when_live_matches_source(self) -> None:
+        self.populate_live()
+
+        status, stdout, stderr = self.run_main("install")
+
+        self.assertEqual(status, 0)
+        self.assertEqual(stderr, "")
+        self.assertEqual(
+            sum(line.startswith("unchanged ") for line in stdout.splitlines()),
+            len(deploy.MANAGED_FILES) + 1,
+        )
+
+    def test_install_upgrades_live_at_released_canonical_tree(self) -> None:
+        self.populate_live()
+        previous_tree = deploy.payload_tree_digest(self.live)
+        target = self.source / "references" / "unpublished-queue.md"
+        with target.open("a", encoding="utf-8") as stream:
+            stream.write("\nCanonical upgrade fixture line.\n")
+        original_accepted = deploy.RELEASED_CANONICAL_SKILL_SHA256
+        deploy.RELEASED_CANONICAL_SKILL_SHA256 = frozenset({previous_tree})
+        try:
+            status, stdout, stderr = self.run_main("install")
+        finally:
+            deploy.RELEASED_CANONICAL_SKILL_SHA256 = original_accepted
+
+        self.assertEqual(status, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("installed unpublished-queue.md", stdout)
+        for name in deploy.MANAGED_FILES:
+            self.assertEqual(
+                deploy.sha256(self.live / name), deploy.sha256(self.source / name)
+            )
+
+    def test_install_refuses_unknown_drifted_live_without_changes(self) -> None:
+        self.populate_live()
+        target = self.live / "SKILL.md"
+        target.write_bytes(b"# locally hand-enriched policy\n")
+        other_skill = self.skills_root / "other-skill" / "SKILL.md"
+        other_skill.parent.mkdir()
+        other_skill.write_bytes(b"preserve exactly\n")
+        before = {
+            path.relative_to(self.live).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in self.live.rglob("*")
+            if path.is_file()
+        }
+
+        status, stdout, stderr = self.run_main("install")
+
+        self.assertEqual(status, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn("unknown content drift", stderr)
+        self.assertIn("live=", stderr)
+        after = {
+            path.relative_to(self.live).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in self.live.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(after, before)
+        self.assertEqual(other_skill.read_bytes(), b"preserve exactly\n")
+
+    def test_install_refuses_incomplete_live_without_changes(self) -> None:
+        self.populate_live()
+        (self.live / "references" / "context-loader.md").unlink()
+        before = {
+            path.relative_to(self.live).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in self.live.rglob("*")
+            if path.is_file()
+        }
+
+        status, stdout, stderr = self.run_main("install")
+
+        self.assertEqual(status, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn("incomplete", stderr)
+        after = {
+            path.relative_to(self.live).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in self.live.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(after, before)
 
     def test_install_refuses_unknown_live_file_without_changes(self) -> None:
         self.populate_live()

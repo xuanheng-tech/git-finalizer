@@ -15,8 +15,12 @@
 ## Retirement / Tool Skill Sync Gate
 
 发布后、local cleanup 前依次确认：remote CI green 且绑定 main OID；main contains commits；remote
-branch retirement verified；随后才由现有人工流程完成 local worktree 与 local branch cleanup。
-Git Finalizer 不执行后二者。工具项目还必须记录 binary/entry 与 canonical Skill compatibility；
-非工具项目记 `N/A`。Worktree Controller 当前为 `planned / unavailable`，不得据此声称自动清理。
+branch retirement verified；随后才按现有人工流程处理 local worktree 与 local branch cleanup。
+自 1.1.0 起，local branch retirement 存在显式接口，但只接受 eligible Controller plan，Finalizer
+不自主清理、不删除 worktree。Worktree Controller 为 `available_external`（contract v5 绑定
+contract 3），其 plan/lease 生产与 lifecycle 更新仍属上层职责，不得据此声称自动清理。工具项目还
+必须记录 binary/entry 与 canonical Skill compatibility（含 installed live 与 source canonical 的
+tree hash 对照）；非工具项目记 `N/A`。正式 release 只由 pushed tag 触发的 `release.yml` 产生；
+合入 main 不构成发布，也不产生 Gitea Release 或 artifact。
 
 使用 [`phase-closure-report-template.md`](phase-closure-report-template.md) 保留最小证据。

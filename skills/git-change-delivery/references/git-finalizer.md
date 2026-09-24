@@ -22,11 +22,13 @@ Controller schema v2 integration candidate publication 也是独立接口。它�
 canonical checkout 发布，也不由 caller 另行选择 remote/main；只消费 Controller 已签发的同一
 publication lease，并把 verified receipt 交回 Controller 完成 lifecycle。
 
-选择模式不得扩大用户原有的 commit/push 授权：只验证使用 `--mode verify-only`，只授权本地 commit 使用 `--mode commit-only`，只有明确授权 commit 和 push 且任务达到交付状态才使用默认模式。调用绝对入口 `/home/hsd/bin/git-finalize` 前，还必须满足：
+选择模式不得扩大当前任务或适用持续授权所明确覆盖的 commit/push 边界：只验证使用
+`--mode verify-only`，只授权本地 commit 使用 `--mode commit-only`，只有明确授权 commit 和
+push 且任务达到交付状态才使用默认模式。调用绝对入口 `/home/hsd/bin/git-finalize` 前，还必须满足：
 
 - 实现已完成，相关测试和检查实际通过；
 - Snapshot Runner 的相关审查已通过，阻断项已经解决；
-- 当前轮范围、文件所有权和已有改动来源清楚，授权改动可独立隔离；
+- 当前授权范围、文件所有权和已有改动来源清楚，授权改动可独立隔离；
 - status 和 diff 已核对，候选范围保持聚焦；
 - `--` 后逐一列出每个允许验证或暂存的显式 repository-relative 文件路径。
 
@@ -40,10 +42,15 @@ publication lease，并把 verified receipt 交回 Controller 完成 lifecycle�
 /home/hsd/bin/git-finalize --summary --mode verify-only --repo /absolute/repo -- path/to/file
 ```
 
-只有当前任务已明确授权的操作可以选择对应的 commit/publication 模式。执行器若因沙箱
-拒绝操作，应通过它支持的原生权限申请流程处理同一完整命令；没有合法执行能力时停止。
+只有按 [明确发布授权](../SKILL.md#明确发布授权) 判定为当前有效且覆盖对应操作的授权，才可选择
+commit/publication 模式。执行器若因沙箱拒绝操作，应通过它支持的原生权限申请流程处理同一
+完整命令；没有合法执行能力时停止。
 CLI 不读取任何执行器的私有 transcript、session、规则文件或内部权限枚举，也不代理宿主
 提权。原生审批不能替代文件范围、敏感内容、Controller authority、远端和回滚检查。
+
+动作已获授权时，Finalizer 可使用现有 Git credential authority，无需仅因凭据已配置而再次请求
+业务授权；不得读取、输出、复制或修改凭据，交互认证仍由用户本人完成。credential authority
+只提供执行能力，不授予或扩大 commit/publication 权限。
 
 ### `--summary` 结果消费
 
@@ -423,9 +430,9 @@ tag、Release、Artifact 和 deployment 是独立 Release 流程，必须按仓�
 
 ## 必须停止的情况
 
-- 所选模式超出用户明确授权的 commit/push 边界，或操作属于尚未确认的高风险范围。
+- 所选模式超出当前有效的明确 commit/push 授权边界，或操作属于授权外的高风险范围。
 - 相关测试失败、必要检查未运行、审查未通过或 Runner 有未解决阻断。
-- 文件范围或所有权不清、当前轮改动无法隔离、已有 staged 文件超出显式范围。
+- 文件范围或所有权不清、已授权改动无法隔离、已有 staged 文件超出显式范围。
 - normal 模式为 detached/unborn HEAD、upstream 缺失或不可解析、remote 配置含糊、本地落后或分叉。
 - initial 模式发现本地已有 commit、预存 index、范围外 worktree 变更、可解析或冲突 upstream、remote 非空。
 - 普通 resume 的 OID、HEAD、branch、cleanliness、configured upstream、ahead/behind 或 remote

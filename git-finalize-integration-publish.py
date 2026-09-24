@@ -16,7 +16,7 @@ from typing import Any, NoReturn, Sequence
 import uuid
 
 
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 OID = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 SAFE_REMOTE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")

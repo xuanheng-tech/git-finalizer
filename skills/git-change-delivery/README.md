@@ -1,5 +1,10 @@
 # Versioned Git change delivery Skill
 
+术语：本文的 live 一律指 installed live copy（`~/.agents/skills/` 下的安装副本）；
+仓库内受版本控制的 Skill 称 source canonical；"live-read" 仅指对 installed copy 的只读核对。
+历史 CHANGELOG（1.1.1 节）中 "live canonical Skill" 一词指当时的 source canonical
+（current canonical payload），不是 installed live copy。
+
 唯一 active canonical Skill source 位于：
 
 ```text
@@ -27,8 +32,11 @@ just skill-install
 ```
 
 安装管理 canonical 的 `SKILL.md`、`quick_validate.py`、`unpublished_queue.py` 和 `references/`
-下四个合同文件，并验证旧名称仅安装 shim `SKILL.md`；发现未知 live 文件时会停止，不会静默
-删除。`deploy.py`、两个 `test_*.py` 和本 README 仅属于版本化恢复/测试资产，不安装到 live
+下四个合同文件，并验证旧名称仅安装 shim `SKILL.md`。install 在任何写入前 fail closed：发现未知
+live 路径、payload 不完整，或 installed tree hash 不属于 `RELEASED_CANONICAL_SKILL_SHA256`
+登记的已发布 canonical 谱系（双向/人工漂移）时停止并给出逐文件诊断，不静默覆盖、不备份伪装；
+只有缺失整个目录的全新安装、与 source 一致的幂等安装、以及从已发布 canonical tree 出发的升级
+会继续。`deploy.py`、两个 `test_*.py` 和本 README 仅属于版本化恢复/测试资产，不安装到 live
 目录。
 
 四态发布决策保持 `explicit-only`，不会启用默认自动 commit/push。该仓库只拥有这一 change

@@ -16,7 +16,9 @@ description: "用于仓库文件变更的上下文加载、测试与 evidence �
 - 用户要求向完全空的 remote 首次发布，或发布已经存在的普通 local commits，或用已创建
   root commit 的完整 OID 恢复失败或不确定的 initial publish。
 
-触发本 Skill 不等于必须运行全部三工具或全量测试。不得从“完成实现”“修复问题”或历史任务推导 commit/push 授权。
+触发本 Skill 不等于必须运行全部三工具或全量测试。不得从“完成实现”“修复问题”、历史行为或
+以往一次性授权推导 commit/push 授权；只有当前任务的明确授权，或用户明确授予且仍有效的持续
+授权，才能覆盖对应 Git 动作。
 
 ## 不适用场景
 
@@ -117,18 +119,33 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 
 Publication decision 只回答：当前任务结束前，是否应执行被明确授权的 Git Finalizer 操作。它不描述 Git 最终结果，也不得被当作“是否已经远端发布”的状态。任何任务在最终回复前都必须形成且只形成一个发布决定。涉及 Git 仓库修改时不得仅报告“未 commit/push”后结束；没有仓库修改的任务也必须按下列规则明确判定是否适用。按顺序选择首个符合的状态，后续状态不再适用：
 
-1. `not_applicable`：本轮是只读调查、没有仓库文件变化、不是 Git 仓库操作、只运行服务或查询状态，或所有临时变化均已安全清理。
+1. `not_applicable`：当前任务是只读调查、没有仓库文件变化、不是 Git 仓库操作、只运行服务或查询状态，或所有临时变化均已安全清理。
 2. `publication_blocked`：任务本应进入已授权 finalization，但存在任务未完成，测试、验收或 Snapshot 未通过，cwd/repo 不一致，所选模式需要的远端分叉或不可访问，原生权限边界阻断，工作树无法安全分离，staged/index 异常，敏感内容、异常删除或未解释的范围外改动，或其他明确安全阻断。技术、范围或完成度阻断优先于“有意不发布”，不得用后者掩盖失败或异常。
-3. `intentionally_unpublished`：仓库修改不存在上述阻断，但用户明确要求不 commit/push、仅保留本地修改或未提交草稿，或者当前 explicit-only 合同下没有获得明确发布授权。此状态表示有意保留未发布结果，不是遗漏。
+3. `intentionally_unpublished`：仓库修改不存在上述阻断，但用户明确要求不 commit/push、仅保留本地修改或未提交草稿，或者当前任务及仍有效持续授权均没有获得明确发布授权。此状态表示有意保留未发布结果，不是遗漏。
 4. `publish_now`：已获得明确且覆盖所选 Git 写模式的授权，实现完成，范围匹配的测试和验收通过，Snapshot Runner 无阻断，目标改动可与其他工作树改动安全分离，cwd/repo 及该模式要求的 upstream/远端状态可用，且不存在敏感内容、异常删除或未解释的范围外改动。当前应立即实际调用 Git Finalizer。`publish_now` 只是执行决策，不是最终结果；实际终态必须单独报告 Finalization outcome。
 
 ### 明确发布授权
 
-保持 explicit-only。用户明确要求 commit、push、发布或使用 Git Finalizer，或当前任务合同明确规定验收后的具体 Git 动作，才构成相应授权；授权范围以用户明确要求的动作、仓库和文件为限。只验证选择 `verify-only`，仅要求 commit 选择 `commit-only` 且不得自行扩大为 push；只有明确授权 commit 和 push 才选择默认模式。已有普通 local commits 且只授权继续 push 时可选择 `--resume-publish`；无 upstream 的首次分支发布可选择 `--publish-existing-branch`，两者授权均不包含创建新 commit。“完成这个任务”“全权处理”“修复这个问题”以及一般实现、测试或验收要求都不构成 commit/push 授权，不得从模糊意图、历史任务或完成状态推导权限。
+保持 explicit-only。相应授权只能来自当前任务的明确要求，或用户明确授予、限定仓库或资源、
+Git 动作和风险范围且仍未撤销的持续授权；不得从历史行为、以往一次性授权、工具权限或完成状态
+推导。暂停、resume、上下文压缩或 Agent 交接不使仍在原范围内的授权失效。
+
+用户明确要求 commit、push、发布或使用 Git Finalizer，当前任务合同明确规定验收后的具体 Git
+动作，或适用的持续授权明确覆盖该动作，才构成相应授权；授权范围以用户明确要求的动作、仓库、
+文件以及适用的 remote/branch 为限。只验证选择 `verify-only`，
+仅要求 commit 选择 `commit-only` 且不得自行扩大为 push；只有明确授权 commit 和 push 才选择
+默认模式。已有普通 local commits 且只授权继续 push 时可选择 `--resume-publish`；无 upstream
+的首次分支发布可选择 `--publish-existing-branch`，两者授权均不包含创建新 commit。
+“完成这个任务”、“全权处理”、
+“修复这个问题”以及一般实现、测试或验收要求都不构成 commit/push 授权，不得从模糊意图、历史任务或完成状态推导权限。
+
+同一份持续授权可同时明确覆盖本地 commit 和向指定私有 remote 的 task/feature branch push；
+二者仍需分别列明，但无需逐步骤重复授权。两项均被覆盖、范围未变且交付门槛通过时，直接按默认
+模式完成 commit、push 和远端核验，不因阶段切换再次请求授权；这不授权 merge、公开发布或生产部署。
 
 ### Finalization scope
 
-当 `Publication decision: publish_now` 时，必须在执行前按明确授权确定一个 scope：
+当 `Publication decision: publish_now` 时，必须在执行前按当前有效的明确授权确定一个 scope：
 
 ```text
 Finalization scope: <commit_only|commit_and_push>
@@ -273,7 +290,12 @@ commit、push、stash、reset、restore 或 clean；最终回复应简短报告 
 
 - 所有执行器通过同一个 `/home/hsd/bin/git-finalize` 绝对入口调用同一套参数合同，使用精确仓库工作目录和完整命令。
 - 原生审批与 OS 权限决定命令是否能执行；CLI 不检查或推断执行器私有会话状态。不得伪造审批、切换权限配置、使用 root 或额外宿主代理绕过边界。
-- 完整 Finalizer 生命周期由一次调用完成，不拆分为原始 Git 写命令。受沙箱限制时只使用执行器已有的正式权限申请机制；无合法能力时停止并报告。
+- 完整 Finalizer 生命周期由一次调用完成，不拆分为原始 Git 写命令。任何可能写入 index、
+  commit、ref 或 remote 的 Finalizer 接口，都从一开始通过执行器已有的原生权限请求和 auto-review
+  提交这一条完整命令；不要先在沙箱内制造一次预期失败，也不要为绕过权限关闭 commit signing、hooks
+  或其他既有安全设置。runtime permission/reviewer 只提供执行能力，不授予 task/business authority。
+  原生 reviewer 拒绝、失败或无合法执行能力时 fail closed；结果不明时 fail closed，不得重复创建
+  commit 或盲目重放 publication。
 - loopback 远端也保持同样的权限边界。沙箱内连接失败不能证明宿主服务故障，不得据此修改服务、密钥、防火墙或 remote。
 - 具体参数、结果与恢复规则见 [Git Finalizer reference](references/git-finalizer.md)。
 
@@ -285,9 +307,9 @@ Context Loader 与 Snapshot Runner 仍保持各自的只读及原有权限边界
 
 以下条件只阻止 Git Finalizer 和发布，不阻止本 Skill 用于上下文加载、实施、测试范围判断或只读审查。出现任一条件时停止发布，报告已验证事实和最小安全下一步：
 
-- 所选模式超出用户明确授权的 commit/push 边界。
+- 所选模式超出当前有效的明确 commit/push 授权边界。
 - 测试失败、必要测试未运行或审查未通过。
-- 当前轮范围、文件所有权或已有改动来源不清，显式文件范围不能覆盖且仅覆盖当前轮改动，或存在无法安全隔离的 staged/用户改动。
+- 当前授权范围、文件所有权或已有改动来源不清，显式文件范围不能覆盖且仅覆盖已授权改动，或存在无法安全隔离的 staged/用户改动。
 - Runner 有未解决 blocker，或其产物和证据缺口不足以支持发布结论。
 - 对需要远端的模式，远端已分叉，或分支、upstream、remote、ahead/behind、initial/resume 状态不满足 [Git Finalizer reference](references/git-finalizer.md) 的模式前提。
 - 高风险操作尚未取得针对确切动作、目标和范围的确认。

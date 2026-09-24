@@ -1,12 +1,12 @@
 {
-  "context_loader_contract_version": 2,
+  "context_loader_contract_version": 3,
   "git_finalizer_contract_version": 4,
   "schema_version": 1,
-  "snapshot_runner_contract_version": 2,
+  "snapshot_runner_contract_version": 3,
   "toolchain_contract_version": 5,
   "tools": {
     "context-loader": {
-      "public_cli_contract_version": 2,
+      "public_cli_contract_version": 3,
       "skill_contract_version": 2,
       "skill_manifest": "manifests/context-loader/tool_skill_manifest.json",
       "source_directory": "context-loader"
@@ -17,7 +17,7 @@
       "source_directory": "git-finalizer"
     },
     "snapshot-runner": {
-      "public_cli_contract_version": 2,
+      "public_cli_contract_version": 3,
       "skill_contract_version": 2,
       "skill_manifest": "manifests/snapshot-runner/tool_skill_manifest.json",
       "source_directory": "snapshot-runner",

@@ -25,6 +25,22 @@ canonical manifest 的 `tool_commit` 固定为 `@release`，因为被跟踪文�
 compatibility shim 的独立 SHA-256 由 ToolSkillManifest v2 绑定，并随 bundle/production pair 一起
 验证和安装。
 
+## Contract 升格规则
+
+- 单个工具的 public CLI contract 演进（其 `tool_cli_contract.json` 的 `contract_version` 变化或
+  surface 增删）：在同一提交内更新该工具自身 contract 文件、`toolchain_compatibility.json` 顶层
+  `<tool>_contract_version` 与 `tools.<tool>.public_cli_contract_version`、以及拥有该 contract 的
+  manifest 的 `public_cli_contract_sha256` 字节 pin；这不改变 `toolchain_contract_version`。
+- canonical Skill payload 的任何编辑：重算 payload tree hash，并在同一提交内重绑 root manifest 与
+  两个 mirror manifest 的 `canonical_skill_sha256`；三个 manifest 必须继续绑定同一 payload。
+- `toolchain_contract_version` 只在跨工具绑定语义变化时升格——即 manifest schema、workflow Skill
+  contract 语义或 Worktree Controller binding 规则本身变化。per-tool contract 版本推进不属于升格。
+  升格必须在同一提交内原子完成：`tool_skill_sync.check_tool` 的受支持版本集合与 controller
+  binding 分支、`toolchain_compatibility.json`、全部 manifest 的
+  `compatible_toolchain_contract_version`、以及相关测试。当前受支持集合为 1–5；v4 起要求
+  Worktree Controller contract 2，v5 起固定为 3，且 binding 是本仓声明式合同，不与外部
+  Controller 仓库交叉验证。
+
 ## Commands
 
 ```bash

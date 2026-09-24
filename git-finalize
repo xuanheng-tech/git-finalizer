@@ -7,7 +7,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.1.1"
+readonly VERSION="1.2.0"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -618,10 +618,10 @@ Options:
   --visibility <value>           Explicit private or public visibility.
   --description <text>           Optional repository description for creation.
   --add-origin                   Add the exact remote URL only when the remote is absent.
-  --repository-id <id>           Optional Worktree Controller repository linkage.
-  --allocation-id <id>           Optional Worktree Controller allocation linkage.
-  --task-key <key>               Optional Worktree Controller task linkage.
-  --authority-key <key>          Optional Worktree Controller authority linkage.
+  --repository-id <id>           Optional linkage; required with --reviewed-sensitive-source.
+  --allocation-id <id>           Optional linkage; required with --reviewed-sensitive-source.
+  --task-key <key>               Optional linkage; required with --reviewed-sensitive-source.
+  --authority-key <key>          Optional linkage; required with --reviewed-sensitive-source.
   --worktree-path <path>         Optional linkage; must equal the Finalizer repo root.
   --role <role>                  Optional Worktree Controller role linkage.
   --repo <path>                  Absolute path to the Git worktree root.
