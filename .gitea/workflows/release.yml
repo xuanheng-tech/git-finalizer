@@ -56,6 +56,8 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           python3 -B - <<'PY'
+          import hashlib
+          import json
           import os
           from pathlib import Path
           import re
@@ -78,6 +80,31 @@ jobs:
           version = script_match.group(1)
           if tag != f"v{version}":
               raise SystemExit(f"tag {tag} does not match Finalizer version {version}")
+          companions = (
+              "git-finalize-integration-publish.py",
+              "git-finalize-repo-bootstrap.py",
+              "git-finalize-retirement-plan.py",
+          )
+          for companion in companions:
+              companion_match = re.search(
+                  r'^VERSION = "([0-9]+\.[0-9]+\.[0-9]+)"$',
+                  Path(companion).read_text(),
+                  re.MULTILINE,
+              )
+              if companion_match is None or companion_match.group(1) != version:
+                  raise SystemExit(f"companion declares a different version: {companion}")
+          contract = json.loads(Path("tool_cli_contract.json").read_text())
+          manifest = json.loads(Path("tool_skill_manifest.json").read_text())
+          compatibility = json.loads(Path("toolchain_compatibility.json").read_text())
+          if contract["tool_version"] != version:
+              raise SystemExit("CLI contract declares a different version")
+          if manifest["tool_version"] != version:
+              raise SystemExit("root manifest declares a different version")
+          if contract["contract_version"] != compatibility["git_finalizer_contract_version"]:
+              raise SystemExit("CLI contract version disagrees with toolchain compatibility")
+          contract_sha = hashlib.sha256(Path("tool_cli_contract.json").read_bytes()).hexdigest()
+          if manifest["public_cli_contract_sha256"] != contract_sha:
+              raise SystemExit("root manifest does not bind the shipped CLI contract bytes")
           print(f"release_version={version}")
           PY
 
