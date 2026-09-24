@@ -112,6 +112,57 @@ class ToolContractTests(unittest.TestCase):
             commands["retire_remote_branch"]["result_statuses"],
         )
 
+    def test_every_skill_manifest_binds_the_canonical_skill_payload(self) -> None:
+        compatibility = json.loads(
+            (ROOT / "toolchain_compatibility.json").read_text(encoding="utf-8")
+        )
+        expected_canonical = {
+            "owner": compatibility["workflow_skill"]["canonical_owner"],
+            "path": f"skills/{sync.SKILL_NAME}/SKILL.md",
+        }
+        mirrors = {
+            details["skill_manifest"]
+            for details in compatibility["tools"].values()
+            if "skill_manifest" in details
+        }
+        manifest_paths = [ROOT / "tool_skill_manifest.json"] + [
+            ROOT / relative for relative in sorted(mirrors)
+        ]
+        self.assertEqual(len(manifest_paths), 3)
+        canonical_payload = sync.tree_sha256(
+            ROOT / "skills" / sync.SKILL_NAME,
+            sync.SKILL_PAYLOAD,
+        )
+        compatibility_skill = sync.sha256_file(
+            ROOT
+            / "skills"
+            / sync.COMPATIBILITY_SKILL_NAME
+            / "SKILL.md"
+        )
+        for manifest_path in manifest_paths:
+            with self.subTest(manifest=str(manifest_path.relative_to(ROOT))):
+                manifest = sync.read_json(manifest_path)
+                self.assertEqual(manifest["schema_version"], 2)
+                self.assertEqual(manifest["canonical_skill"], expected_canonical)
+                self.assertEqual(
+                    manifest["canonical_skill_sha256"], canonical_payload
+                )
+                self.assertEqual(
+                    manifest["compatibility_skill"]["name"],
+                    sync.COMPATIBILITY_SKILL_NAME,
+                )
+                self.assertEqual(
+                    manifest["compatibility_skill"]["sha256"], compatibility_skill
+                )
+                self.assertEqual(
+                    manifest["compatible_toolchain_contract_version"],
+                    compatibility["toolchain_contract_version"],
+                )
+                self.assertEqual(
+                    manifest["skill_contract_version"],
+                    compatibility["workflow_skill"]["contract_version"],
+                )
+
     def test_toolchain_compatibility_binds_external_worktree_controller(self) -> None:
         compatibility = json.loads(
             (ROOT / "toolchain_compatibility.json").read_text(encoding="utf-8")
