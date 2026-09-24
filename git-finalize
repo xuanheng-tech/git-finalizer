@@ -7,7 +7,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.3.0"
+readonly VERSION="1.4.0"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -3631,18 +3631,21 @@ acquire_retirement_plan_lock() {
         retirement_validation_error='无法解析 Finalizer 入口'
         return 1
     }
+    local verifier_output
     verifier=${executable%/*}/git-finalize-retirement-plan.py
     [[ -f "$verifier" && ! -L "$verifier" ]] || {
         retirement_validation_error='缺少 retirement plan verifier companion'
         return 1
     }
-    if ! /usr/bin/python3 -B "$verifier" \
+    if ! verifier_output=$(/usr/bin/python3 -B "$verifier" \
         --repo "$repo" --plan-id "$retirement_plan_id_arg" --operation "$operation" \
         --branch "$retirement_feature_branch" --remote "$retirement_remote" \
         --integrated-into "$integrated_into_arg" \
         --expected-oid "$retirement_expected_oid" \
-        --expected-integrated-oid "$expected_integrated_oid_arg"; then
-        retirement_validation_error='Controller retirement plan 已漂移或不匹配'
+        --expected-integrated-oid "$expected_integrated_oid_arg" 2>&1); then
+        retirement_validation_error="Controller retirement plan 校验失败: $(
+            printf '%s\n' "$verifier_output" | tail -n 1
+        )"
         return 1
     fi
     summary_retirement_plan_id=$retirement_plan_id_arg

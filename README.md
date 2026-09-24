@@ -2,7 +2,7 @@
 
 Git Finalizer 是面向本地开发工作流的发布收尾脚本：只暂存明确列出的文件，创建提交，并在确认远端可快进后执行 non-force push。
 
-当前版本：`1.3.0`
+当前版本：`1.4.0`
 
 共享 bundle 同时交付 `tool-skill-sync` 与 `tool-temp-dir`。临时目录使用
 `tool-temp-dir create <task-prefix>`，并通过 `validate-cleanup`、`dry-run-cleanup` 和
@@ -286,6 +286,17 @@ remote `mode_result.result` 为 `REMOTE_BRANCH_RETIRED_VERIFIED`、`ALREADY_ABSE
 `RETIREMENT_PREFLIGHT_PASSED`、`RETIREMENT_BLOCKED` 或 `REMOTE_DELETE_UNVERIFIED`，同时构成
 deterministic retirement receipt。local 对应 `LOCAL_BRANCH_RETIRED_VERIFIED` 和
 `LOCAL_DELETE_UNVERIFIED`；Finalizer 不另建持久 audit store，由 Controller 分别登记两类结果。
+
+正式 handoff 全部走 Worktree Controller 公开合同：`worktree-controller
+branch-retirement-plan --repo <path> (--branch <b>|--allocation-id <id>) --remote <r>
+--integrated-into <t> --json` 在 Controller authority 下持久化 plan 并给出 `plan_id`；
+Finalizer 完成后把 `--summary` JSON 交给 `worktree-controller branch-retirement-record
+--plan-id <id> --operation {local|remote} --summary-file <file>` 登记；
+`branch-retirement-status --plan-id <id>` 是唯一只读核对入口。plan 的 identity 绑定其创建时的
+authority 快照：branch 自身移动由 expected-OID CAS 兜底，任何 authority/policy 写入都会使
+Finalizer 在 mutation 前 fail closed，因此 plan 应在安静的短窗口内创建并立即消费。同一 plan
+的同一 operation 一旦留下 receipt 即视为已消费，重复激活会在 validation 阶段被拒绝；record
+对相同 evidence 的重复登记是幂等的。
 
 ### 有界结果摘要
 

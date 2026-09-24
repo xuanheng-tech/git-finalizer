@@ -7,12 +7,13 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 AUTHORITY_DIRECTORIES = (
     "records",
     "bindings",
@@ -47,6 +48,23 @@ IDENTITY_FIELDS = (
 def fail(message: str) -> None:
     print(f"ERROR: retirement plan validation blocked: {message}", file=sys.stderr)
     raise SystemExit(1)
+
+
+PLAN_ID_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def integration_core(value: str, remote: str) -> str:
+    core = value
+    prefixes = [
+        f"refs/remotes/{remote}/" if remote else "",
+        "refs/heads/",
+        "refs/remotes/",
+        f"{remote}/" if remote else "",
+    ]
+    for prefix in prefixes:
+        if prefix and core.startswith(prefix):
+            return core[len(prefix):]
+    return core
 
 
 def git(repo: Path, *arguments: str) -> str:
@@ -157,6 +175,8 @@ def parse_arguments() -> argparse.Namespace:
 
 def main() -> int:
     arguments = parse_arguments()
+    if PLAN_ID_RE.fullmatch(arguments.plan_id) is None:
+        fail("plan identifier is not a canonical 64-hex Controller plan id")
     repo = arguments.repo.resolve(strict=True)
     common = Path(git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
     root = common / "worktree-controller" / "v1"
@@ -171,10 +191,15 @@ def main() -> int:
         fail("Controller plan schema or identity differs")
     if plan_id(plan) != arguments.plan_id:
         fail("Controller plan content hash differs")
+    remote = str(plan.get("remote", ""))
+    integrated_core = integration_core(arguments.integrated_into, remote)
+    if integration_core(str(plan.get("integrated_into", "")), remote) != integrated_core:
+        fail(f"Controller plan integration target differs: {plan.get('integrated_into')!r}")
+    if integration_core(str(plan.get("integrated_ref", "")), remote) != integrated_core:
+        fail(f"Controller plan integration ref differs: {plan.get('integrated_ref')!r}")
     expected = {
         "branch": arguments.branch,
         "remote": arguments.remote,
-        "integrated_into": arguments.integrated_into,
         "expected_oid": arguments.expected_oid,
         "expected_integrated_oid": arguments.expected_integrated_oid,
         "classification": "ANCESTRY",
@@ -186,6 +211,15 @@ def main() -> int:
         fail(f"Controller plan differs for: {', '.join(differences)}")
     if plan.get("blockers") != []:
         fail("Controller plan contains blockers")
+    receipt_path = (
+        root
+        / "branch-retirement-receipts"
+        / f"{arguments.plan_id}-{arguments.operation}.json"
+    )
+    if receipt_path.exists():
+        fail(
+            "Controller already records a consumed receipt for this plan operation"
+        )
     observed_digest = state_digest(
         root,
         canonical_path(repo),

@@ -334,6 +334,23 @@ lock，复核 allocation/intent/runtime authority digest、live integration OID�
 upstream 和 exact local OID；实际删除只用 `git update-ref -d <ref> <expected-oid>`，然后验证目标
 缺失、其他 local refs、remote refs、HEAD/index/worktree/tags 均未漂移。
 
+正式 handoff 使用 Worktree Controller 的公开 retirement 动词：`worktree-controller
+branch-retirement-plan --repo <path> (--branch <b>|--allocation-id <id>) --remote <r>
+--integrated-into <t> --json` 产出持久化 plan 与 `plan_id`（`--dry-run` 严格只读，仅用于
+资格预检）；Finalizer 成功后，把 `--summary` JSON 原样写入文件并以
+`worktree-controller branch-retirement-record --repo <path> --plan-id <id> --operation
+{local|remote} --summary-file <file>` 登记；`branch-retirement-status --plan-id <id>` 是唯一
+只读核对面。plan 只授予创建它的那一个 operation：同一 plan 的 local 与 remote 须分别规划；
+Finalizer 在 validation 时也会拒绝该 operation 已有消费 receipt 的 plan。
+
+`--integrated-into` 接受与 plan 目标同一身份的任一跳法（裸分支名、`<remote>/<branch>` 或
+`refs/heads/...`）；Controller plan 原样保存操作者输入的字面值，登记与核对以解析后的 ref
+为准。plan 的 authority digest 只覆盖 Controller authority 文件而不含 refs：plan 创建后任何
+相关的 authority 写入（新 intent、lease、receipt 等）都会使 Finalizer 以 state-drift fail
+closed，而 branch 自身移动则由 expected-OID CAS 与最后时刻 live 复核拦截；remote 上 integration
+分支的新 push 同样导致拒绝。因此一次 plan 必须在安静的短窗口内创建并消费，过期就重新规划。
+Finalizer 只消费上述公开合同，不复制 Controller 的 governance 判定。
+
 ```bash
 $HOME/bin/git-finalize \
   --summary \

@@ -68,6 +68,30 @@ Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released
   repository is preserved as a read-only archive and is no longer an active source; the
   private `ToolSkillManifest` continues to live here.
 
+## 1.4.0
+
+- Close the Worktree Controller retirement integration. `--retirement-plan-id` is validated as
+  a canonical 64-hex identifier on the bash side and re-checked in the companion verifier;
+  `--integrated-into` now accepts any spelling that resolves to the plan's integration identity
+  (bare branch, `<remote>/<branch>`, `refs/heads/...`, or the plan's own remote-tracking form)
+  instead of requiring a byte-exact match against the operator's raw plan literal, and the
+  verifier cross-checks both `integrated_into` and `integrated_ref` from the plan.
+- Give `--operation` real meaning: a plan operation that already has a Controller receipt is
+  refused at validation time ("already records a consumed receipt"), closing same-plan replay
+  after registration, while Controller-side re-record remains idempotent.
+- Propagate the verifier's concrete reason into `retirement_validation_error` instead of
+  collapsing every refusal to the generic drift wording.
+- Retire the fixture-only oracle: a new gated suite drives the REAL installed controller
+  (public `branch-retirement-plan/status/record` contract) end-to-end in /tmp — genuine plan
+  persistence, controller status revalidation, retirement receipt recording, replay guards,
+  authority/policy/OID/plan-tamper drift, and lock serialization — and skips explicitly when
+  the controller entry point is absent. The Finalizer side never reimplements controller
+  digests in tests; the controller itself is the oracle.
+- Document the exact handoff (plan → validated CAS retirement → record → status), the quiet
+  window between planning and consumption, and per-operation plan consumption in the Skill
+  reference and README. Namespace migration of legacy `.git/codex-worktree` state and any
+  `.agents/worktree-policy.toml` adoption stay under Worktree Controller governance.
+
 ## 1.3.0
 
 - Fix the production upgrade/activation sequencing gap. `install <console-script-tool>

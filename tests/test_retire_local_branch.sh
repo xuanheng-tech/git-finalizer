@@ -340,7 +340,7 @@ test_oid_drift_recheckout_and_controller_drift_block() {
     record=$test_repo/.git/worktree-controller/v1/records/11111111-1111-4111-8111-111111111111.json
     printf ' \n' >>"$record"
     expect_failure "$output" local_retire_command
-    assert_file_contains "$output" 'plan 已漂移或不匹配' \
+    assert_file_contains "$output" 'authority state drifted' \
         'concurrent Controller authority drift was accepted'
     git -C "$test_repo" show-ref --verify --quiet "refs/heads/$feature_branch" ||
         fail_assertion 'Controller drift deleted local ref'
@@ -380,6 +380,44 @@ test_integration_drift_and_protected_ref_block() {
         'exact special lifecycle ref was accepted'
 }
 
+test_verifier_hardening_guards() {
+    local case_dir=$tmp_root/verifier-guards
+    local bad_id_log=$tmp_root/verifier-guards-bad-id.log
+    local alias_out=$tmp_root/verifier-guards-alias.json
+    local replay_dir=$tmp_root/verifier-guards-replay
+    local replay_out=$tmp_root/verifier-guards-replay.log
+    local common receipt_root
+
+    make_integrated_repo "$case_dir"
+    expect_failure "$bad_id_log" "$finalizer" --retire-local-branch "$feature_branch" \
+        --remote origin --integrated-into origin/main \
+        --expected-local-oid "$feature_oid" --expected-integrated-oid "$integration_oid" \
+        --retirement-plan-id "$(printf 'a%.0s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40)" \
+        --repo "$test_repo"
+    assert_file_contains "$bad_id_log" '64 位小写十六进制' 'malformed plan id was accepted'
+
+    expect_success "$alias_out" "$finalizer" --summary \
+        --retire-local-branch "$feature_branch" --remote origin --integrated-into main \
+        --expected-local-oid "$feature_oid" --expected-integrated-oid "$integration_oid" \
+        --retirement-plan-id "$plan_id" --repo "$test_repo"
+    assert_equal 'LOCAL_BRANCH_RETIRED_VERIFIED' \
+        "$(summary_field "$alias_out" mode_result.result)" \
+        'bare integration alias was rejected'
+
+    make_integrated_repo "$replay_dir"
+    common=$(git -C "$test_repo" rev-parse --path-format=absolute --git-common-dir)
+    receipt_root=$common/worktree-controller/v1/branch-retirement-receipts
+    mkdir -p -- "$receipt_root"
+    printf '{"synthetic":"consumed local receipt"}\n' \
+        >"$receipt_root/$plan_id-local.json"
+    expect_failure "$replay_out" "$finalizer" --summary \
+        --retire-local-branch "$feature_branch" --remote origin --integrated-into main \
+        --expected-local-oid "$feature_oid" --expected-integrated-oid "$integration_oid" \
+        --retirement-plan-id "$plan_id" --repo "$test_repo"
+    assert_file_contains "$replay_out" 'already records a consumed receipt' \
+        'plan operation replay after consumption was accepted'
+}
+
 run_case() {
     current_case=$1
     shift
@@ -397,5 +435,7 @@ run_case 'OID drift recheckout and Controller authority drift fail closed' \
     test_oid_drift_recheckout_and_controller_drift_block
 run_case 'integration drift and protected refs fail closed' \
     test_integration_drift_and_protected_ref_block
+run_case 'plan-id canonical form, integration aliases, and consumed-receipt replay guard' \
+    test_verifier_hardening_guards
 
 printf 'all %s local retirement integration groups passed\n' "$passed"
