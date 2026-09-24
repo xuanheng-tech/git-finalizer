@@ -999,6 +999,13 @@ class SkillSyncTests(unittest.TestCase):
         self.assertEqual(smoke.returncode, 0, smoke.stderr)
         self.assertIn(sync.VERSION, smoke.stdout)
 
+    def test_shipped_sync_implementation_keeps_unambiguous_version(self) -> None:
+        staging = Path(self.temporary.name) / "sync-bundle"
+        target = staging / "executable" / "tooling"
+        target.mkdir(parents=True)
+        shutil.copyfile(Path(sync.__file__), target / "tool_skill_sync.py")
+        self.assertEqual(sync.bundled_sync_version(staging), sync.VERSION)
+
     def test_production_activation_refuses_hand_edited_skill_without_changes(
         self,
     ) -> None:

@@ -42,12 +42,13 @@ SAFE_NAME = re.compile(r"[a-z0-9][a-z0-9._-]*\Z")
 # Payload-tree digests of previously released canonical Skill lines that may
 # legally sit in production before an upgrade. Mirrors deploy.py in the Skill
 # bundle; tests/test_tool_contract.py locks the two registries equal. Never
-# add a digest produced by local hand-editing.
+# add a digest produced by local hand-editing. This module must keep exactly
+# one x-dot-y-dot-z numeral (the VERSION constant) for bundled_sync_version.
 RELEASED_CANONICAL_SKILL_SHA256 = frozenset(
     {
-        # 1.0.0 provider-neutral payload through the pre-1.1.0 canonical line.
+        # Provider-neutral payload of the first shipped canonical line.
         "ff6d5bea2807b2c884c2ec5bee441e5fe8060abd9d03c0520c57ce39fe37adb5",
-        # 1.1.0/1.1.1 released canonical payload (tag v1.1.0, tag v1.1.1).
+        # Canonical payload carried by the two subsequently tagged releases.
         "3c8679b6cfd6578da41007feeea43e7ff83e8152e3daea9ab9154055642a92e2",
     }
 )
