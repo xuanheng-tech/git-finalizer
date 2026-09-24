@@ -349,7 +349,11 @@ Finalizer 在 validation 时也会拒绝该 operation 已有消费 receipt 的 p
 相关的 authority 写入（新 intent、lease、receipt 等）都会使 Finalizer 以 state-drift fail
 closed，而 branch 自身移动则由 expected-OID CAS 与最后时刻 live 复核拦截；remote 上 integration
 分支的新 push 同样导致拒绝。因此一次 plan 必须在安静的短窗口内创建并消费，过期就重新规划。
-Finalizer 只消费上述公开合同，不复制 Controller 的 governance 判定。
+Finalizer 在 validation 前还会通过公开的 `capabilities --json` 证明 Controller 的
+branch-retirement 能力版本与 plan schema 一致（不识别或缺配即 fail closed）。仓内仍残留 legacy
+`codex-worktree` namespace 时，plan 校验与 lock 预检都会给出精确 blocker 并拒绝读取旧状态；
+namespace 激活属 Controller 治理职责，不由 Finalizer 代办。plan 状态摘要的 authority digest
+重算是隔离的 legacy compatibility 独立核验路径，不承载新增 governance 逻辑。
 
 ```bash
 $HOME/bin/git-finalize \

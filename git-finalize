@@ -3614,6 +3614,10 @@ acquire_retirement_plan_lock() {
         return 1
     }
     controller_root=$common_dir/worktree-controller/v1
+    if [[ ! -d "$controller_root" && -d "$common_dir/codex-worktree/v1" ]]; then
+        retirement_validation_error='检测到 legacy codex-worktree namespace；retirement 需先经 WC 治理激活 worktree-controller/v1，本工具拒绝读取非权威旧状态'
+        return 1
+    fi
     lock_file=$controller_root/repo.lock
     [[ -f "$lock_file" && ! -L "$lock_file" ]] || {
         retirement_validation_error='Controller repo.lock 缺失或不安全'

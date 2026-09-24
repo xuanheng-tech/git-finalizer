@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Validate one Worktree Controller branch-retirement plan under repo.lock."""
+"""Validate one Worktree Controller branch-retirement plan under repo.lock.
+
+Boundary: this verifier consumes only the controller's public retirement
+contract (persisted plan identity, capability attestation via
+`capabilities --json`, and receipt paths). The state-digest recomputation
+below is a LEGACY COMPATIBILITY independent-verification path mirroring the
+frozen v1 layout while the digest recipe itself is not part of any published
+contract; it must not absorb new controller governance logic.
+"""
 
 from __future__ import annotations
 
@@ -8,12 +16,16 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 VERSION = "1.4.0"
+BRANCH_RETIREMENT_CAPABILITY = "branch_retirement_version"
+# Legacy compatibility mirror of the frozen v1 authority layout (see module
+# boundary note above).
 AUTHORITY_DIRECTORIES = (
     "records",
     "bindings",
@@ -173,6 +185,39 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def attest_controller_capability(repo: Path, plan_schema: int) -> None:
+    executable = shutil.which("worktree-controller")
+    if executable is None:
+        return
+    try:
+        result = subprocess.run(
+            (executable, "capabilities", "--repo", str(repo), "--json"),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except OSError as exc:
+        fail(f"cannot attest Worktree Controller capabilities: {exc}")
+    if result.returncode != 0:
+        fail(
+            "Worktree Controller capabilities probe failed; retirement is "
+            f"blocked (rc={result.returncode})"
+        )
+    try:
+        decision = json.loads(result.stdout)["decision"]
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        fail(f"Worktree Controller capabilities contract is unreadable: {exc}")
+    version = decision.get(BRANCH_RETIREMENT_CAPABILITY)
+    if version is None:
+        fail("Worktree Controller does not advertise branch-retirement capability")
+    if version != plan_schema:
+        fail(
+            "Worktree Controller branch-retirement capability "
+            f"{version} does not match plan schema {plan_schema}"
+        )
+
+
 def main() -> int:
     arguments = parse_arguments()
     if PLAN_ID_RE.fullmatch(arguments.plan_id) is None:
@@ -180,6 +225,18 @@ def main() -> int:
     repo = arguments.repo.resolve(strict=True)
     common = Path(git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
     root = common / "worktree-controller" / "v1"
+    if not root.is_dir():
+        if (common / "codex-worktree" / "v1").is_dir():
+            fail(
+                "repository still holds the legacy codex-worktree namespace; "
+                "branch retirement requires the controller-governed "
+                "worktree-controller/v1 activation and refuses to read "
+                "non-authoritative legacy state"
+            )
+        fail(
+            "no Worktree Controller state exists for this repository; "
+            "branch retirement requires a controller-issued plan"
+        )
     plan_path = root / "branch-retirement-plans" / f"{arguments.plan_id}.json"
     try:
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
@@ -191,6 +248,7 @@ def main() -> int:
         fail("Controller plan schema or identity differs")
     if plan_id(plan) != arguments.plan_id:
         fail("Controller plan content hash differs")
+    attest_controller_capability(repo, int(plan.get("schema_version", 0)))
     remote = str(plan.get("remote", ""))
     integrated_core = integration_core(arguments.integrated_into, remote)
     if integration_core(str(plan.get("integrated_into", "")), remote) != integrated_core:

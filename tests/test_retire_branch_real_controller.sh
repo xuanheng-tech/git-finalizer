@@ -325,6 +325,62 @@ time.sleep(3)
     fi
 }
 
+test_namespace_and_capability_blockers() {
+    local case_dir=$tmp_root/namespace
+    mkdir -p -- "$case_dir/repo"
+    git init --quiet --initial-branch=main "$case_dir/repo"
+    printf 'x\n' >"$case_dir/repo/f"
+    git -C "$case_dir/repo" add -- f
+    git -C "$case_dir/repo" -c user.name=t -c user.email=t@x commit --quiet -m seed
+    mkdir -p -- "$case_dir/repo/.git/codex-worktree/v1"
+    expect_failure "$case_dir/companion-legacy.log" /usr/bin/python3 -B \
+        "$project_root/git-finalize-retirement-plan.py" \
+        --repo "$case_dir/repo" --plan-id "$(printf 'e%.0s' $(seq 64))" \
+        --operation local --branch main --remote origin --integrated-into main \
+        --expected-oid "$(printf '0%.0s' $(seq 40))" \
+        --expected-integrated-oid "$(printf '0%.0s' $(seq 40))"
+    assert_file_contains "$case_dir/companion-legacy.log" 'legacy codex-worktree' \
+        'companion accepted a legacy-namespace repository'
+    mkdir -p -- "$case_dir/repo/.git/worktree-controller/v1"
+    touch -m 0600 "$case_dir/repo/.git/worktree-controller/v1/repo.lock"
+    expect_failure "$case_dir/companion-noplan.log" /usr/bin/python3 -B \
+        "$project_root/git-finalize-retirement-plan.py" \
+        --repo "$case_dir/repo" --plan-id "$(printf 'e%.0s' $(seq 64))" \
+        --operation local --branch main --remote origin --integrated-into main \
+        --expected-oid "$(printf '0%.0s' $(seq 40))" \
+        --expected-integrated-oid "$(printf '0%.0s' $(seq 40))"
+    assert_file_contains "$case_dir/companion-noplan.log" 'cannot read exact Controller plan' \
+        'missing plan was accepted'
+
+    case_dir=$tmp_root/capability
+    write_build_store "$case_dir"
+    make_env "$case_dir"
+    mkdir -p -- "$case_dir/bin"
+    printf '%s\n' '#!/bin/sh' \
+        "printf '{\"decision\":{\"branch_retirement_version\":99},\"schema_version\":1}\n'" \
+        'exit 0' >"$case_dir/bin/worktree-controller"
+    chmod 755 "$case_dir/bin/worktree-controller"
+    expect_failure "$case_dir/mismatch.log" env PATH="$case_dir/bin:$PATH" \
+        "$finalizer" --summary --retire-local-branch "$feature_branch" --remote origin \
+        --integrated-into main --expected-local-oid "$feature_oid" \
+        --expected-integrated-oid "$integration_oid" --retirement-plan-id "$plan_id" \
+        --repo "$test_repo"
+    assert_file_contains "$case_dir/mismatch.log" 'does not match plan schema' \
+        'capability mismatch was accepted'
+    git -C "$test_repo" show-ref --verify --quiet "refs/heads/$feature_branch" ||
+        fail_assertion 'capability mismatch deleted the branch anyway'
+    printf '%s\n' '#!/bin/sh' 'exit 3' >"$case_dir/bin/worktree-controller"
+    expect_failure "$case_dir/probe.log" env PATH="$case_dir/bin:$PATH" \
+        "$finalizer" --summary --retire-local-branch "$feature_branch" --remote origin \
+        --integrated-into main --expected-local-oid "$feature_oid" \
+        --expected-integrated-oid "$integration_oid" --retirement-plan-id "$plan_id" \
+        --repo "$test_repo"
+    assert_file_contains "$case_dir/probe.log" 'capabilities probe failed' \
+        'failing capability probe was accepted'
+    git -C "$test_repo" show-ref --verify --quiet "refs/heads/$feature_branch" ||
+        fail_assertion 'failed probe deleted the branch anyway'
+}
+
 if controller_available; then
     run_case 'real controller plan validates and finalizer dry-run accepts' \
         test_plan_status_and_finalizer_accept
@@ -334,6 +390,8 @@ if controller_available; then
         test_authority_and_oid_drift_fail_closed
     run_case 'tampered plan and lock contention never mutate' \
         test_tampered_plan_and_lock_contention
+    run_case 'namespace and capability blockers fail closed' \
+        test_namespace_and_capability_blockers
 else
     printf 'ok - real controller suite skipped: worktree-controller unavailable\n'
 fi

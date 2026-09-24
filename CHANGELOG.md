@@ -87,6 +87,15 @@ Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released
   authority/policy/OID/plan-tamper drift, and lock serialization — and skips explicitly when
   the controller entry point is absent. The Finalizer side never reimplements controller
   digests in tests; the controller itself is the oracle.
+- Attest the controller's published `branch_retirement_version` capability against the plan
+  schema through the read-only `capabilities --json` contract before validation, failing closed
+  on an unreadable probe and skipping attestation only when no controller binary exists (the
+  independent-verifier legacy path). Emit precise namespace blockers: a repository still holding
+  legacy `codex-worktree/v1` state, or holding no controller state at all, is refused by both
+  the bash lock preflight and the companion verifier with distinct reasons; no code path reads
+  non-authoritative legacy state. The state-digest recomputation is now explicitly isolated as a
+  legacy compatibility mirror of the frozen v1 layout, with a module boundary note forbidding
+  new governance logic from accumulating there.
 - Document the exact handoff (plan → validated CAS retirement → record → status), the quiet
   window between planning and consumption, and per-operation plan consumption in the Skill
   reference and README. Namespace migration of legacy `.git/codex-worktree` state and any
