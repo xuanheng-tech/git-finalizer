@@ -23,11 +23,23 @@ Git Finalizer（GF）核心只依赖 bash、Git 与 `/usr/bin/python3`。所有�
   `state_digest` 段把该 recipe 发布为 contract v2 的一部分，并要求外部消费者“只从
   `branch-retirement-verify` 取得判定，不得复制 canonicalization、digest recipe 或 blocker 清单”。
   因此 GF 的镜像是**被点名的过渡性偏差（技术债务）**，不是中立的防御性设计。
-- 收敛路径明确：改调公开只读接口
-  `worktree-controller branch-retirement-verify --repo <path> --plan-id <sha256> --operation {local|remote} --json`，
-  其存在性由 `decision.branch_retirement_verify_version` 宣告。切换代价是 retirement 路径将硬性
-  依赖 controller 可执行文件，除非同时保留镜像回退路径，而这正是上游合同禁止累积的形态。上游
-  发布该接口的提交之后仍有未定稿的在途改动，因此本批次**不**切换，只把边界与债务写清楚。
+- 收敛目标明确但**尚不可正式消费**：公开只读接口
+  `worktree-controller branch-retirement-verify --repo <path> --plan-id <sha256> --operation {local|remote} --json`
+  （result contract `branch-retirement/v2`，存在性由 `decision.branch_retirement_verify_version` 宣告）
+  只存在于上游 `main`/tagged v1.6.0 一代。GF 本批次**不**切换，四条互相独立的精确原因：
+  1. GF 实际调用的 production controller 入口仍是上一代（`--version` 无该动词，
+     `capabilities` 不宣告 `branch_retirement_verify_version`），切换会立即破坏真实 controller E2E；
+  2. 上游在途改动把该面升为 contract v3 / storage layout v2、新增三个动词并向 verify 的
+     `blockers` 注入第五个值，却仍宣告 `branch_retirement_verify_version: 1`，且
+     `contract_version` 不经 `capabilities` 暴露——按 capability 版本 pin 的消费者会静默收到新语义；
+  3. verify 以 **shared** 方式自取 `repo.lock`，而 GF 的 bash adapter 先持有 **exclusive** `flock`
+     再调用伴生；切换必须把 verify 移到取锁之前，否则自锁；
+  4. verify 需要 controller 可执行文件，而 GF 的无二进制独立核验路径没有公开替代物（签发 plan 中
+     `branch_retirement_trust_mode` 恒为 `legacy`），切换即取消该场景的 fail-closed 保障。
+  前置条件因此是：上游契约代次冻结并冻结该 blocker 集合、`contract_version` 可被探测、production
+  controller 实际激活该代、且给出无 controller 场景的权威判定入口或明确放弃该场景。
+- 因此 digest 镜像继续承担无 controller 环境的 fail-closed 核验，位点不变、不扩展；它仍是被上游
+  点名的过渡性偏差，而不是中立的防御性设计。
 - 版本边界由两处共同承担：`decision.branch_retirement_version` 必须等于 plan 的
   `schema_version`（探测失败或不匹配即 fail closed；可执行文件缺席时显式跳过并走独立核验），以及
   plan 文件名空间的 `worktree-controller/v1` 常量。legacy `codex-worktree` namespace 只用于产生
@@ -70,10 +82,10 @@ Git Finalizer（GF）核心只依赖 bash、Git 与 `/usr/bin/python3`。所有�
   其中 `mode` 为 `integration_candidate_publish`），退出码 `{0,1,2}`，其 `next_action` 使用 companion
   自己的词表（例如 lease 缺失时的 `read_remote_fact_and_reenter_controller_publish_gate`），不属于上面
   列出的 bash `next_action` 枚举。Agent 不得假设 companion 输出与 `--summary` 同形。
-  `tool_cli_contract.json.exit_codes` 中 `"3"` 的“destructive confirmation condition”描述与
-  repo-bootstrap 的实际语义（无法归类的 `UNKNOWN` 决策）不符；该字段的措辞属于已发布 contract
-  字节面，改动会连带 `public_cli_contract_sha256` 与三个 manifest 的重绑定，因此留待独立的
-  contract 批次处理，本文件先行记录事实。
+  `tool_cli_contract.json.exit_codes` 与 bootstrap 的分类实现由 `tests/test_tool_contract.py`
+  双向核对：`2` 是 argparse 用法错误或 `BLOCK_*` 前置阻断，`3` 是决策无法归类（`UNKNOWN`）的
+  `status=failed` 失败。该文件任何字节改动都会连带 `public_cli_contract_sha256` 与本仓库
+  `tool_skill_manifest.json` 的重绑定，因此合同文本与 manifest 必须在同一提交内一起更新。
 
 ## 独立测试矩阵
 

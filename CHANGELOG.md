@@ -130,10 +130,32 @@ Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released
   Controller authority-state-digest mirror in the retirement verifier is now a named transitional
   deviation, because upstream published that recipe together with a read-only
   `branch-retirement-verify` verdict API and forbids consumers from recomputing it; and
-  `tool_cli_contract.json` still describes companion exit code 3 as a deferred destructive
-  confirmation, while the repository bootstrap implementation uses 3 for an unclassifiable
-  decision. Rewording that field rebinding the published contract bytes and the three manifests,
-  so it is left for a dedicated contract batch.
+  `tool_cli_contract.json` described companion exit code 3 as a deferred destructive
+  confirmation, which the repository bootstrap implementation never performed.
+- Close the second debt and the released-lineage gap it exposed. `tool_cli_contract.json` now
+  states what the companions actually do — `2` is an argparse usage error or a `BLOCK_*` refusal
+  raised before any remote mutation, `3` is a bootstrap failure whose decision could not be
+  classified — and `tool_skill_manifest.json` is re-pinned to the new contract bytes in the same
+  commit, so no CLI behaviour, flag, status or exit code changed. A new test extracts the
+  bootstrap classification from source and refuses any drift between implementation, contract text
+  and the boundary matrix.
+- Register the canonical Skill payload tree carried by the released `v1.3.0` line
+  (`9c05e5b2…`) in both released-lineage registries. Without it, `deploy.py install` and
+  `tool-skill-sync --activate-production` correctly refused to upgrade the actual installed
+  production tree as unknown drift, so the released lineage was self-blocking. The incoming
+  unreleased tree stays out of the registry, and so does the hand-enriched pre-migration tree,
+  which is now asserted absent. Two new tests pin the registry to exactly the tagged release
+  trees plus the pre-tag line, and drive the real upgrade from a live tree materialized from the
+  `v1.3.0` tag: it installs cleanly, while hand drift on top of that same released tree still
+  fails closed with per-file diagnostics and zero mutation.
+- Do not migrate the retirement adapter onto upstream's `branch-retirement-verify` yet, and record
+  why in the boundary matrix: the controller reachable from this environment does not expose the
+  verb, the in-flight upstream generation promotes that surface to contract v3 and adds a fifth
+  blocker while still advertising verify version 1 and never exposing its contract generation,
+  the verdict API takes the repository lock in shared mode after Git Finalizer already holds it
+  exclusively, and no controller-free verdict exists for the documented independent path. Those
+  four conditions are the precise preconditions for the switch; the digest mirror stays the
+  fail-closed authority, unchanged and unextended.
 - Public CLI, security, CAS, lock and receipt semantics are unchanged.
 
 ## 1.3.0

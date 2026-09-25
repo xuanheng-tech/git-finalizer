@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import subprocess
 import unittest
 
 from tooling import tool_skill_sync as sync
@@ -257,6 +258,98 @@ class ToolContractTests(unittest.TestCase):
             manifest = sync.read_json(manifest_path)
             with self.subTest(manifest=str(manifest_path.relative_to(ROOT))):
                 self.assertEqual(manifest["canonical_skill_sha256"], payload_digest)
+
+    @staticmethod
+    def load_deploy_module():
+        import importlib
+        import sys
+
+        skill_dir = ROOT / "skills" / "git-change-delivery"
+        sys.path.insert(0, str(skill_dir))
+        try:
+            return importlib.import_module("deploy")
+        finally:
+            sys.path.remove(str(skill_dir))
+
+    def _tagged_skill_tree(self, ref: str) -> str | None:
+        lines = []
+        for relative in sync.SKILL_PAYLOAD:
+            result = subprocess.run(
+                ["git", "show", f"{ref}:skills/git-change-delivery/{relative}"],
+                cwd=ROOT,
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                return None
+            digest = hashlib.sha256(result.stdout).hexdigest()
+            lines.append(f"{digest}  {relative}\n")
+        return hashlib.sha256("".join(lines).encode()).hexdigest()
+
+    def test_released_lineage_registry_is_exact(self) -> None:
+        deploy = self.load_deploy_module()
+        self.assertEqual(
+            set(sync.RELEASED_CANONICAL_SKILL_SHA256),
+            set(deploy.RELEASED_CANONICAL_SKILL_SHA256),
+        )
+        self.assertEqual(
+            set(sync.RELEASED_CANONICAL_SKILL_SHA256),
+            {
+                # Pre-tag canonical line of the first shipped 1.0 toolchain.
+                "ff6d5bea2807b2c884c2ec5bee441e5fe8060abd9d03c0520c57ce39fe37adb5",
+                "3c8679b6cfd6578da41007feeea43e7ff83e8152e3daea9ab9154055642a92e2",
+                "7b85ec9da739bd60f76736ae6352e642dbf880bbd089058cce4cf7a9c0b5c665",
+                "9c05e5b279731a37b3ce15e2fbda7ae9962f81355cbafb86fa410f28ec19f527",
+            },
+        )
+        incoming = sync.tree_sha256(
+            ROOT / "skills" / "git-change-delivery", sync.SKILL_PAYLOAD
+        )
+        self.assertNotIn(
+            incoming, sync.RELEASED_CANONICAL_SKILL_SHA256
+        )
+        # The hand-enriched production tree captured during migration stays
+        # untrusted on purpose: it was never a released canonical payload.
+        self.assertNotIn(
+            "c930b3564e5fbdd8ea9a1857eef9e5d1d7c04a2b02cd8ee2f0e95f2e12a3bc90",
+            sync.RELEASED_CANONICAL_SKILL_SHA256,
+        )
+
+    def test_every_tagged_canonical_line_is_registered(self) -> None:
+        trees = {}
+        for ref in ("v1.1.0", "v1.1.1", "v1.2.0", "v1.3.0"):
+            tree = self._tagged_skill_tree(ref)
+            if tree is None:
+                self.skipTest(f"{ref} is not present in this checkout")
+            trees[ref] = tree
+        self.assertEqual(
+            {*trees.values(), "ff6d5bea2807b2c884c2ec5bee441e5fe8060abd9d03c0520c57ce39fe37adb5"},
+            set(sync.RELEASED_CANONICAL_SKILL_SHA256),
+        )
+
+    def test_exit_code_contract_matches_companion_classification(self) -> None:
+        contract = json.loads(
+            (ROOT / "tool_cli_contract.json").read_text(encoding="utf-8")
+        )
+        exit_codes = contract["exit_codes"]
+        bootstrap = (
+            ROOT / "git-finalize-repo-bootstrap.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'return (2 if decision.startswith("BLOCK_") else 3), receipt', bootstrap
+        )
+        self.assertIn("usage error", exit_codes["2"])
+        self.assertIn("repo_plan", exit_codes["2"])
+        self.assertIn("could not be classified", exit_codes["3"])
+        self.assertNotIn("integration_candidate_publish", exit_codes["3"])
+        self.assertNotIn("confirmation", json.dumps(exit_codes, ensure_ascii=False))
+        boundaries = (
+            ROOT / "docs" / "integration-boundaries.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("决策无法归类", boundaries)
+        self.assertNotIn(
+            "destructive confirmation condition”描述与", boundaries
+        )
 
     def test_promotion_rule_and_glossary_are_documented(self) -> None:
         doc = (ROOT / "docs" / "tool-skill-sync.md").read_text(encoding="utf-8")

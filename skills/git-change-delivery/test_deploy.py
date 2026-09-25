@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import subprocess
 import tempfile
 import unittest
 
@@ -80,6 +81,80 @@ class SkillDeploymentTest(unittest.TestCase):
         target = self.compatibility_live / "SKILL.md"
         target.write_bytes((self.compatibility_source / "SKILL.md").read_bytes())
         target.chmod(0o600)
+
+    def materialize_released_live(self, ref: str) -> bool:
+        """Populate the live tree with the payload a released tag actually carried."""
+        repository = VERSIONED_SOURCE.parents[1]
+        blobs = {}
+        for name in deploy.MANAGED_FILES:
+            result = subprocess.run(
+                ["git", "show", f"{ref}:skills/git-change-delivery/{name}"],
+                cwd=repository,
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                return False
+            blobs[name] = result.stdout
+        self.live.mkdir(mode=0o700)
+        (self.live / "references").mkdir(mode=0o700)
+        for name, content in blobs.items():
+            target = self.live / name
+            target.parent.mkdir(mode=0o700, exist_ok=True)
+            target.write_bytes(content)
+            target.chmod(0o600)
+        self.compatibility_live.mkdir(mode=0o700)
+        shim = self.compatibility_live / "SKILL.md"
+        shim.write_bytes((self.compatibility_source / "SKILL.md").read_bytes())
+        shim.chmod(0o600)
+        return True
+
+    def test_install_upgrades_from_the_released_production_lineage(self) -> None:
+        if not self.materialize_released_live("v1.3.0"):
+            self.skipTest("the released v1.3.0 Skill tree is absent here")
+        live_tree = deploy.payload_tree_digest(self.live)
+        self.assertEqual(
+            live_tree,
+            "9c05e5b279731a37b3ce15e2fbda7ae9962f81355cbafb86fa410f28ec19f527",
+        )
+        self.assertIn(live_tree, deploy.RELEASED_CANONICAL_SKILL_SHA256)
+        source_tree = deploy.payload_tree_digest(self.source)
+        self.assertNotEqual(live_tree, source_tree)
+
+        status, stdout, stderr = self.run_main("install")
+
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(stderr, "")
+        self.assertEqual(deploy.payload_tree_digest(self.live), source_tree)
+        self.assertTrue(
+            any(line.startswith("installed ") for line in stdout.splitlines()),
+            stdout,
+        )
+
+    def test_install_refuses_hand_drift_on_top_of_released_lineage(self) -> None:
+        if not self.materialize_released_live("v1.3.0"):
+            self.skipTest("the released v1.3.0 Skill tree is absent here")
+        hand_edit = self.live / "SKILL.md"
+        hand_edit.write_bytes(hand_edit.read_bytes() + b"\nlocally added policy\n")
+        before = {
+            name: deploy.sha256(self.live / name)
+            for name in deploy.MANAGED_FILES
+        }
+
+        status, stdout, stderr = self.run_main("install")
+
+        self.assertEqual(status, 2, stdout)
+        self.assertIn("unknown content drift", stderr)
+        self.assertNotIn(
+            deploy.payload_tree_digest(self.live),
+            deploy.RELEASED_CANONICAL_SKILL_SHA256,
+        )
+        after = {
+            name: deploy.sha256(self.live / name)
+            for name in deploy.MANAGED_FILES
+        }
+        self.assertEqual(after, before)
+
 
     def test_check_reports_matching_payload_hashes_and_permissions(self) -> None:
         self.populate_live()

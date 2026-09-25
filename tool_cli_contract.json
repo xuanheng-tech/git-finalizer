@@ -449,8 +449,8 @@
   "exit_codes": {
     "0": "success or verification passed",
     "1": "blocked, failed verification, or Finalizer preflight refusal",
-    "2": "argument or usage error and companion pre-execution refusal on exec-forwarded commands (repo_plan, repo_ensure, integration_candidate_publish)",
-    "3": "repo_ensure deferred because the destructive confirmation condition was not met",
+    "2": "argument or usage error of an exec-forwarded companion, or a repository bootstrap refusal raised before any remote mutation (repo_plan, repo_ensure)",
+    "3": "repository bootstrap failure whose decision could not be classified, reported as status=failed (repo_plan, repo_ensure)",
     "scope": "bash-owned commands use only 0 and 1; 2 and 3 exist solely on exec-forwarded companion commands"
   },
   "flags": {

@@ -44,7 +44,7 @@
       "git-finalize"
     ]
   },
-  "public_cli_contract_sha256": "52fdd25f18da81fe7ab852597f7571d5059caec9425e595897a8b09e6bd45d72",
+  "public_cli_contract_sha256": "862b884d07e789b9e41bc057c11c40c3910648e998382cddae39ddf4628fc6ea",
   "schema_version": 2,
   "skill_contract_version": 2,
   "tool_commit": "@release",

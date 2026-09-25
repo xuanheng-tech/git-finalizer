@@ -5,10 +5,12 @@ Boundary: this verifier consumes only the controller's public retirement
 contract (persisted plan identity, capability attestation via
 `capabilities --json`, and receipt paths). The state-digest recomputation
 below is a transitional legacy-compatibility mirror of the frozen v1 layout:
-upstream has since published that recipe together with a read-only
+upstream has published that recipe together with a read-only
 `branch-retirement-verify` verdict API and forbids consumers from
-recomputing it, so this mirror is recorded debt with a named convergence
-path, and it must not absorb new controller governance logic.
+recomputing it, so this mirror is recorded debt. That API is not yet a frozen
+or parity-tested contract and requires the controller executable, so this
+mirror stays the fail-closed authority where no controller is installed; it
+must not absorb new controller governance logic.
 """
 
 from __future__ import annotations

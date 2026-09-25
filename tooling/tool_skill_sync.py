@@ -52,6 +52,9 @@ RELEASED_CANONICAL_SKILL_SHA256 = frozenset(
         "3c8679b6cfd6578da41007feeea43e7ff83e8152e3daea9ab9154055642a92e2",
         # Canonical payload carried by the merged live-policy release.
         "7b85ec9da739bd60f76736ae6352e642dbf880bbd089058cce4cf7a9c0b5c665",
+        # Canonical payload carried by the handoff-documentation release, which
+        # is also the installed production tree this batch upgrades from.
+        "9c05e5b279731a37b3ce15e2fbda7ae9962f81355cbafb86fa410f28ec19f527",
     }
 )
 
