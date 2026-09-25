@@ -244,6 +244,23 @@ Retirement runs additionally report `mode_result.result` with the uppercase verd
 `ALREADY_ABSENT_VERIFIED`, `RETIREMENT_PREFLIGHT_PASSED`, `RETIREMENT_BLOCKED` and
 `REMOTE_DELETE_UNVERIFIED`.
 
+### Documented asymmetry: nothing to stage
+
+The same underlying condition, "the requested explicit paths contain no staged change", is
+classified differently by mode. This is released behaviour (`1.3.0` and `1.4.0`) and is
+`tests/test_agent_contract.py`-pinned, so an agent can rely on it:
+
+| Mode | `status` | `final_phase` | `next_action` |
+| --- | --- | --- | --- |
+| `--mode verify-only` | `blocked` | `local_validation` | `resolve_blocker_and_retry` |
+| `--mode commit-only` | `failed` | `staging` | `inspect_failure` |
+| default (commit + publish) | `failed` | `staging` | `inspect_failure` |
+
+In every case `commit.created` is `false`, `push.executed` is `false`, and no repository state was
+written: the reason text is identical. `failed` here means "the write stage could not start", not
+"the repository is broken"; do not retry with force options, and do not treat it as publication
+failure. A future classification batch may normalise this to `blocked`; until then, read the table.
+
 ## Interpretation rules for agents
 
 1. `exit_code` and `status` are authoritative for the run; the process exit status equals

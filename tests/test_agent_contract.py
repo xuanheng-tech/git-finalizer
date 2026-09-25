@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
 import re
 from pathlib import Path
 import unittest
@@ -16,6 +19,93 @@ def literals(text: str, variable: str) -> set[str]:
 
 
 class AgentContractTests(unittest.TestCase):
+    def scratch_repository(self, temporary: Path) -> Path:
+        import subprocess
+
+        repository = temporary / "repo"
+        remote = temporary / "remote.git"
+        home = temporary / "home"
+        state = temporary / "state"
+        for path in (repository, home, state):
+            path.mkdir(parents=True, exist_ok=True)
+        environment = {
+            "HOME": str(home),
+            "XDG_STATE_HOME": str(state),
+            "GIT_CONFIG_GLOBAL": str(temporary / "gitconfig"),
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "PATH": os.defpath + ":/usr/bin:/bin",
+            "LANG": "C.UTF-8",
+        }
+
+        def git(*arguments: str) -> None:
+            subprocess.run(
+                ["git", *arguments], cwd=repository, env=environment, check=True,
+                capture_output=True,
+            )
+
+        subprocess.run(["git", "init", "-q", "--bare", "--initial-branch=main", str(remote)],
+                       env=environment, check=True, capture_output=True)
+        git("init", "-q", "--initial-branch=main", str(repository))
+        git("config", "user.name", "contract test")
+        git("config", "user.email", "contract@example.invalid")
+        (repository / "f.txt").write_text("a\n", encoding="utf-8")
+        git("add", "--", "f.txt")
+        git("commit", "-qm", "seed")
+        git("remote", "add", "origin", str(remote))
+        git("push", "-q", "--set-upstream", "origin", "main")
+        return repository
+
+    def run_summary(self, repository: Path, *arguments: str) -> dict[str, object]:
+        import subprocess
+
+        environment = {
+            "HOME": str(repository.parent / "home"),
+            "XDG_STATE_HOME": str(repository.parent / "state"),
+            "GIT_CONFIG_GLOBAL": str(repository.parent / "gitconfig"),
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "PATH": os.defpath + ":/usr/bin:/bin",
+            "LANG": "C.UTF-8",
+        }
+        result = subprocess.run(
+            [str(ROOT / "git-finalize"), "--summary", *arguments, "--repo", str(repository),
+             "--", "f.txt"],
+            capture_output=True, text=True, env=environment, check=False,
+        )
+        payload = result.stdout.strip() or result.stderr.strip()
+        return json.loads(payload.splitlines()[-1])
+
+    def test_nothing_to_stage_classification_is_documented(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="gf-agent-contract-") as temporary:
+            repository = self.scratch_repository(Path(temporary))
+            verify = self.run_summary(repository, "--mode", "verify-only")
+            commit = self.run_summary(
+                repository, "--mode", "commit-only", "--message", "docs: nothing to stage"
+            )
+            normal = self.run_summary(
+                repository, "--message", "docs: nothing to stage"
+            )
+        expected = {
+            "verify-only": ("blocked", "local_validation", "resolve_blocker_and_retry"),
+            "commit-only": ("failed", "staging", "inspect_failure"),
+            "normal": ("failed", "staging", "inspect_failure"),
+        }
+        observed = {
+            "verify-only": (verify["status"], verify["final_phase"], verify["next_action"]),
+            "commit-only": (commit["status"], commit["final_phase"], commit["next_action"]),
+            "normal": (normal["status"], normal["final_phase"], normal["next_action"]),
+        }
+        self.assertEqual(observed, expected)
+        for value in expected.values():
+            self.assertIn(f"`{value[0]}`", self.doc)
+            self.assertIn(f"`{value[1]}`", self.doc)
+        self.assertIn("nothing to stage", self.doc)
+        for run, label in ((verify, "verify"), (commit, "commit"), (normal, "normal")):
+            self.assertIs(run["commit"]["created"], False, label)
+            self.assertIs(run["push"]["executed"], False, label)
+
+
     def setUp(self) -> None:
         self.source = FINALIZER.read_text(encoding="utf-8")
         self.doc = DOC.read_text(encoding="utf-8")
