@@ -119,10 +119,22 @@ Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released
   single-site rule, the per-literal confinement ledger, the Context Loader non-coupling, the
   agreement between documented blockers and the implementing source, the mode-independent
   top-level `--summary` key set together with the per-mode nested result shapes, and that the
-  snapshot evidence adapter resolves only the state root it is given. The Worktree Controller
-  state-digest recipe remains isolated as the documented legacy compatibility mirror with an
-  explicit version boundary; no governance semantics move into it. Public CLI, security, CAS,
-  lock and receipt semantics are unchanged.
+  snapshot evidence adapter resolves only the state root it is given. The freeze is extracted
+  from the source rather than restated: every `summary_status` and `summary_next_action`
+  literal and every conditionally added top-level key must now appear in the matrix, and the
+  exec-forwarded companions are pinned as emitting their own receipts (the bootstrap receipt
+  and the seven-key candidate verdict) instead of the summary envelope. The ledger scope is the
+  production code surface enumerated from the filesystem (root CLI, root-level companions and
+  `tooling/`), so a new untracked companion cannot escape it.
+- Record two honest debts surfaced by that audit instead of silently absorbing them: the Worktree
+  Controller authority-state-digest mirror in the retirement verifier is now a named transitional
+  deviation, because upstream published that recipe together with a read-only
+  `branch-retirement-verify` verdict API and forbids consumers from recomputing it; and
+  `tool_cli_contract.json` still describes companion exit code 3 as a deferred destructive
+  confirmation, while the repository bootstrap implementation uses 3 for an unclassifiable
+  decision. Rewording that field rebinding the published contract bytes and the three manifests,
+  so it is left for a dedicated contract batch.
+- Public CLI, security, CAS, lock and receipt semantics are unchanged.
 
 ## 1.3.0
 

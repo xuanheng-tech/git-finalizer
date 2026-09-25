@@ -4,9 +4,11 @@
 Boundary: this verifier consumes only the controller's public retirement
 contract (persisted plan identity, capability attestation via
 `capabilities --json`, and receipt paths). The state-digest recomputation
-below is a LEGACY COMPATIBILITY independent-verification path mirroring the
-frozen v1 layout while the digest recipe itself is not part of any published
-contract; it must not absorb new controller governance logic.
+below is a transitional legacy-compatibility mirror of the frozen v1 layout:
+upstream has since published that recipe together with a read-only
+`branch-retirement-verify` verdict API and forbids consumers from
+recomputing it, so this mirror is recorded debt with a named convergence
+path, and it must not absorb new controller governance logic.
 """
 
 from __future__ import annotations
