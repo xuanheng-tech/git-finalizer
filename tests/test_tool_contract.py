@@ -12,6 +12,17 @@ from tooling import tool_skill_sync as sync
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Every canonical Skill payload tree that a released line shipped, paired
+# with the revision that carries it. The registry gate and the history
+# cross-check share this single list.
+RELEASED_CANONICAL_LINEAGE = (
+    ("c640bb1", "ff6d5bea2807b2c884c2ec5bee441e5fe8060abd9d03c0520c57ce39fe37adb5"),
+    ("v1.1.0", "3c8679b6cfd6578da41007feeea43e7ff83e8152e3daea9ab9154055642a92e2"),
+    ("v1.1.1", "3c8679b6cfd6578da41007feeea43e7ff83e8152e3daea9ab9154055642a92e2"),
+    ("v1.2.0", "7b85ec9da739bd60f76736ae6352e642dbf880bbd089058cce4cf7a9c0b5c665"),
+    ("v1.3.0", "9c05e5b279731a37b3ce15e2fbda7ae9962f81355cbafb86fa410f28ec19f527"),
+)
+
 
 class ToolContractTests(unittest.TestCase):
     def test_finalizer_contract_manifest_and_source_agree(self) -> None:
@@ -288,26 +299,16 @@ class ToolContractTests(unittest.TestCase):
 
     def test_released_lineage_registry_is_exact(self) -> None:
         deploy = self.load_deploy_module()
+        expected = {digest for _, digest in RELEASED_CANONICAL_LINEAGE}
+        self.assertEqual(set(sync.RELEASED_CANONICAL_SKILL_SHA256), expected)
         self.assertEqual(
             set(sync.RELEASED_CANONICAL_SKILL_SHA256),
             set(deploy.RELEASED_CANONICAL_SKILL_SHA256),
         )
-        self.assertEqual(
-            set(sync.RELEASED_CANONICAL_SKILL_SHA256),
-            {
-                # Pre-tag canonical line of the first shipped 1.0 toolchain.
-                "ff6d5bea2807b2c884c2ec5bee441e5fe8060abd9d03c0520c57ce39fe37adb5",
-                "3c8679b6cfd6578da41007feeea43e7ff83e8152e3daea9ab9154055642a92e2",
-                "7b85ec9da739bd60f76736ae6352e642dbf880bbd089058cce4cf7a9c0b5c665",
-                "9c05e5b279731a37b3ce15e2fbda7ae9962f81355cbafb86fa410f28ec19f527",
-            },
-        )
         incoming = sync.tree_sha256(
             ROOT / "skills" / "git-change-delivery", sync.SKILL_PAYLOAD
         )
-        self.assertNotIn(
-            incoming, sync.RELEASED_CANONICAL_SKILL_SHA256
-        )
+        self.assertNotIn(incoming, sync.RELEASED_CANONICAL_SKILL_SHA256)
         # The hand-enriched production tree captured during migration stays
         # untrusted on purpose: it was never a released canonical payload.
         self.assertNotIn(
@@ -315,17 +316,14 @@ class ToolContractTests(unittest.TestCase):
             sync.RELEASED_CANONICAL_SKILL_SHA256,
         )
 
-    def test_every_tagged_canonical_line_is_registered(self) -> None:
-        trees = {}
-        for ref in ("v1.1.0", "v1.1.1", "v1.2.0", "v1.3.0"):
-            tree = self._tagged_skill_tree(ref)
-            if tree is None:
-                self.skipTest(f"{ref} is not present in this checkout")
-            trees[ref] = tree
-        self.assertEqual(
-            {*trees.values(), "ff6d5bea2807b2c884c2ec5bee441e5fe8060abd9d03c0520c57ce39fe37adb5"},
-            set(sync.RELEASED_CANONICAL_SKILL_SHA256),
-        )
+    def test_registry_entries_trace_to_released_history(self) -> None:
+        for ref, digest in RELEASED_CANONICAL_LINEAGE:
+            with self.subTest(ref=ref):
+                tree = self._tagged_skill_tree(ref)
+                if tree is None:
+                    self.skipTest(f"{ref} is absent in this checkout")
+                self.assertEqual(tree, digest)
+                self.assertIn(digest, sync.RELEASED_CANONICAL_SKILL_SHA256)
 
     def test_exit_code_contract_matches_companion_classification(self) -> None:
         contract = json.loads(
@@ -343,6 +341,11 @@ class ToolContractTests(unittest.TestCase):
         self.assertIn("could not be classified", exit_codes["3"])
         self.assertNotIn("integration_candidate_publish", exit_codes["3"])
         self.assertNotIn("confirmation", json.dumps(exit_codes, ensure_ascii=False))
+        self.assertNotIn("input(", bootstrap)
+        self.assertNotIn("sys.exit(1)", bootstrap)
+        self.assertNotIn("SystemExit(1)", bootstrap)
+        self.assertIn("never returns 1", exit_codes["scope"])
+        self.assertIn("never returns 3", exit_codes["scope"])
         boundaries = (
             ROOT / "docs" / "integration-boundaries.md"
         ).read_text(encoding="utf-8")

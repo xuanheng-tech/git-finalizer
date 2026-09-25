@@ -149,13 +149,21 @@ Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released
   `v1.3.0` tag: it installs cleanly, while hand drift on top of that same released tree still
   fails closed with per-file diagnostics and zero mutation.
 - Do not migrate the retirement adapter onto upstream's `branch-retirement-verify` yet, and record
-  why in the boundary matrix: the controller reachable from this environment does not expose the
-  verb, the in-flight upstream generation promotes that surface to contract v3 and adds a fifth
-  blocker while still advertising verify version 1 and never exposing its contract generation,
-  the verdict API takes the repository lock in shared mode after Git Finalizer already holds it
-  exclusively, and no controller-free verdict exists for the documented independent path. Those
-  four conditions are the precise preconditions for the switch; the digest mirror stays the
-  fail-closed authority, unchanged and unextended.
+  why in the boundary matrix: the controller this environment can actually reach predates the verb
+  and does not advertise it, the same-day in-flight upstream experiment widened the verdict blocker
+  set while still advertising verify version 1, and no controller-free verdict exists for the
+  documented independent path. The verb is also not a drop-in replacement: it observes state before
+  the lock and never compares the plan's identity fields against caller intent, so the convergence
+  shape is a pre-lock `verify` observation plus an in-lock plan-field recheck, not the removal of
+  independent verification. The earlier guess that its shared lock would deadlock against the
+  caller's exclusive `flock` is wrong — advisory locks do not conflict — and is not part of the
+  reasoning. Those conditions are the precise preconditions for the switch; the digest mirror stays
+  the fail-closed authority, unchanged and unextended.
+- State the per-surface exit-code mapping in the published contract: repository bootstrap answers
+  with 0, 2 or 3 and never returns 1, integration candidate publication answers with 0, 1 or an
+  argparse usage 2 and never returns 3, and the bootstrap companion has no interactive confirmation
+  gate at all, which the previous wording implied. Tests derive all of that from the companion
+  sources, including the absence of any stdin read.
 - Public CLI, security, CAS, lock and receipt semantics are unchanged.
 
 ## 1.3.0

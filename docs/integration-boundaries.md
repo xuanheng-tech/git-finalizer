@@ -23,23 +23,29 @@ Git Finalizer（GF）核心只依赖 bash、Git 与 `/usr/bin/python3`。所有�
   `state_digest` 段把该 recipe 发布为 contract v2 的一部分，并要求外部消费者“只从
   `branch-retirement-verify` 取得判定，不得复制 canonicalization、digest recipe 或 blocker 清单”。
   因此 GF 的镜像是**被点名的过渡性偏差（技术债务）**，不是中立的防御性设计。
-- 收敛目标明确但**尚不可正式消费**：公开只读接口
+- 收敛目标明确但**当前不可替换**：公开只读接口
   `worktree-controller branch-retirement-verify --repo <path> --plan-id <sha256> --operation {local|remote} --json`
-  （result contract `branch-retirement/v2`，存在性由 `decision.branch_retirement_verify_version` 宣告）
-  只存在于上游 `main`/tagged v1.6.0 一代。GF 本批次**不**切换，四条互相独立的精确原因：
-  1. GF 实际调用的 production controller 入口仍是上一代（`--version` 无该动词，
-     `capabilities` 不宣告 `branch_retirement_verify_version`），切换会立即破坏真实 controller E2E；
-  2. 上游在途改动把该面升为 contract v3 / storage layout v2、新增三个动词并向 verify 的
-     `blockers` 注入第五个值，却仍宣告 `branch_retirement_verify_version: 1`，且
-     `contract_version` 不经 `capabilities` 暴露——按 capability 版本 pin 的消费者会静默收到新语义；
-  3. verify 以 **shared** 方式自取 `repo.lock`，而 GF 的 bash adapter 先持有 **exclusive** `flock`
-     再调用伴生；切换必须把 verify 移到取锁之前，否则自锁；
-  4. verify 需要 controller 可执行文件，而 GF 的无二进制独立核验路径没有公开替代物（签发 plan 中
-     `branch_retirement_trust_mode` 恒为 `legacy`），切换即取消该场景的 fail-closed 保障。
-  前置条件因此是：上游契约代次冻结并冻结该 blocker 集合、`contract_version` 可被探测、production
-  controller 实际激活该代、且给出无 controller 场景的权威判定入口或明确放弃该场景。
+  （read_only，result contract `branch-retirement/v2`，存在性由
+  `decision.branch_retirement_verify_version` 宣告，四种判定 `VALID/PLAN_ABSENT/STATE_STALE/PLAN_MALFORMED`
+  一律以 rc 0 返回，只有 `ControllerError` 返回 2）只存在于上游 `main` 一代。GF 本批次**不**切换，
+  三条可复核的原因：
+  1. 本环境实际可调用的 production controller 入口仍是上一代：`--version` 无该动词，
+     `capabilities` 不宣告 `branch_retirement_verify_version`；切换会立即破坏真实 controller E2E；
+     上游同日的在途实验已把该面升到 contract v3 并向 verify 的 `blockers` 注入第五个值，却仍宣告
+     verify version 1，说明该集合当日即可移动而版本号不变。
+  2. 它**不是** digest 镜像的直接替代品：`verify` 在拿锁之前做 TOCTOU 观察，且不复核 plan 的八个
+     identity 字段与调用方 CLI 意图；GF 在 exclusive 锁内仍需那次复核。因此收敛形态是“锁前用
+     `verify` 观察替代 `capabilities` 探测，锁内改用 `branch-retirement-plan --json` 返回的完整 plan
+     做字段复核”，而不是“删除独立核验”——`verify` 的锁外观察无法证明锁内状态未变。
+  3. 上游没有提供无 controller 场景的等价判定：`verify` 需要可执行文件，而 GF 的独立核验路径在
+     controller 缺席时必须继续 fail closed（签发 plan 中 `branch_retirement_trust_mode` 恒为
+     `legacy`）。
+  切换的前置条件因此是：production controller 实际激活带该动词的一代、上游冻结该 blocker 集合、
+  并且明确无 controller 场景的权威判定入口或正式放弃该场景；届时 GF 的收敛形态是“锁前
+  `verify` 观察 + 锁内 plan 字段复核”，而不是“删除独立核验”。
 - 因此 digest 镜像继续承担无 controller 环境的 fail-closed 核验，位点不变、不扩展；它仍是被上游
-  点名的过渡性偏差，而不是中立的防御性设计。
+  点名的过渡性偏差（“不得复制 canonicalization、digest recipe 或 blocker 清单”），而不是中立的
+  防御性设计。
 - 版本边界由两处共同承担：`decision.branch_retirement_version` 必须等于 plan 的
   `schema_version`（探测失败或不匹配即 fail closed；可执行文件缺席时显式跳过并走独立核验），以及
   plan 文件名空间的 `worktree-controller/v1` 常量。legacy `codex-worktree` namespace 只用于产生

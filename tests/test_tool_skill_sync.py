@@ -567,6 +567,9 @@ class SkillSyncTests(unittest.TestCase):
             )
 
         self.assertEqual(self._current("git-finalizer"), previous)
+        self.assertFalse(
+            (self.install_root / "tools" / "git-finalizer" / "PREVIOUS").exists()
+        )
         self.assertEqual(sync.sha256_file(hand_edit), hand_digest)
 
 
