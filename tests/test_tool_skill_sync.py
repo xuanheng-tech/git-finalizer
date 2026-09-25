@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -450,6 +451,124 @@ class SkillSyncTests(unittest.TestCase):
         )
         self.assertEqual(self._current("git-finalizer"), current)
         self.assertFalse((self.bin_dir / "legacy-finalize").exists())
+
+    def _bump_finalizer_source_release(self, version: str) -> None:
+        repo = self.sources_root / "git-finalizer"
+        executable = repo / "git-finalize"
+        executable.write_text(
+            re.sub(
+                r'readonly VERSION="[0-9.]+"',
+                f'readonly VERSION="{version}"',
+                executable.read_text(encoding="utf-8"),
+            ),
+            encoding="utf-8",
+        )
+        contract_path = repo / "tool_cli_contract.json"
+        contract = sync.read_json(contract_path)
+        contract["tool_version"] = version
+        write_json(contract_path, contract)
+        manifest_path = repo / "tool_skill_manifest.json"
+        manifest = sync.read_json(manifest_path)
+        manifest["tool_version"] = version
+        manifest["public_cli_contract_sha256"] = sync.sha256_file(contract_path)
+        write_json(manifest_path, manifest)
+
+    def _overlay_released_production_tree(self) -> bool:
+        """Put the payload the released v1.3 tag carried into the live Skill."""
+        repository = Path(sync.__file__).resolve().parents[1]
+        installed = self.agents_root / "skills" / sync.SKILL_NAME
+        blobs = {}
+        for relative in sync.SKILL_PAYLOAD:
+            result = subprocess.run(
+                [
+                    "git",
+                    "show",
+                    f"v1.3.0:skills/{sync.SKILL_NAME}/{relative}",
+                ],
+                cwd=repository,
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                return False
+            blobs[relative] = result.stdout
+        for relative, content in blobs.items():
+            target = installed / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        return True
+
+    def test_activation_upgrades_a_registered_released_production_tree(self) -> None:
+        self._install_production("git-finalizer")
+        if not self._overlay_released_production_tree():
+            self.skipTest("the released v1.3.0 Skill tree is absent in this checkout")
+        installed = self.agents_root / "skills" / sync.SKILL_NAME
+        live_tree = sync.tree_sha256(installed, sync.SKILL_PAYLOAD)
+        self.assertEqual(
+            live_tree,
+            "9c05e5b279731a37b3ce15e2fbda7ae9962f81355cbafb86fa410f28ec19f527",
+        )
+        self.assertIn(live_tree, sync.RELEASED_CANONICAL_SKILL_SHA256)
+        previous = self._current("git-finalizer")
+        self._bump_finalizer_source_release("2.0.0")
+
+        result = sync.install(
+            self.sources,
+            "git-finalizer",
+            self.install_root,
+            allow_dirty_source=True,
+            activate_production=True,
+            agents_root=self.agents_root,
+            bin_dir=self.bin_dir,
+            hooks_dir=self.hooks_dir,
+        )
+
+        self.assertEqual(result["status"], "INSTALLED")
+        self.assertNotEqual(self._current("git-finalizer"), previous)
+        self.assertEqual(
+            sync.tree_sha256(
+                self.sources_root / "git-finalizer" / "skills" / sync.SKILL_NAME,
+                sync.SKILL_PAYLOAD,
+            ),
+            sync.tree_sha256(installed, sync.SKILL_PAYLOAD),
+        )
+        sync.verify_production_bundle(
+            self._current("git-finalizer"),
+            agents_root=self.agents_root,
+            bin_dir=self.bin_dir,
+            hooks_dir=self.hooks_dir,
+        )
+
+    def test_activation_refuses_hand_drift_on_a_released_production_tree(self) -> None:
+        self._install_production("git-finalizer")
+        if not self._overlay_released_production_tree():
+            self.skipTest("the released v1.3.0 Skill tree is absent in this checkout")
+        installed = self.agents_root / "skills" / sync.SKILL_NAME
+        hand_edit = installed / "SKILL.md"
+        hand_edit.write_bytes(hand_edit.read_bytes() + b"\nlocal policy\n")
+        hand_digest = sync.sha256_file(hand_edit)
+        self.assertNotIn(
+            sync.tree_sha256(installed, sync.SKILL_PAYLOAD),
+            sync.RELEASED_CANONICAL_SKILL_SHA256,
+        )
+        previous = self._current("git-finalizer")
+        self._bump_finalizer_source_release("2.0.0")
+
+        with self.assertRaisesRegex(sync.SyncError, "unknown content drift"):
+            sync.install(
+                self.sources,
+                "git-finalizer",
+                self.install_root,
+                allow_dirty_source=True,
+                activate_production=True,
+                agents_root=self.agents_root,
+                bin_dir=self.bin_dir,
+                hooks_dir=self.hooks_dir,
+            )
+
+        self.assertEqual(self._current("git-finalizer"), previous)
+        self.assertEqual(sync.sha256_file(hand_edit), hand_digest)
+
 
     def test_renamed_entrypoint_failure_keeps_previous_command_and_pointer(self) -> None:
         self._install_production("git-finalizer")
