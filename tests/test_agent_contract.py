@@ -1,0 +1,150 @@
+from __future__ import annotations
+
+import re
+from pathlib import Path
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DOC = ROOT / "docs" / "agent-contract.md"
+BOUNDARIES = ROOT / "docs" / "integration-boundaries.md"
+FINALIZER = ROOT / "git-finalize"
+
+
+def literals(text: str, variable: str) -> set[str]:
+    return set(re.findall(rf"\b{variable}='([A-Za-z_-]+)'", text))
+
+
+class AgentContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.source = FINALIZER.read_text(encoding="utf-8")
+        self.doc = DOC.read_text(encoding="utf-8")
+
+    def documented(self, value: str) -> bool:
+        return f"`{value}`" in self.doc
+
+    def test_status_vocabulary_is_documented(self) -> None:
+        values = literals(self.source, "summary_status")
+        self.assertEqual(values, {"success", "blocked", "failed"})
+        for value in values:
+            self.assertTrue(
+                self.documented(value), f"undocumented status value: {value}"
+            )
+
+    def test_remote_conclusion_vocabulary_is_documented(self) -> None:
+        values = literals(self.source, "summary_remote_conclusion")
+        self.assertGreaterEqual(len(values), 25)
+        for value in values:
+            self.assertTrue(
+                self.documented(value),
+                f"undocumented remote_conclusion value: {value}",
+            )
+
+    def test_stage_verdict_vocabulary_is_documented(self) -> None:
+        for variable, minimum in (
+            ("summary_post_verify", 5),
+            ("summary_commit_result", 3),
+            ("summary_mode_state", 8),
+        ):
+            values = literals(self.source, variable)
+            self.assertGreaterEqual(
+                len(values), minimum, f"{variable} extraction collapsed"
+            )
+            for value in values:
+                self.assertTrue(
+                    self.documented(value),
+                    f"undocumented {variable} value: {value}",
+                )
+
+    def test_retirement_verdict_vocabulary_is_documented(self) -> None:
+        values = literals(self.source, "summary_retirement_result")
+        self.assertGreaterEqual(len(values), 5)
+        for value in values:
+            self.assertTrue(
+                self.documented(value),
+                f"undocumented retirement verdict: {value}",
+            )
+
+    def test_final_phase_vocabulary_is_documented(self) -> None:
+        values = literals(self.source, "summary_phase")
+        self.assertGreaterEqual(len(values), 10)
+        for value in values:
+            self.assertTrue(
+                self.documented(value), f"undocumented final_phase value: {value}"
+            )
+
+    def test_next_action_vocabulary_is_documented(self) -> None:
+        values = {
+            value
+            for value in literals(self.source, "summary_next_action")
+            if value
+        }
+        self.assertGreaterEqual(len(values), 14)
+        for value in values:
+            self.assertTrue(
+                self.documented(value), f"undocumented next_action value: {value}"
+            )
+
+    def test_mode_vocabulary_is_documented(self) -> None:
+        values = literals(self.source, "summary_mode")
+        self.assertGreaterEqual(len(values), 11)
+        self.assertIn("commit-only", values)
+        for value in values:
+            self.assertTrue(
+                self.documented(value), f"undocumented mode value: {value}"
+            )
+
+    def test_push_result_vocabulary_is_documented(self) -> None:
+        values = {
+            value
+            for value in re.findall(r"\bsummary_push_result='([A-Za-z_-]+)'", self.source)
+        } | {
+            f"skipped_by_{reason}"
+            for reason in re.findall(r"\bskip_reason='([a-z_]+)'", self.source)
+        }
+        self.assertIn("succeeded", values)
+        self.assertIn("uncertain", values)
+        self.assertIn("confirmed_after_uncertain", values)
+        self.assertGreaterEqual(len(values), 7)
+        for value in values:
+            self.assertTrue(
+                self.documented(value), f"undocumented push.result value: {value}"
+            )
+
+    def test_envelope_key_list_matches_the_boundary_matrix(self) -> None:
+        def listed(text: str, marker: str) -> list[str]:
+            position = text.index(marker)
+            tail = text[position:]
+            match = re.search(r"allocation_id[\s\S]{0,800}?worktree_path", tail)
+            self.assertIsNotNone(match, f"no envelope key list after {marker!r}")
+            assert match is not None
+            keys = re.findall(r"[a-z_]+", match.group(0))
+            self.assertEqual(keys[0], "allocation_id")
+            self.assertEqual(keys[-1], "worktree_path")
+            self.assertGreaterEqual(len(keys), 25, f"short key list after {marker!r}")
+            return keys
+
+        contract_keys = listed(self.doc, "Field set is mode-independent:")
+        matrix_keys = listed(BOUNDARIES.read_text(encoding="utf-8"), "顶层**固定**键集合为")
+        self.assertEqual(contract_keys, matrix_keys)
+        self.assertEqual(len(contract_keys), len(set(contract_keys)))
+
+    def test_conditional_keys_are_documented_in_both_places(self) -> None:
+        optional = set(
+            re.findall(r'^    result\["([a-z_]+)"\] = ', self.source, re.MULTILINE)
+        ) - {"mode_result"}
+        self.assertEqual(
+            optional, {"resume", "fixture_exceptions", "reviewed_sensitive_sources"}
+        )
+        matrix = BOUNDARIES.read_text(encoding="utf-8")
+        for key in optional:
+            self.assertIn(f"`{key}`", self.doc)
+            self.assertIn(f"`{key}`", matrix)
+
+    def test_readme_links_the_agent_contract(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("docs/agent-contract.md", readme)
+
+
+if __name__ == "__main__":
+    unittest.main()

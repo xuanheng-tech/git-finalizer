@@ -19,21 +19,18 @@ Git Finalizer（GF）核心只依赖 bash、Git 与 `/usr/bin/python3`。所有�
 ## 遗留兼容性知识与版本边界
 
 - Worktree Controller 的 authority state digest 重算只存在于 retirement plan verifier 内，并显式
-  标注为**遗留兼容独立核验路径**。上游已在 `worktree-controller/tool_cli_contract.json` 的
-  `state_digest` 段把该 recipe 发布为 contract v2 的一部分，并要求外部消费者“只从
-  `branch-retirement-verify` 取得判定，不得复制 canonicalization、digest recipe 或 blocker 清单”。
-  因此 GF 的镜像是**被点名的过渡性偏差（技术债务）**，不是中立的防御性设计。
+  标注为**遗留兼容独立核验路径**。上游契约已把该 recipe 纳入公开的消费规则，并要求外部消费者
+  “只从 `branch-retirement-verify` 取得判定，不得复制 canonicalization、digest recipe 或 blocker
+  清单”。因此 GF 的镜像是**被上游点名的过渡性偏差（技术债务）**，不是中立的防御性设计。
 - 收敛目标明确但**当前不可替换**：公开只读接口
   `worktree-controller branch-retirement-verify --repo <path> --plan-id <sha256> --operation {local|remote} --json`
-  （read_only，result contract `branch-retirement/v2`，存在性由
-  `decision.branch_retirement_verify_version` 宣告，四种判定 `VALID/PLAN_ABSENT/STATE_STALE/PLAN_MALFORMED`
-  一律以 rc 0 返回，只有 `ControllerError` 返回 2）只存在于上游 `main` 一代。GF 本批次**不**切换，
+  （read_only，判定 `VALID/PLAN_ABSENT/STATE_STALE/PLAN_MALFORMED` 一律以 rc 0 返回，只有
+  `ControllerError` 返回 2）目前只存在于上游源码仓库的开发代次。GF 本批次**不**切换，
   三条可复核的原因：
   1. 本环境实际可调用的 production controller 入口仍是上一代：`--version` 无该动词，
      `capabilities` 不宣告 `branch_retirement_verify_version`；切换会立即破坏真实 controller E2E；
-     上游同日的在途实验已把 `branch_retirement_contract.version` 升为 3、`storage_layout.version`
-     升为 2 并新增三个动词，而 `branch_retirement_verify_version` 仍为 1，说明该代语义当日即可移动
-     而版本宣告不变。
+     上游该面仍在演进（存储代次与执行授权类动词都在变动），而宣告给消费者的
+     `branch_retirement_verify_version` 不变，说明判定语义可以在版本号不动的前提下移动。
   2. 它**不是** digest 镜像的直接替代品：`verify` 在拿锁之前做 TOCTOU 观察，且不复核 plan 的八个
      identity 字段与调用方 CLI 意图；GF 在 exclusive 锁内仍需那次复核。因此收敛形态是“锁前用
      `verify` 观察替代 `capabilities` 探测，锁内改用 `branch-retirement-plan --json` 返回的完整 plan

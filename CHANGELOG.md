@@ -13,12 +13,53 @@ section is invented for it.
 
 ## Unreleased
 
-No pending unreleased changes are recorded. The bullets previously listed here described work
-already contained in the trees released as 1.1.0 and 1.1.1 (including the tool formerly named
-`codex-skill-sync`, renamed `tool-skill-sync` in 1.0.0 and shipped at its declared 2.0.0), and
-the tool-version numbers quoted in them (1.2.0/1.3.0/1.5.0) were pre-rename source versions of
-that same component. The authoritative per-version record remains the dated sections below; per
-the header rule this note does not backfill or rewrite those records.
+Open-source readiness work described below. The historical addendum underneath it stays verbatim for
+the record: those bullets describe work already shipped in the 1.1.0 and 1.1.1 trees, and the tool
+versions they quote (1.2.0/1.3.0/1.5.0) were pre-rename source versions of the component now shipped
+as `tool-skill-sync` 2.0.0. Per the header rule this note does not backfill or rewrite dated sections.
+
+- Open-source readiness batch. Added the Apache-2.0 `LICENSE` (shipped in the release package),
+  `SECURITY.md` recording the reporting channel and the refusal behaviours treated as security
+  properties, `CONTRIBUTING.md` with the contract-boundary rules and the hash-bound file table, and
+  `AGENTS.md` naming the literals the release preflight verifies.
+- Rewrote `README.md` for a reader with no prior context: positioning, requirements, installation from
+  the published tarball, a quick start, a mode table, the agent/JSON contract, the optional-integration
+  table (Worktree Controller, Snapshot Runner, Gitea repository bootstrap and Context Loader are each
+  optional), the security model and the standalone contract. The per-mode operating guide moved to
+  `docs/cli-guide.zh.md` with its content preserved, and the repository-private delivery-topology
+  runbook — another project's remote layout, legacy ref names and commit identifiers — was removed from
+  the published surface rather than relocated.
+- Published the Agent-facing machine-readable contract as `docs/agent-contract.md`: the envelope key
+  set, the three conditional keys, the serialization-failure shape, closed vocabularies for `status`,
+  `final_phase`, `next_action`, `mode` and `push.result`, the per-surface exit-code mapping, and real
+  captured success/blocked examples. `tests/test_agent_contract.py` extracts each vocabulary from the
+  implementation and fails when a value exists in code but not in the documentation, so an agent never
+  has to parse human logs to decide what happened.
+- Moved the release contract out of workflow heredocs into `scripts/release.py`
+  (`preflight`, `build`, `verify`, `selfcheck`) and pointed both the existing Gitea workflow and the new
+  GitHub workflow at it. The recipe now pins staged directory modes, so the build no longer depends on
+  the builder's umask; rebuilding the released tag with this implementation reproduces the published
+  `v1.4.0` artifact byte-for-byte under `umask` 022, 002 and 077. Preflight additionally requires a
+  `LICENSE`, binds every manifest to the shipped Skill payload, and refuses an unreadable artifact
+  instead of crashing. The package file set now also carries `LICENSE`, `SECURITY.md` and
+  `CONTRIBUTING.md`, and a test asserts that set.
+- Added `.github/workflows/ci.yml` and `.github/workflows/release.yml`, pinned to the same action
+  revisions and toolchain versions the Gitea workflows already use, so both hosts run one `just check`
+  gate and one build recipe. The GitHub release job re-downloads its own published assets and verifies
+  them against the recorded `SHA256SUMS.txt`, closing the gap where checksums were only self-declared.
+  No build-provenance attestation is claimed: the guarantee is a deterministic build with published
+  checksums verified after download.
+- Cleaned the published surface. `/home/hsd` now appears only inside immutable released CHANGELOG
+  sections; the shared Skill source locator is written repository-relative; the boundary matrix no
+  longer states another project's unpublished version generations; and the README no longer narrates
+  private hosting history. `.gitignore` grew to the sibling standard (build output, virtualenv, caches,
+  secret-shaped files, session and workspace-policy directories), a host-only workspace policy file that
+  no code path reads was untracked while remaining on disk, and a stray empty tracked file named `0600`
+  was removed.
+- Wired `shellcheck` into `just check`, so the bash entrypoint and every shell suite are linted by the
+  same gate CI runs. This batch does not bump the version: the next release preparation batch must
+  declare a new version, matching README declarations and a dated CHANGELOG section before any tag is
+  created.
 
 Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released trees):
 

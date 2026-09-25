@@ -3,6 +3,7 @@ default:
 
 check:
     bash tests/run.sh
+    shellcheck --exclude=SC2016 -- git-finalize tool-skill-sync tests/*.sh
     python3 -B -m unittest discover -s tests -p 'test_*.py'
     python3 -B skills/git-change-delivery/quick_validate.py skills/git-change-delivery
     python3 -B -m unittest discover -s skills/git-change-delivery -p 'test_*.py'

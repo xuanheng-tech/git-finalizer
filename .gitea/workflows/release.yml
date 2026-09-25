@@ -51,62 +51,12 @@ jobs:
           just-version: "1.21.0"
           github-token: ""
 
-      - name: Verify release version
+            - name: Verify release version
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          python3 -B - <<'PY'
-          import hashlib
-          import json
-          import os
-          from pathlib import Path
-          import re
-
-          tag = os.environ["RELEASE_TAG"]
-          if re.fullmatch(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", tag) is None:
-              raise SystemExit(f"invalid release tag: {tag}")
-          script_match = re.search(
-              r'^readonly VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$',
-              Path("git-finalize").read_text(),
-              re.MULTILINE,
-          )
-          readme_match = re.search(
-              r"^当前版本：`([0-9]+\.[0-9]+\.[0-9]+)`$",
-              Path("README.md").read_text(),
-              re.MULTILINE,
-          )
-          if script_match is None or readme_match is None or script_match.group(1) != readme_match.group(1):
-              raise SystemExit("Finalizer version declarations disagree")
-          version = script_match.group(1)
-          if tag != f"v{version}":
-              raise SystemExit(f"tag {tag} does not match Finalizer version {version}")
-          companions = (
-              "git-finalize-integration-publish.py",
-              "git-finalize-repo-bootstrap.py",
-              "git-finalize-retirement-plan.py",
-          )
-          for companion in companions:
-              companion_match = re.search(
-                  r'^VERSION = "([0-9]+\.[0-9]+\.[0-9]+)"$',
-                  Path(companion).read_text(),
-                  re.MULTILINE,
-              )
-              if companion_match is None or companion_match.group(1) != version:
-                  raise SystemExit(f"companion declares a different version: {companion}")
-          contract = json.loads(Path("tool_cli_contract.json").read_text())
-          manifest = json.loads(Path("tool_skill_manifest.json").read_text())
-          compatibility = json.loads(Path("toolchain_compatibility.json").read_text())
-          if contract["tool_version"] != version:
-              raise SystemExit("CLI contract declares a different version")
-          if manifest["tool_version"] != version:
-              raise SystemExit("root manifest declares a different version")
-          if contract["contract_version"] != compatibility["git_finalizer_contract_version"]:
-              raise SystemExit("CLI contract version disagrees with toolchain compatibility")
-          contract_sha = hashlib.sha256(Path("tool_cli_contract.json").read_bytes()).hexdigest()
-          if manifest["public_cli_contract_sha256"] != contract_sha:
-              raise SystemExit("root manifest does not bind the shipped CLI contract bytes")
-          print(f"release_version={version}")
-          PY
+          set -euo pipefail
+          python3 -B scripts/release.py preflight "$RELEASE_TAG"
 
       - name: Run project checks
         run: |
@@ -114,102 +64,19 @@ jobs:
           chown -R ubuntu:ubuntu "$GITHUB_WORKSPACE"
           sudo -u ubuntu -H env "PATH=$PATH" just check
 
-      - name: Build deterministic release package
+            - name: Build deterministic release package
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          version=${RELEASE_TAG#v}
-          package=git-finalizer-$version
-          stage=.release-stage/$package
-          rm -rf dist .release-stage
-          install -d -m 0755 dist "$stage"
-          STAGE="$stage" python3 -B - <<'PY_STAGE'
-          import json
-          import os
-          from pathlib import Path
-          import shutil
-          import stat
-          from tooling.tool_skill_sync import SKILL_PAYLOAD, SKILL_NAME
+          python3 -B scripts/release.py build "$RELEASE_TAG"
 
-          stage = Path(os.environ["STAGE"])
-          manifest = json.loads(Path("tool_skill_manifest.json").read_text())
-          paths = set(manifest["executable"]["paths"])
-          paths.update({"README.md", "CHANGELOG.md", "tool_cli_contract.json",
-                        "tool_skill_manifest.json", "toolchain_compatibility.json"})
-          paths.update(f"skills/{SKILL_NAME}/{p}" for p in SKILL_PAYLOAD)
-          paths.add(manifest["compatibility_skill"]["path"])
-          paths.update(str(p) for p in Path("manifests").glob("*/tool_skill_manifest.json"))
-          for relative in sorted(paths):
-              source = Path(relative)
-              target = stage / relative
-              target.parent.mkdir(parents=True, exist_ok=True)
-              shutil.copyfile(source, target)
-              target.chmod(stat.S_IMODE(source.stat().st_mode) & 0o755)
-          PY_STAGE
-          source_date_epoch=$(git show -s --format=%ct HEAD)
-          tar --sort=name --format=ustar --owner=0 --group=0 --numeric-owner \
-            --mtime="@$source_date_epoch" -C .release-stage -cf - "$package" \
-            | gzip -n >"dist/$package.tar.gz"
-          tar --sort=name --format=ustar --owner=0 --group=0 --numeric-owner \
-            --mtime="@$source_date_epoch" -C .release-stage -cf - "$package" \
-            | gzip -n >".release-stage/$package.rebuild.tar.gz"
-          cmp --silent "dist/$package.tar.gz" ".release-stage/$package.rebuild.tar.gz"
-
-      - name: Verify release package and write checksums
+            - name: Verify release package and write checksums
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          python3 -B - <<'PY'
-          import hashlib
-          import os
-          from pathlib import Path, PurePosixPath
-          import re
-          import stat
-          import tarfile
-
-          version = os.environ["RELEASE_TAG"].removeprefix("v")
-          package = f"git-finalizer-{version}"
-          artifact = Path("dist") / f"{package}.tar.gz"
-          import json
-          from tooling.tool_skill_sync import SKILL_PAYLOAD, SKILL_NAME
-          manifest = json.loads(Path("tool_skill_manifest.json").read_text())
-          payload = set(manifest["executable"]["paths"])
-          payload.update({"README.md", "CHANGELOG.md", "tool_cli_contract.json",
-                          "tool_skill_manifest.json", "toolchain_compatibility.json"})
-          payload.update(f"skills/{SKILL_NAME}/{p}" for p in SKILL_PAYLOAD)
-          payload.add(manifest["compatibility_skill"]["path"])
-          payload.update(str(p) for p in Path("manifests").glob("*/tool_skill_manifest.json"))
-          expected_files = {f"{package}/{p}" for p in payload}
-          with tarfile.open(artifact, "r:gz") as archive:
-              members = archive.getmembers()
-              files = {member.name for member in members if member.isfile()}
-              if files != expected_files:
-                  raise SystemExit("release package file set does not match the installation contract")
-              if any(
-                  PurePosixPath(member.name).is_absolute()
-                  or ".." in PurePosixPath(member.name).parts
-                  for member in members
-              ):
-                  raise SystemExit("release package contains an unsafe path")
-              main = archive.getmember(f"{package}/git-finalize")
-              if stat.S_IMODE(main.mode) != 0o755:
-                  raise SystemExit("Finalizer entry point is not executable in the release package")
-              stream = archive.extractfile(main)
-              if stream is None:
-                  raise SystemExit("Finalizer entry point is unreadable in the release package")
-              match = re.search(
-                  rb'^readonly VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$',
-                  stream.read(),
-                  re.MULTILINE,
-              )
-              if match is None or match.group(1).decode() != version:
-                  raise SystemExit("release package contains the wrong Finalizer version")
-
-          digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
-          Path("dist/SHA256SUMS.txt").write_text(f"{digest}  {artifact.name}\n", encoding="utf-8")
-          PY
-          (cd dist && sha256sum --check SHA256SUMS.txt)
+          set -euo pipefail
+          python3 -B scripts/release.py verify "$RELEASE_TAG"
 
       - name: Extract release notes from Changelog
         env:

@@ -1,2 +1,14 @@
 __pycache__/
 *.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.env
+*.key
+*.pem
+dist/
+pending-dist/
+.release-stage/
+.qoder/
+.codex/

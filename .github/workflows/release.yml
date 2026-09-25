@@ -1,0 +1,94 @@
+name: release
+
+# Gitea and GitHub both verify the same release contract through scripts/release.py.
+# Merging to the default branch is not a release: this runs only on an annotated tag push.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact tag checkout
+        env:
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_REF_NAME: ${{ github.ref_name }}
+          RELEASE_REF_TYPE: ${{ github.ref_type }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$RELEASE_REF_TYPE" = "tag"
+          test "$RELEASE_REF" = "refs/tags/$RELEASE_REF_NAME"
+          test "$(git rev-parse 'HEAD^{commit}')" = "$RELEASE_SHA"
+          test "$(git rev-parse "${RELEASE_REF}^{commit}")" = "$RELEASE_SHA"
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.17"
+          enable-cache: false
+          github-token: ""
+      - run: uv python install 3.12.13
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: "1.21.0"
+          github-token: ""
+      - name: Ensure shellcheck
+        run: command -v shellcheck || (sudo apt-get update -y && sudo apt-get install -y --no-install-recommends shellcheck)
+      - name: Verify release version batch
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 -B scripts/release.py preflight "$RELEASE_TAG"
+      - name: Run project checks
+        run: just check
+      - name: Build deterministic release package
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 -B scripts/release.py build "$RELEASE_TAG"
+      - name: Verify release package and write checksums
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 -B scripts/release.py verify "$RELEASE_TAG"
+      - name: Extract release notes from Changelog
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          python3 -B scripts/changelog.py extract "$RELEASE_TAG" > release-notes.md
+          test -s release-notes.md
+      - name: Publish GitHub Release with verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" \
+            --target "$(git rev-parse 'HEAD^{commit}')" \
+            --title "$RELEASE_TAG" \
+            --notes-file release-notes.md \
+            dist/git-finalizer-"${RELEASE_TAG#v}".tar.gz dist/SHA256SUMS.txt
+      - name: Re-download published assets and verify against the recorded checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          gh release download "$RELEASE_TAG" --pattern '*' --dir "$work"
+          (cd "$work" && sha256sum --check SHA256SUMS.txt)
+          test "$(sha256sum "$work/git-finalizer-${RELEASE_TAG#v}.tar.gz" | cut -d' ' -f1)" = \
+            "$(cut -d' ' -f1 "$work/SHA256SUMS.txt")"

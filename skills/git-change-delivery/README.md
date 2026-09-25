@@ -8,7 +8,7 @@
 唯一 active canonical Skill source 位于：
 
 ```text
-/home/hsd/projects/git-finalizer/skills/git-change-delivery/
+<repository-root>/skills/git-change-delivery/
 ```
 
 live 目标位于：

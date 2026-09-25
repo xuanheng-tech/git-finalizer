@@ -342,7 +342,8 @@ test_namespace_and_capability_blockers() {
     assert_file_contains "$case_dir/companion-legacy.log" 'legacy codex-worktree' \
         'companion accepted a legacy-namespace repository'
     mkdir -p -- "$case_dir/repo/.git/worktree-controller/v1"
-    touch -m 0600 "$case_dir/repo/.git/worktree-controller/v1/repo.lock"
+    touch "$case_dir/repo/.git/worktree-controller/v1/repo.lock"
+    chmod 600 "$case_dir/repo/.git/worktree-controller/v1/repo.lock"
     expect_failure "$case_dir/companion-noplan.log" /usr/bin/python3 -B \
         "$project_root/git-finalize-retirement-plan.py" \
         --repo "$case_dir/repo" --plan-id "$(printf 'e%.0s' $(seq 64))" \
