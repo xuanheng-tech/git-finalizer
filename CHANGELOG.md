@@ -134,8 +134,10 @@ Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released
   confirmation, which the repository bootstrap implementation never performed.
 - Close the second debt and the released-lineage gap it exposed. `tool_cli_contract.json` now
   states what the companions actually do — `2` is an argparse usage error or a `BLOCK_*` refusal
-  raised before any remote mutation, `3` is a bootstrap failure whose decision could not be
-  classified — and `tool_skill_manifest.json` is re-pinned to the new contract bytes in the same
+  reported as `status=blocked`, `3` is a bootstrap failure whose decision could not be
+  classified, and `1` remains reachable through the pre-execution companion guard or an uncaught
+  companion traceback, so no wording claims that a refusal happened before a remote mutation —
+  and `tool_skill_manifest.json` is re-pinned to the new contract bytes in the same
   commit, so no CLI behaviour, flag, status or exit code changed. A new test extracts the
   bootstrap classification from source and refuses any drift between implementation, contract text
   and the boundary matrix.
@@ -150,8 +152,9 @@ Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released
   fails closed with per-file diagnostics and zero mutation.
 - Do not migrate the retirement adapter onto upstream's `branch-retirement-verify` yet, and record
   why in the boundary matrix: the controller this environment can actually reach predates the verb
-  and does not advertise it, the same-day in-flight upstream experiment widened the verdict blocker
-  set while still advertising verify version 1, and no controller-free verdict exists for the
+  and does not advertise it, the same-day in-flight upstream experiment moved that surface to
+  contract v3 and storage layout v2 while still advertising verify version 1, and no controller-free
+  verdict exists for the
   documented independent path. The verb is also not a drop-in replacement: it observes state before
   the lock and never compares the plan's identity fields against caller intent, so the convergence
   shape is a pre-lock `verify` observation plus an in-lock plan-field recheck, not the removal of
@@ -159,11 +162,15 @@ Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released
   caller's exclusive `flock` is wrong — advisory locks do not conflict — and is not part of the
   reasoning. Those conditions are the precise preconditions for the switch; the digest mirror stays
   the fail-closed authority, unchanged and unextended.
-- State the per-surface exit-code mapping in the published contract: repository bootstrap answers
-  with 0, 2 or 3 and never returns 1, integration candidate publication answers with 0, 1 or an
-  argparse usage 2 and never returns 3, and the bootstrap companion has no interactive confirmation
-  gate at all, which the previous wording implied. Tests derive all of that from the companion
-  sources, including the absence of any stdin read.
+- State the per-surface exit-code mapping in the published contract, and remove two claims that
+  the implementation contradicts: `1` is reachable on the exec-forwarded commands through the
+  companion guard and uncaught tracebacks, and a `BLOCK_REMOTE_MISMATCH` refusal can be reported
+  with rc 2 after the Gitea repository has already been created, which `bootstrap.executed` — not
+  the exit code — discloses. The bootstrap companion has no interactive confirmation gate at all,
+  which the previous wording implied. The tests now reject those lies directly: they require the
+  contract to name `status=blocked`, to point mutation truth at `bootstrap.executed`, to mention
+  the pre-execution guard, and to avoid any ordering or "never returns" guarantee, while binding
+  the classification line and the post-create mismatch site in the companion source.
 - Public CLI, security, CAS, lock and receipt semantics are unchanged.
 
 ## 1.3.0

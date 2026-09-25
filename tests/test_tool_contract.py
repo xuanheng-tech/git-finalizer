@@ -336,16 +336,28 @@ class ToolContractTests(unittest.TestCase):
         self.assertIn(
             'return (2 if decision.startswith("BLOCK_") else 3), receipt', bootstrap
         )
-        self.assertIn("usage error", exit_codes["2"])
+        self.assertIn("status=blocked", exit_codes["2"])
         self.assertIn("repo_plan", exit_codes["2"])
         self.assertIn("could not be classified", exit_codes["3"])
         self.assertNotIn("integration_candidate_publish", exit_codes["3"])
+        # The contract may not claim an ordering the implementation breaks: a
+        # BLOCK_REMOTE_MISMATCH is raised after the repository may exist, so
+        # only the receipt's bootstrap.executed field may report mutation.
+        self.assertIn("bootstrap refusal", exit_codes["2"])
+        self.assertIn("bootstrap.executed", exit_codes["2"])
+        self.assertNotIn("before any remote mutation", json.dumps(exit_codes))
+        self.assertIn("remote changed before origin update", bootstrap)
+        self.assertIn("bootstrap_executed = True", bootstrap)
         self.assertNotIn("confirmation", json.dumps(exit_codes, ensure_ascii=False))
         self.assertNotIn("input(", bootstrap)
         self.assertNotIn("sys.exit(1)", bootstrap)
         self.assertNotIn("SystemExit(1)", bootstrap)
-        self.assertIn("never returns 1", exit_codes["scope"])
-        self.assertIn("never returns 3", exit_codes["scope"])
+        self.assertIn("unclassifiable failure", exit_codes["scope"])
+        self.assertIn("pre-execution guard", exit_codes["scope"])
+        self.assertNotIn("never returns", exit_codes["scope"])
+        finalizer = (ROOT / "git-finalize").read_text(encoding="utf-8")
+        self.assertIn("repository bootstrap companion is missing", finalizer)
+        self.assertIn('"executed": bootstrap_executed', bootstrap)
         boundaries = (
             ROOT / "docs" / "integration-boundaries.md"
         ).read_text(encoding="utf-8")

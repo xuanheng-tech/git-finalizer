@@ -14,7 +14,7 @@ Git Finalizer（GF）核心只依赖 bash、Git 与 `/usr/bin/python3`。所有�
 | Worktree Controller（integration publication） | 仅 `--publish-integration-candidate` | 只读取 Controller 已签发的 lease 与其锁；不探测其余 authority 目录 | lease 字段按 GF 公开输入合同校验 | lease 缺失/漂移 → blocked，不写 remote | `publication-lease.json`、`repo.lock`、`repo.json`、`bindings/wt_<sha256(git-dir)>.json`、`records/<allocation_id>.json`、`integration-intents/*.json`（前缀枚举）、`prepared-candidate-receipts/<id>.json`。其中 `wt_` 键派生与 intent 语义是 Controller 内部事实，GF 只作镜像消费，已记为债务（见下节） |
 | Worktree Controller（reviewed sensitive source） | 仅 `--reviewed-sensitive-source <file>` | 无状态读取；linkage 四字段作为不透明 identity 消费 | review-file schema 由 GF 自身合同定义 | 缺 linkage → `source review 要求完整 Controller linkage` | 无（不触任何 WC state 布局） |
 | Snapshot Runner evidence | 仅 `--initial-publish --snapshot <64hex>` | state 根取 `XDG_STATE_HOME`（否则 `~/.local/state`），可整体重定向到 fixture | `meta.json`/`snapshot.json` 字段按对端**已发布**的证据合同标识校验 | artifact 缺失/损坏 → `snapshot evidence rejected: ...`，永不静默跳过 | `snapshot-runner/snapshots/<id>/` 目录形状、三个 artifact 名、已发布合同标识（`schema_version` 2、`producer_security_epoch` 4）与 GF 侧 fail-closed 字节上限 |
-| Gitea repository bootstrap | 仅 `--repo-plan` / `--repo-ensure` | 无；目标 URL 每次显式传入，无默认主机 | Gitea REST `/api/v1`（credential-free 探测，凭据走 Git authority） | 缺 `--gitea-url`/`--owner`/`--repo-name`/`--visibility` → argparse 用法错误 exit 2；探测或权限失败 → `BLOCK_INVALID_CONFIG`/`BLOCK_PERMISSION`/`BLOCK_INVALID_OWNER`/`BLOCK_REMOTE_MISMATCH` + `status=blocked` + exit 2；决策无法归类 → `status=failed` + exit 3 | 只读 GET 与显式 POST 的端点形状集中于此 companion；POST 只在决策为 `CREATE_ALLOWED` 且调用方显式给出 `--repo-ensure` 时发出（GF 侧不设交互确认门，显式命令本身即授权边界） |
+| Gitea repository bootstrap | 仅 `--repo-plan` / `--repo-ensure` | 无；目标 URL 每次显式传入，无默认主机 | Gitea REST `/api/v1`（credential-free 探测，凭据走 Git authority） | 缺 `--gitea-url`/`--owner`/`--repo-name`/`--visibility` → argparse 用法错误 exit 2；探测或权限失败 → `BLOCK_INVALID_CONFIG`/`BLOCK_PERMISSION`/`BLOCK_INVALID_OWNER`/`BLOCK_REMOTE_MISMATCH` + `status=blocked` + exit 2（其中 `BLOCK_REMOTE_MISMATCH` 可能在 repository 已创建之后产生，是否变更看 `bootstrap.executed`）；决策无法归类 → `status=failed` + exit 3 | 只读 GET 与显式 POST 的端点形状集中于此 companion；POST 只在决策为 `CREATE_ALLOWED` 且调用方显式给出 `--repo-ensure` 时发出（GF 侧不设交互确认门，显式命令本身即授权边界） |
 
 ## 遗留兼容性知识与版本边界
 
@@ -31,8 +31,9 @@ Git Finalizer（GF）核心只依赖 bash、Git 与 `/usr/bin/python3`。所有�
   三条可复核的原因：
   1. 本环境实际可调用的 production controller 入口仍是上一代：`--version` 无该动词，
      `capabilities` 不宣告 `branch_retirement_verify_version`；切换会立即破坏真实 controller E2E；
-     上游同日的在途实验已把该面升到 contract v3 并向 verify 的 `blockers` 注入第五个值，却仍宣告
-     verify version 1，说明该集合当日即可移动而版本号不变。
+     上游同日的在途实验已把 `branch_retirement_contract.version` 升为 3、`storage_layout.version`
+     升为 2 并新增三个动词，而 `branch_retirement_verify_version` 仍为 1，说明该代语义当日即可移动
+     而版本宣告不变。
   2. 它**不是** digest 镜像的直接替代品：`verify` 在拿锁之前做 TOCTOU 观察，且不复核 plan 的八个
      identity 字段与调用方 CLI 意图；GF 在 exclusive 锁内仍需那次复核。因此收敛形态是“锁前用
      `verify` 观察替代 `capabilities` 探测，锁内改用 `branch-retirement-plan --json` 返回的完整 plan
@@ -82,15 +83,20 @@ Git Finalizer（GF）核心只依赖 bash、Git 与 `/usr/bin/python3`。所有�
 - 退出码公开面：bash 主路径只用 `{0,1}`，且 `exit_code` 与进程退出码一致（测试对 blocked 路径核对
   rc 与 JSON 字段相等）。exec-forwarded companion **不**产出上述 envelope：
   `--repo-plan/--repo-ensure` 输出自己的 bootstrap receipt（含 `decision`、`bootstrap`、`errors`
-  等键，无 `exit_code`/`final_phase`/`mode_result`），退出码为 `0` 成功、`2` 用法错误
-  （argparse）或 `BLOCK_*` 阻断、`3` 决策无法归类的失败；`--publish-integration-candidate` 输出自己的
+  等键，无 `exit_code`/`final_phase`/`mode_result`），自身判定为 `0` 成功、`2` 用法错误
+  （argparse）或 `BLOCK_*` 阻断、`3` 决策无法归类的失败；`1` 仍可能由 GF 的 pre-execution guard
+  （伴生文件缺失/不安全）或未捕获的伴生 traceback 产生，因此**不能**把 rc 2 读成“远端未发生变化”
+  ——`BLOCK_REMOTE_MISMATCH` 可能发生在 repository 已创建之后，是否变更由 receipt 的
+  `bootstrap.executed` 表达；`--publish-integration-candidate` 输出自己的
   7 键判定对象（`final_phase,finalizer_version,mode,next_action,reason,status,summary_schema_version`，
   其中 `mode` 为 `integration_candidate_publish`），退出码 `{0,1,2}`，其 `next_action` 使用 companion
   自己的词表（例如 lease 缺失时的 `read_remote_fact_and_reenter_controller_publish_gate`），不属于上面
   列出的 bash `next_action` 枚举。Agent 不得假设 companion 输出与 `--summary` 同形。
   `tool_cli_contract.json.exit_codes` 与 bootstrap 的分类实现由 `tests/test_tool_contract.py`
-  双向核对：`2` 是 argparse 用法错误或 `BLOCK_*` 前置阻断，`3` 是决策无法归类（`UNKNOWN`）的
-  `status=failed` 失败。该文件任何字节改动都会连带 `public_cli_contract_sha256` 与本仓库
+  双向核对，且核对是“反谎话”的：合同文本必须声明 `BLOCK_*` 为 `status=blocked`、必须把远端变更
+  事实指向 `bootstrap.executed`、必须承认 `1` 来自 pre-execution guard/未捕获异常，并禁止任何
+  “never returns”或“refusal before any remote mutation”式排序保证；这些断言同时绑定伴生源码里的
+  分类行与 `remote changed before origin update` 位点。该文件任何字节改动都会连带 `public_cli_contract_sha256` 与本仓库
   `tool_skill_manifest.json` 的重绑定，因此合同文本与 manifest 必须在同一提交内一起更新。
 
 ## 独立测试矩阵

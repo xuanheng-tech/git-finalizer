@@ -7,10 +7,11 @@ contract (persisted plan identity, capability attestation via
 below is a transitional legacy-compatibility mirror of the frozen v1 layout:
 upstream has published that recipe together with a read-only
 `branch-retirement-verify` verdict API and forbids consumers from
-recomputing it, so this mirror is recorded debt. That API is not yet a frozen
-or parity-tested contract and requires the controller executable, so this
-mirror stays the fail-closed authority where no controller is installed; it
-must not absorb new controller governance logic.
+recomputing it, so this mirror is recorded debt. A tagged upstream generation
+does publish that API, but the controller runtime reachable here predates it,
+the same generation's semantics were still moving, and no controller-free
+equivalent exists, so this mirror stays the fail-closed authority where no
+controller is installed and must not absorb new governance logic.
 """
 
 from __future__ import annotations

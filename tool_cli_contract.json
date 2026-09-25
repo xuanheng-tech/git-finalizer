@@ -449,9 +449,9 @@
   "exit_codes": {
     "0": "success or verification passed",
     "1": "blocked, failed verification, or Finalizer preflight refusal",
-    "2": "argument or usage error of an exec-forwarded companion, or a repository bootstrap refusal raised before any remote mutation (repo_plan, repo_ensure)",
+    "2": "argument or usage error of an exec-forwarded companion, or a repository bootstrap refusal reported as status=blocked (repo_plan, repo_ensure); a BLOCK_REMOTE_MISMATCH can follow a repository that was already created, so 2 never means no remote mutation happened - the receipt's bootstrap.executed field carries that fact",
     "3": "repository bootstrap failure whose decision could not be classified, reported as status=failed (repo_plan, repo_ensure)",
-    "scope": "bash-owned commands use only 0 and 1; 2 and 3 exist solely on exec-forwarded companion commands, where repository bootstrap (repo_plan, repo_ensure) answers with 0, 2 or 3 and never returns 1, and integration candidate publication answers with 0, 1 or an argparse usage 2 and never returns 3"
+    "scope": "bash-owned commands use only 0 and 1; 2 and 3 exist solely on exec-forwarded companion commands. Repository bootstrap classifies its own outcomes as 0 success, 2 usage error or blocked refusal, and 3 unclassifiable failure; integration candidate publication classifies its own outcomes as 0 or 1. Both can still surface 1 from Finalizer's pre-execution guard when the companion file is missing or unsafe, or from an uncaught companion traceback, and integration candidate publication can surface an argparse usage 2"
   },
   "flags": {
     "entrypoint": "git-finalize",
