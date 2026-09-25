@@ -459,6 +459,17 @@ just check
 `__pycache__`。语法与行为验证使用 `just check`；不要以 `python -m py_compile` 作为本仓库的
 常规检查，因为 `py_compile` 会显式生成 `.pyc`，即使解释器同时传入 `-B`。
 
+## Standalone 边界
+
+Git Finalizer 核心（verify、commit、publish、resume、initial 系列）只要求 bash、Git 与
+`/usr/bin/python3`，可在无 Worktree Controller、无 Context Loader/Snapshot Runner、无共享
+Skill 安装、无私有 Gitea 配置的独立仓库中运行（`tests/test_standalone_operations.sh` 以最小
+HOME/PATH 环境证明）。Controller 治理（retirement、reviewed-sensitive-source linkage、
+integration publication）与可选集成（`--snapshot` 证据、`--repo-plan/--repo-ensure` 的显式
+Gitea 目标）只在被明确请求时生效；缺失对应 authority 或依赖时按精确 blocker fail closed，
+永不隐式降级或回退到非权威状态。共享 `git-change-delivery` Skill 是面向 Agent 工作流的可选
+使用文档与 helper 集，不是 Git Finalizer 的运行依赖，也不是任何授权来源。
+
 ## 版本维护
 
 主脚本的 `VERSION`、README 当前版本、对应的 `CHANGELOG.md` 条目和必要测试必须在同一发布

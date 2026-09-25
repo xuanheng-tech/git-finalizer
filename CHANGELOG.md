@@ -96,6 +96,15 @@ Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released
   non-authoritative legacy state. The state-digest recomputation is now explicitly isolated as a
   legacy compatibility mirror of the frozen v1 layout, with a module boundary note forbidding
   new governance logic from accumulating there.
+- Establish the standalone operating contract with an isolated regression suite: the ordinary
+  verify/commit/publish/resume lifecycle must succeed in a minimal HOME/PATH environment with no
+  controller, no sibling tools, no installed Skill, and no private Gitea configuration, while
+  retirement, reviewed-source linkage, explicit repository bootstrap, and snapshot evidence
+  still fail closed with their precise blockers (protected-branch refusal ordered before state
+  checks) and zero mutation. Documented the boundary in the root README and declared the shared
+  Skill an optional agent-workflow asset rather than a runtime or authorization source; no core
+  dependency on the toolchain siblings exists to unwind because governance integrations were
+  already request-gated.
 - Document the exact handoff (plan → validated CAS retirement → record → status), the quiet
   window between planning and consumption, and per-operation plan consumption in the Skill
   reference and README. Namespace migration of legacy `.git/codex-worktree` state and any

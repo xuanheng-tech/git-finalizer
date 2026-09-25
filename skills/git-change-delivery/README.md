@@ -39,6 +39,9 @@ live 路径、payload 不完整，或 installed tree hash 不属于 `RELEASED_CA
 会继续。`deploy.py`、两个 `test_*.py` 和本 README 仅属于版本化恢复/测试资产，不安装到 live
 目录。
 
+本 Skill 是可选的 Agent 工作流说明与 helper 集合：Git Finalizer 核心运行不依赖本目录，
+installed copy 也不是授权来源；授权只来自用户对具体任务的明确请求。
+
 四态发布决策保持 `explicit-only`，不会启用默认自动 commit/push。该仓库只拥有这一 change
 delivery 集成资产，不拥有 Context Loader 或 Snapshot Runner 的实现。Completed-but-Unpublished
 Queue 只持久化用户私有 control-plane metadata，不执行 Git finalization 或 worktree 清理。
