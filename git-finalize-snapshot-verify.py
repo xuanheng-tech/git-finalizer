@@ -17,6 +17,7 @@ MAX_PREVIEW_BYTES = 16 * 1024 * 1024
 MAX_META_BYTES = 64 * 1024
 MAX_CONTENT_FILES = 128
 MAX_GENERATED_FILES = 512
+# GF-INTEGRATION-ADAPTER: snapshot-runner-evidence (single site: state layout)
 SNAPSHOT_ID = re.compile(r"[0-9a-f]{64}")
 ARTIFACT_NAMES = {"meta.json", "preview.txt", "snapshot.json"}
 

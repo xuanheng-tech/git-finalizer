@@ -3600,6 +3600,7 @@ validate_retirement_oid() {
     fi
 }
 
+# GF-INTEGRATION-ADAPTER: worktree-controller-retirement (single site)
 acquire_retirement_plan_lock() {
     local operation=$1
     local common_dir

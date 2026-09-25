@@ -432,6 +432,7 @@ def publish(arguments: argparse.Namespace) -> dict[str, Any]:
     lease_id = require_uuid(arguments.lease_id, "lease argument")
     run_id = require_text(arguments.run_id, "run argument", maximum=256)
     repo, common, git_dir = resolve_repo(arguments.repo)
+    # GF-INTEGRATION-ADAPTER: worktree-controller-integration-publication (single site)
     metadata_root = common / "worktree-controller" / "v1"
     lock_path = metadata_root / "repo.lock"
     if lock_path.is_symlink() or not lock_path.is_file():

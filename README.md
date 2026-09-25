@@ -470,6 +470,11 @@ Gitea 目标）只在被明确请求时生效；缺失对应 authority 或依赖
 永不隐式降级或回退到非权威状态。共享 `git-change-delivery` Skill 是面向 Agent 工作流的可选
 使用文档与 helper 集，不是 Git Finalizer 的运行依赖，也不是任何授权来源。
 
+每个可选集成的外部布局知识都收敛到唯一带 `GF-INTEGRATION-ADAPTER` 标记的 adapter，边界矩阵、
+fail-closed blocker 与 Agent-facing machine-readable 结果合同见
+[`docs/integration-boundaries.md`](docs/integration-boundaries.md)，由
+`tests/test_integration_boundaries.sh` 机器核对。
+
 ## 版本维护
 
 主脚本的 `VERSION`、README 当前版本、对应的 `CHANGELOG.md` 条目和必要测试必须在同一发布

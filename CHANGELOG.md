@@ -109,6 +109,20 @@ Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released
   window between planning and consumption, and per-operation plan consumption in the Skill
   reference and README. Namespace migration of legacy `.git/codex-worktree` state and any
   `.agents/worktree-policy.toml` adoption stay under Worktree Controller governance.
+- Turn the integration boundary into an enforced contract instead of a refactoring. Each
+  external-layout fact is now confined to one marked `GF-INTEGRATION-ADAPTER` site: the
+  Worktree Controller state root, the publication lease and the retirement plan/receipt file
+  names, the Snapshot Runner evidence layout under `XDG_STATE_HOME`, and the Gitea REST surface
+  used by explicit repository bootstrap. `docs/integration-boundaries.md` becomes the
+  authoritative matrix of triggering command, capability detection, version compatibility and
+  fail-closed blocker per integration, and a new boundary suite pins the adapter marker
+  single-site rule, the per-literal confinement ledger, the Context Loader non-coupling, the
+  agreement between documented blockers and the implementing source, the mode-independent
+  top-level `--summary` key set together with the per-mode nested result shapes, and that the
+  snapshot evidence adapter resolves only the state root it is given. The Worktree Controller
+  state-digest recipe remains isolated as the documented legacy compatibility mirror with an
+  explicit version boundary; no governance semantics move into it. Public CLI, security, CAS,
+  lock and receipt semantics are unchanged.
 
 ## 1.3.0
 
