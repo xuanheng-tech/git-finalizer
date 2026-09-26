@@ -203,8 +203,10 @@ went out on is written down. Every identifier here is measured rather than remem
 commit is `git rev-parse 'vX.Y.Z^{commit}'`, the tag object is `git rev-parse vX.Y.Z`, and each
 digest comes from the tarball as served by the host named in that row.
 `tests/test_public_docs.py` re-derives the two Git columns from the repository's own refs, so a row
-that drifts from the tags fails the contract gate. Production activation is tracked by
-`tool-skill-sync` on the maintainer machine and is deliberately **not** part of this record.
+that drifts from the tags fails the contract gate. A row whose tag is absent is accepted only when it
+belongs to the *other* host — exactly the exemption the one-host rule implies. Production activation
+is tracked by `tool-skill-sync` on the maintainer machine and is deliberately **not** part of this
+record.
 
 | Version | Host | Candidate commit | Tag object | Artifact SHA-256 | Bytes |
 | --- | --- | --- | --- | --- | --- |

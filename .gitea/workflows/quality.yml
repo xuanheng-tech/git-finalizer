@@ -38,7 +38,11 @@ jobs:
           just-version: "1.21.0"
           github-token: ""
 
+      # Warm the linter into the build user's tool dir. Best effort on purpose: this host has seen
+      # ten-minute flaky downloads here, and scripts/lint.sh resolves shellcheck itself (GF_SHELLCHECK,
+      # PATH, then uvx) and fails with a remedy if nothing usable exists. The lint step stays fatal.
       - name: Install shellcheck
+        continue-on-error: true
         run: |
           set -euo pipefail
           chown -R ubuntu:ubuntu "$GITHUB_WORKSPACE"

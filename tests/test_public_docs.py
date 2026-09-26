@@ -39,15 +39,18 @@ def link_targets(text: str) -> list[str]:
     ]
 
 
-def git_output(*arguments: str) -> str:
-    result = subprocess.run(
+def git_run(*arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         ["git", *arguments],
         cwd=ROOT,
         capture_output=True,
         text=True,
-        check=True,
+        check=check,
     )
-    return result.stdout.strip()
+
+
+def git_output(*arguments: str) -> str:
+    return git_run(*arguments).stdout.strip()
 
 
 class PublicDocumentationTests(unittest.TestCase):
@@ -108,6 +111,8 @@ class PublicDocumentationTests(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(rows), 2, "release record lost its rows")
         tags = set(git_output("tag", "--list").split())
+        origin = git_run("remote", "get-url", "origin", check=False).stdout.strip()
+        from_github = "github.com" in origin
         if not tags:
             self.fail(
                 "this checkout carries no tags, so the record cannot be checked: clone without "
@@ -119,7 +124,17 @@ class PublicDocumentationTests(unittest.TestCase):
             with self.subTest(version=tag):
                 self.assertNotIn(tag, seen, f"{tag} is recorded twice")
                 seen.add(tag)
-                self.assertIn(tag, tags, "release record names a version that was never tagged")
+                if tag not in tags:
+                    # The one-host rule means a published tag can live on exactly one host, so a
+                    # checkout of the other host cannot see it; a missing tag on its own host does
+                    # not.
+                    self.assertNotEqual(
+                        host == "GitHub",
+                        from_github,
+                        f"{tag} is recorded for {host}, which is the host this checkout came from, "
+                        "yet the tag is absent",
+                    )
+                    continue
                 self.assertIn(host, ("GitHub", "Gitea"), "release record host column drifted")
                 self.assertEqual(
                     git_output("rev-parse", tag),
