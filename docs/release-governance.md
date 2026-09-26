@@ -12,13 +12,15 @@ supported-version policy.
 | What a release *is* | An annotated tag `vX.Y.Z` whose tree passes `scripts/release.py preflight` |
 | Build recipe and verification gates | `scripts/release.py` — the only implementation, shared by both hosts |
 | Public distribution for outside users | **GitHub** `xuanheng-tech/git-finalizer` (releases, release notes, artifacts, checksums) |
-| Governed daily delivery and the historical release record | **Gitea** `xuanheng-tech/git-finalizer` (v1.0.0 – v1.4.0 were published here) |
+| Governed daily delivery and the historical release record | **Gitea** `xuanheng-tech/git-finalizer` (the ten releases `v0.4.0` – `v1.4.0` were published here; `v1.5.0` onward is GitHub) |
 | Production installation on this machine | `tool-skill-sync` bundles built from the canonical source repository — it does **not** consume a release artifact from either host |
 
 One release authority per version: **a version is published on exactly one host**. Publishing the
 same tag on both hosts is a deliberate mirroring act, not a default, and it requires the digest
-comparison in [Cross-host parity](#cross-host-parity). Nothing on either host can rewrite a published
-version: releases are forward-only.
+comparison in [Cross-host parity](#cross-host-parity). A published version is never rewritten, so
+releases are forward-only — that is a rule this project follows, and no workflow here replaces a
+published tag or asset, but neither host cryptographically enforces it: see
+[Publishing permissions](#publishing-permissions) for what the hosts actually require.
 
 ## Tag triggers
 
@@ -76,8 +78,11 @@ Per-run guarantees:
 <a name="cross-host-parity"></a>
 ### Cross-host parity
 
-Known-good anchor: the published `v1.4.0` artifact (`ae1d29683ca36a91…`, Gitea-only release) is
-reproduced byte-for-byte by `scripts/release.py` at that commit under `umask` 022, 002 and 077.
+Known-good anchor: the published `v1.4.0` artifact — `ae1d29683ca36a911993eb138b769577961f7708d61e8eeb47ac402419b7f0f9`,
+157304 bytes, Gitea-only release — was re-downloaded from that host and matched its own published
+`SHA256SUMS.txt` under `sha256sum --check`, and the same bytes are reproduced by
+`scripts/release.py` (which first shipped in `v1.5.0`, so it is run *against* the `v1.4.0` tree
+rather than checked out with it) under `umask` 022, 002 and 077.
 
 No version has been published on **both** hosts yet — `v1.4.0` is Gitea-only and `v1.5.0` is
 GitHub-only — so cross-host byte equality for one and the same version is still expected, not yet
@@ -97,6 +102,12 @@ sort order, or runner image), not something to paper over by publishing one host
   workflows may not approve pull requests.
 - No repository secrets are used or required: each platform injects its own token
   (`GITHUB_TOKEN` / `GITEA_TOKEN`). Adding a secret to make a release work is a design smell here.
+- What `main` actually requires, measured when `v1.5.0` was released: one required status context,
+  `check` — the single `ci.yml` job, which runs `just lint` and `just check` inside itself — with
+  `strict` on. There is no separate required `lint` context, no required pull-request review, no
+  repository or organization ruleset, `enforce_admins` is off, and tags are annotated but not signed.
+  So the contract gate does block a merge that fails it, but shell lint is not independently
+  required and tag immutability is a convention backed by the no-force-push rule, not by the host.
 
 ## Runbook: first public GitHub release
 
@@ -119,7 +130,8 @@ source repository rather than the release artifact.
    git log --oneline -3 github/main   # or origin/main, the branch being tagged
    git status --porcelain=v1          # must be empty in the checkout used for tagging
    python3 -B scripts/release.py preflight v1.5.0   # exact new tag name
-   python3 -B scripts/release.py selfcheck v1.5.0   # deterministic build, scratch only
+   python3 -B scripts/release.py selfcheck v1.5.0   # two builds inside one temporary directory;
+                                                    # writes nothing into the checkout
    ```
 
 4. Announce nothing before the tag exists; the tag is the release trigger.
@@ -187,20 +199,42 @@ Accept the release only when all of these hold:
 ## Release record
 
 One row per published version, because the one-host rule is only auditable if the host each version
-went out on is written down. Production activation is tracked by `tool-skill-sync` on the
-maintainer machine and is deliberately **not** part of this record.
+went out on is written down. Every identifier here is measured rather than remembered: the candidate
+commit is `git rev-parse 'vX.Y.Z^{commit}'`, the tag object is `git rev-parse vX.Y.Z`, and each
+digest comes from the tarball as served by the host named in that row.
+`tests/test_public_docs.py` re-derives the two Git columns from the repository's own refs, so a row
+that drifts from the tags fails the contract gate. Production activation is tracked by
+`tool-skill-sync` on the maintainer machine and is deliberately **not** part of this record.
 
-| Version | Publishing host | Candidate commit | Annotated tag object | Artifact SHA-256 |
-| --- | --- | --- | --- | --- |
-| `v1.0.0` – `v1.4.0` | Gitea | `64806dae0805b3dc707e7eab848c8b40ee952ad3` for `v1.4.0` | `f768a6197268dc4a9be1b5d466464a3c2f6bf73c` for `v1.4.0` | `ae1d29683ca36a91…` |
-| `v1.5.0` | GitHub | `a59773ae5ea4aca781152ac289d46afcc91a93b9` | `12cc0f60d0a04296e1cf8527aa14673c3cb42cfb` | `8e16fc878de5e2ff715d035dde74292a240842a3bc296a4c4755c061f18df77c` |
+| Version | Host | Candidate commit | Tag object | Artifact SHA-256 | Bytes |
+| --- | --- | --- | --- | --- | --- |
+| `v0.4.0` | Gitea | `9b7a9e54aec20890b3c31c7600a2d55f5ad37d87` | `644600f74c51199787447473ff241ce81e1a66b8` | `1bba32d1cca447ab6f8f07c166593b4476be3cf55950f563243ad9d86224e658` | 35582 |
+| `v0.4.1` | Gitea | `25cb70eeb1d6ac2432ffa9c6c1efa12431fd3844` | `8084f7ac1c338335ce07e855a41399d74cf13cf5` | `6b2cea4d58f4ef352b9c458e3f01044af71f6d2b21c4e8430c8c3de800c0b546` | 35998 |
+| `v0.4.2` | Gitea | `0efa3203ab61d330a5bbb407607194caf5bf9d79` | `4db79d99213a7ba47db8e7aa44885f5a4dff53b0` | `a00932b935134c88a91538bc2b7b48873b9f4a0206e109f47896ba595edf3c49` | 39562 |
+| `v0.5.0` | Gitea | `61fc4de868b358c5c3e84132bad1d01341f6927e` | `e8c284314b87947cbca0fcf1b310d9b14bf1f0e1` | `b583fe5a38570dcb10a75bdb69239bdc3a5bd9ea276335d201252928e1ef8a6d` | 42837 |
+| `v0.6.0` | Gitea | `8197f9c6367fb7c26f811fefc892a5983fb4d67c` | `f798b2fb00c33bac6394bd56a0886ba8f6414ba0` | `dbffc690def904198010b43d74a52fc5e77ab36a9f1d8694a18f55ffb0ddf44d` | 47662 |
+| `v1.1.0` | Gitea | `8a0326e20a43dfab08d876575b1306112a926c03` | `6acee193d1feda44ee6cfaa9fd94e2e9b3c7779d` | `0136a1f6bb0369f098cd29008456646d1549e4608d5a6d8bd7eac986a32a6d6d` | 144155 |
+| `v1.1.1` | Gitea | `44e9d7741750c2355ab538ed78969621df0ce323` | `f566c678a5f513124fdd71d795fb12e35123c4c6` | `997f98fb4a38a3d48e10d7052239b9b60295f970a7b1f7ca4da598cc2473fbbe` | 144732 |
+| `v1.2.0` | Gitea | `c5f1f96dbc7d26e87ea5d9c25d6bef483ceede4f` | `1ebde18fa9431e33ffcf8b833302c90d4f9defa3` | `e4ec484703873b667f9f9a9ab245c357cb17db75468434bd5e289f02e270f40d` | 149317 |
+| `v1.3.0` | Gitea | `cfbc6d05d125f852786e6e5dacb681db13f9695e` | `f06b1745d37acdb254018ce36fa7ae0ecb200454` | `3502230ecbd1213042443fd44351068dcd321940f9f6d1e30449e132f3e6d3e9` | 150148 |
+| `v1.4.0` | Gitea | `64806dae0805b3dc707e7eab848c8b40ee952ad3` | `f768a6197268dc4a9be1b5d466464a3c2f6bf73c` | `ae1d29683ca36a911993eb138b769577961f7708d61e8eeb47ac402419b7f0f9` | 157304 |
+| `v1.5.0` | GitHub | `a59773ae5ea4aca781152ac289d46afcc91a93b9` | `12cc0f60d0a04296e1cf8527aa14673c3cb42cfb` | `8e16fc878de5e2ff715d035dde74292a240842a3bc296a4c4755c061f18df77c` | 160480 |
 
-`v1.5.0` is the first release published through this model, and the first GitHub Release for the
-repository: tag pushed only to GitHub, published by `.github/workflows/release.yml` (run
-`36245062595`), with **no** Gitea release object for that version and no mirror. `v1.0.0` – `v1.4.0`
-keep their Gitea releases; their GitHub presence is the tags and the source history, never a release
-object. A future version may be mirrored on the second host only together with the digest comparison
-in [Cross-host parity](#cross-host-parity).
+`v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
+every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
+(`0.2.2`, `0.6.1`, the `0.7.x` – `0.10.x` line and `1.0.0`) have no tag at all, and five tags
+(`v0.2.0`, `v0.2.1`, `v0.2.4`, `v0.3.0`, `v0.3.1`) carry no release object on either host. There is
+therefore no `v1.0.0` release anywhere, and a range such as "v1.0.0 – v1.4.0" must not be used for the
+Gitea line.
+
+`v1.5.0` is the first release published through this model and the repository's first GitHub Release:
+the tag went to GitHub only and `.github/workflows/release.yml` (run `36245062595`) built, published
+and re-verified it, with **no** Gitea release object for that version and no mirror. The Gitea release
+job last ran at `v1.4.0`, on workflow bytes that predate the current
+`.gitea/workflows/release.yml` — that file was last edited by the `v1.5.0` candidate itself, so its
+publish path has never executed as shipped and its first real test is the next Gitea release. A future
+version may be mirrored on the second host only together with the digest comparison in
+[Cross-host parity](#cross-host-parity).
 
 ## Support boundary of the release contract
 

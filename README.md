@@ -222,9 +222,9 @@ Gitea Actions (`.gitea/workflows/`) and GitHub Actions (`.github/workflows/`) �
 and the same build recipe through `scripts/release.py`.
 
 **A version is published on exactly one host.** GitHub is the public distribution entry
-(release notes, tarball, checksums); Gitea is the governed delivery remote and holds the v1.0.0 –
-v1.4.0 release record. Trigger rules, permissions, cross-host artifact parity, and the step-by-step
-first-public-release runbook are in
+(release notes, tarball, checksums); Gitea is the governed delivery remote and holds the
+`v0.4.0` – `v1.4.0` release record. Trigger rules, permissions, cross-host artifact parity, and the
+step-by-step first-public-release runbook are in
 [docs/release-governance.md](docs/release-governance.md).
 
 ## Support

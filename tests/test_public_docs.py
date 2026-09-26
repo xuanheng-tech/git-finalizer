@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+import subprocess
 import unittest
 
 
@@ -36,6 +37,17 @@ def link_targets(text: str) -> list[str]:
         for target in re.findall(r"\]\(([^)\s]+)\)", text)
         if not target.startswith(("http://", "https://", "mailto:", "#"))
     ]
+
+
+def git_output(*arguments: str) -> str:
+    result = subprocess.run(
+        ["git", *arguments],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
 
 
 class PublicDocumentationTests(unittest.TestCase):
@@ -84,6 +96,38 @@ class PublicDocumentationTests(unittest.TestCase):
                 (ROOT / source).read_text(encoding="utf-8"),
                 f"{source} no longer points at release governance",
             )
+
+    def test_release_record_matches_the_repository_refs(self) -> None:
+        governance = (ROOT / "docs" / "release-governance.md").read_text(encoding="utf-8")
+        self.assertIn("## Release record", governance, "release record section vanished")
+        section = governance.split("## Release record", 1)[1].split("\n## ", 1)[0]
+        rows = [
+            [cell.strip() for cell in line.strip().strip("|").split("|")]
+            for line in section.splitlines()
+            if line.startswith("| `v")
+        ]
+        self.assertGreaterEqual(len(rows), 2, "release record lost its rows")
+        tags = set(git_output("tag", "--list").split())
+        seen: set[str] = set()
+        for version, host, commit, tag_object, digest, size in rows:
+            tag = version.strip("`")
+            with self.subTest(version=tag):
+                self.assertNotIn(tag, seen, f"{tag} is recorded twice")
+                seen.add(tag)
+                self.assertIn(tag, tags, "release record names a version that was never tagged")
+                self.assertIn(host, ("GitHub", "Gitea"), "release record host column drifted")
+                self.assertEqual(
+                    git_output("rev-parse", tag),
+                    tag_object.strip("`"),
+                    "recorded tag object does not match the repository ref",
+                )
+                self.assertEqual(
+                    git_output("rev-parse", f"{tag}^{{commit}}"),
+                    commit.strip("`"),
+                    "recorded candidate commit does not match the peeled tag",
+                )
+                self.assertRegex(digest.strip("`"), r"^[0-9a-f]{64}$")
+                self.assertRegex(size, r"^[0-9]+$")
 
     def test_support_boundary_is_stated(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
