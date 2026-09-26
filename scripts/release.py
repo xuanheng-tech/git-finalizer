@@ -6,7 +6,7 @@ missing on another. Subcommands:
 
   preflight <tag>       verify the version batch and the hash-bound files
   build <tag>           stage the package, build it deterministically, verify it, write checksums
-  verify <tag>          verify an already-built artifact and (re)write SHA256SUMS.txt
+  verify <tag>          verify a built artifact against the checksums `build` recorded
   selfcheck <tag>       build twice entirely inside a temporary directory and report the digest
 
 The build recipe is fixed: ustar, sorted members, owner/group 0, numeric owner ids, mtime pinned to
@@ -252,11 +252,16 @@ def verify(version_tag: str, dist: Path | None = None) -> str:
     verify_bytes(artifact, version_tag)
     digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
     checksums = dist_root / "SHA256SUMS.txt"
-    recorded = checksums.read_text(encoding="utf-8").split() if checksums.is_file() else []
-    if recorded and recorded[0] != digest:
-        raise ReleaseError("SHA256SUMS.txt does not match the built artifact bytes")
+    if not checksums.is_file():
+        raise ReleaseError(
+            f"{checksums.name} is missing next to the artifact; only `build` may author a "
+            "checksum file, otherwise verification would grade its own homework"
+        )
+    recorded = checksums.read_text(encoding="utf-8").split()
     if not recorded:
-        checksums.write_text(f"{digest}  {artifact.name}\n", encoding="utf-8")
+        raise ReleaseError(f"{checksums.name} records no digest")
+    if recorded[0] != digest:
+        raise ReleaseError("SHA256SUMS.txt does not match the built artifact bytes")
     check = subprocess.run(
         ["sha256sum", "--check", "SHA256SUMS.txt"],
         cwd=dist_root,

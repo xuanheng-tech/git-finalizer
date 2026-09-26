@@ -63,8 +63,16 @@ jobs:
       - name: Build deterministic release package
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: python3 -B scripts/release.py build "$RELEASE_TAG"
-      - name: Verify release package and write checksums
+        run: |
+          set -euo pipefail
+          python3 -B scripts/release.py build "$RELEASE_TAG"
+          # Record the digest before anything is uploaded, so the post-publish check compares the
+          # downloaded bytes against a value from a different process and network path rather than
+          # against a file that arrived in the same download.
+          printf 'RELEASE_ARTIFACT_SHA256=%s\n' \
+            "$(sha256sum "dist/git-finalizer-${RELEASE_TAG#v}.tar.gz" | cut -d' ' -f1)" \
+            >> "$GITHUB_ENV"
+      - name: Verify release package against its checksums
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: python3 -B scripts/release.py verify "$RELEASE_TAG"
@@ -92,8 +100,14 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          tarball="git-finalizer-${RELEASE_TAG#v}.tar.gz"
           work=$(mktemp -d)
           gh release download "$RELEASE_TAG" --pattern '*' --dir "$work"
+          # Exactly the two published assets: an extra attached file is as much a defect as a
+          # missing one, and a third checksum line must not be able to confuse the comparison.
+          test "$(ls "$work" | sort | tr '\n' ' ')" = "SHA256SUMS.txt $tarball "
           (cd "$work" && sha256sum --check SHA256SUMS.txt)
-          test "$(sha256sum "$work/git-finalizer-${RELEASE_TAG#v}.tar.gz" | cut -d' ' -f1)" = \
-            "$(cut -d' ' -f1 "$work/SHA256SUMS.txt")"
+          published=$(awk -v f="$tarball" '$2 == f { print $1 }' "$work/SHA256SUMS.txt")
+          test -n "$published"
+          test "$published" = "$RELEASE_ARTIFACT_SHA256"
+          test "$(sha256sum "$work/$tarball" | cut -d' ' -f1)" = "$RELEASE_ARTIFACT_SHA256"

@@ -192,12 +192,79 @@ class ReleaseProcedureTests(unittest.TestCase):
         """A depth-1 checkout has no tags, and the contract gate reads them."""
         for relative in (
             ".gitea/workflows/quality.yml",
+            ".gitea/workflows/release.yml",
             ".github/workflows/ci.yml",
             ".github/workflows/release.yml",
         ):
             with self.subTest(workflow=relative):
                 text = (ROOT / relative).read_text(encoding="utf-8")
                 self.assertIn("fetch-depth: 0", text, f"{relative} cannot see any tags")
+
+    def test_release_jobs_cannot_publish_the_same_tag_twice(self) -> None:
+        """Both publishers are check-then-create, so one tag must mean one run at a time."""
+        for relative in (".gitea/workflows/release.yml", ".github/workflows/release.yml"):
+            with self.subTest(workflow=relative):
+                text = (ROOT / relative).read_text(encoding="utf-8")
+                self.assertIn("concurrency:", text, f"{relative} can run two releases at once")
+                self.assertIn("group: release-${{ github.ref_name }}", text)
+                self.assertIn("cancel-in-progress: false", text)
+
+    def test_linter_warm_up_never_blocks_a_run_that_can_lint(self) -> None:
+        """scripts/lint.sh resolves shellcheck itself; provisioning steps may not be fatal."""
+        for relative in (
+            ".gitea/workflows/quality.yml",
+            ".gitea/workflows/release.yml",
+        ):
+            with self.subTest(workflow=relative):
+                text = (ROOT / relative).read_text(encoding="utf-8")
+                step = text.split("- name: Install shellcheck", 1)[1].split("- name:", 1)[0]
+                self.assertIn("continue-on-error: true", step)
+                lint = text.split("- name: Lint shell scripts", 1)[1].split("- name:", 1)[0]
+                self.assertIn("just lint", lint)
+                self.assertNotIn("continue-on-error", lint)
+
+    def test_both_hosts_pin_the_same_build_tools(self) -> None:
+        """A digest divergence between hosts is a release defect, so the inputs may not drift.
+
+        One host's dependency bot can otherwise move a pin that the other host keeps, and nothing
+        in the suite would notice.
+        """
+        workflows = (
+            ".gitea/workflows/quality.yml",
+            ".gitea/workflows/release.yml",
+            ".github/workflows/ci.yml",
+            ".github/workflows/release.yml",
+        )
+        actions: dict[str, set[str]] = {}
+        versions: dict[str, set[str]] = {}
+        for relative in workflows:
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            for line in text.splitlines():
+                pinned = re.search(r"uses:\s*(\S+)/(\S+)@([0-9a-f]{40})", line)
+                if pinned is not None:
+                    action = f"{pinned.group(1)}/{pinned.group(2)}"
+                    actions.setdefault(action, set()).add(pinned.group(3))
+                declared = re.search(
+                    r"(?:version|just-version):\s*\"([0-9][^\"]*)\"|uv python install (\S+)", line
+                )
+                if declared is not None:
+                    key = "python" if declared.group(2) else "tool"
+                    value = declared.group(2) or declared.group(1)
+                    versions.setdefault(f"{key}:{value}", set()).add(relative)
+        self.assertTrue(actions, "no pinned actions found; the parser stopped matching")
+        for action, revisions in actions.items():
+            self.assertEqual(
+                len(revisions),
+                1,
+                f"{action} is pinned to different revisions across the hosts: {sorted(revisions)}",
+            )
+        for key, files in versions.items():
+            self.assertEqual(
+                len(files),
+                len(workflows),
+                f"{key} is not pinned by every workflow: missing from "
+                f"{sorted(set(workflows) - files)}",
+            )
 
     def test_lint_script_resolves_a_usable_shellcheck(self) -> None:
         script = (ROOT / "scripts" / "lint.sh").read_text(encoding="utf-8")
@@ -284,6 +351,15 @@ class ReleaseProcedureTests(unittest.TestCase):
         result = run_script("verify", repository)
         self.assertEqual(result.returncode, 2)
         self.assertIn("file set does not match", result.stderr)
+
+    def test_verify_refuses_to_author_its_own_checksums(self) -> None:
+        """A missing SHA256SUMS.txt must fail, not be regenerated from the bytes under test."""
+        repository = self.fixture()
+        run_script("build", repository)
+        (repository / "dist" / "SHA256SUMS.txt").unlink()
+        result = run_script("verify", repository)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("only `build` may author a checksum file", result.stderr)
 
     @staticmethod
     def _mkdir(path: Path) -> Path:

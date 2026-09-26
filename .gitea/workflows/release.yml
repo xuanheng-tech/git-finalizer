@@ -12,6 +12,12 @@ on:
 permissions:
   contents: write
 
+# One run per tag: the publisher is a GET-then-POST, so two concurrent runs for the same tag could
+# both see "no release yet" and create two.
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -60,7 +66,11 @@ jobs:
           set -euo pipefail
           python3 -B scripts/release.py preflight "$RELEASE_TAG"
 
+      # Warm the linter for the build user. Best effort: this host has seen ten-minute flaky
+      # downloads here, and scripts/lint.sh resolves shellcheck itself and fails with a remedy when
+      # nothing usable exists. The lint step below stays fatal.
       - name: Install shellcheck
+        continue-on-error: true
         run: |
           set -euo pipefail
           chown -R ubuntu:ubuntu "$GITHUB_WORKSPACE"
@@ -90,7 +100,7 @@ jobs:
           set -euo pipefail
           python3 -B scripts/release.py build "$RELEASE_TAG"
 
-      - name: Verify release package and write checksums
+      - name: Verify release package against its checksums
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
