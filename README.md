@@ -49,8 +49,10 @@ terminal and an automation layer can rely on "it stopped, and here is why".
 
 There is no package index. Releases are published as GitHub Release assets:
 each one carries `git-finalizer-<version>.tar.gz` plus a `SHA256SUMS.txt` that names it, from
-<https://github.com/xuanheng-tech/git-finalizer/releases>. Fetch both, verify the artifact, then
-install it.
+<https://github.com/xuanheng-tech/git-finalizer/releases>. GitHub carries every release from `v1.5.0`
+onward; earlier versions were published on the governed delivery remote described in
+[docs/release-governance.md](docs/release-governance.md), so they are not listed here. Fetch both,
+verify the artifact, then install it.
 
 ```bash
 curl -fsSLO https://github.com/xuanheng-tech/git-finalizer/releases/download/v1.5.0/SHA256SUMS.txt
@@ -217,10 +219,13 @@ contract or the Skill payload: [CONTRIBUTING.md](CONTRIBUTING.md).
 Version-relevant work updates, in one preparation batch: the `git-finalize` `VERSION`, the companion
 `VERSION` literals, the two current-release declarations above, `tool_version` in
 `tool_cli_contract.json` and `tool_skill_manifest.json`, and the matching `CHANGELOG.md` section.
-`scripts/release.py preflight <tag>` is the gate that checks all of it.
-`CHANGELOG.md` is the authoritative record and the source of release notes. **Merging to the default
-branch is not a release**: a release happens only when a separately created annotated tag is pushed,
-which triggers the release workflow. That workflow re-verifies the version batch, builds a
+Different gates own different parts of that list: `scripts/release.py preflight <tag>` binds the
+version literals, the contract digest and the Skill-payload pins, while `just check` binds the README
+declarations and the presence of the `CHANGELOG.md` section, which the release job then extracts as
+the release notes. [docs/release-governance.md](docs/release-governance.md) is the authoritative
+list. `CHANGELOG.md` is the authoritative record and the source of release notes. **Merging to the
+default branch is not a release**: a release happens only when a separately created annotated tag is
+pushed, which triggers the release workflow. That workflow re-verifies the version batch, builds a
 deterministic tarball, rebuilds it to prove byte-identical output, checks the file set against the
 installation contract, and publishes the artifact with `SHA256SUMS.txt`.
 

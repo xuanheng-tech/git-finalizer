@@ -1,7 +1,15 @@
 # Agent notes
 
-Release version consistency (entry-script `VERSION`, companion `VERSION` literals, the README
-current-release declarations, `tool_cli_contract.json` and `tool_skill_manifest.json`
-`tool_version`, the manifest's `public_cli_contract_sha256` binding, and the matching
-`CHANGELOG.md` section) is verified by the release workflow preflight before any release
-mutation. See README "Development and releases".
+`scripts/release.py preflight <tag>` binds the literals it can read: the entry-script `VERSION` and
+the three companion `VERSION` literals, the README `当前版本` declaration, `tool_version` in
+`tool_cli_contract.json` and `tool_skill_manifest.json`, `contract_version` against
+`toolchain_compatibility.json`, the manifest's `public_cli_contract_sha256` binding, all three
+Skill-payload pins (root manifest plus both mirrors), and `LICENSE` presence. It does **not** read
+`CHANGELOG.md`.
+
+The rest of the version batch is bound by other gates: the English current-release declaration and
+the matching `CHANGELOG.md` section by `just check` (`tests/run.sh`, `tests/test_changelog.py`), and
+the release notes themselves by `scripts/changelog.py extract <tag>` in the release workflow, which
+fails before publishing if the section is missing. Every gate reads the working tree, so they must be
+run in a clean checkout of the commit being tagged. See README "Development and releases" and
+`docs/release-governance.md` for the authoritative list.

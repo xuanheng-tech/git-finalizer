@@ -30,9 +30,13 @@ Verified baseline: **Ubuntu 24.04 LTS** with system Bash, Git and Python 3.12, p
 ```bash
 just check        # full gate: shell suites, unit tests, Skill validation, contract check
 just lint         # shellcheck over git-finalize, tool-skill-sync, scripts/ and tests/
-just skill-check  # source/live Skill consistency (diagnostic only, writes nothing)
 bash tests/run.sh # the shell test suites on their own
 ```
+
+`just skill-check` compares the source Skill against the **installed** one, so it only works where a
+production Skill exists; on a clean clone it exits 2 with `live Skill directory is missing`, which is
+not a failure of your change. The install-free equivalent already runs as the last line of
+`just check`: `./tool-skill-sync --source-repo git-finalizer="$PWD" check --source-only git-finalizer`.
 
 `just check` is the portable contract gate: it needs only Bash, Git, Python and `just`, so it must
 keep running on a clean clone with no extra tooling. Static lint of the shell surface is a separate
@@ -72,9 +76,48 @@ These are byte-bound and must be updated together, in one commit:
 | `tool_cli_contract.json` | `public_cli_contract_sha256` in `tool_skill_manifest.json` |
 | `skills/git-change-delivery/` payload files | `canonical_skill_sha256` in the root manifest **and** both mirrors under `manifests/` |
 | `git-finalize` + companion `VERSION` literals | README current-release declarations, `CHANGELOG.md` section, `tool_version` in contract and manifest |
+| `tool_cli_contract.json` `contract_version` | `git_finalizer_contract_version` in `toolchain_compatibility.json` |
+| `LICENSE` | required to exist; `preflight` refuses a release without it |
+| the two `RELEASED_CANONICAL_SKILL_SHA256` registries (`tooling/tool_skill_sync.py`, `skills/git-change-delivery/deploy.py`) | kept equal to each other, and each entry must be a payload a released ref actually carries |
 
 A released `CHANGELOG.md` section and any pushed tag are history: they are never edited or
 rewritten. Correct the record in a new section instead.
+
+Re-pin the digests after changing anything bound, rather than editing them by hand. The root manifest
+carries Git Finalizer's own contract digest; each mirror under `manifests/` carries **its own
+tool's** contract digest and must keep it — the only value shared by all three is the Skill payload.
+So the update rewrites one key on the root manifest and one key per mirror, in place, preserving each
+file's formatting:
+
+```bash
+python3 -B - <<'PY'
+import pathlib, re, sys
+sys.path.insert(0, "tooling")
+import tool_skill_sync as sync
+
+root = pathlib.Path.cwd()
+contract = sync.sha256_file(root / "tool_cli_contract.json")
+payload = sync.tree_sha256(root / "skills" / sync.SKILL_NAME, sync.SKILL_PAYLOAD)
+targets = {root / "tool_skill_manifest.json": {"public_cli_contract_sha256": contract}}
+for mirror in sorted((root / "manifests").glob("*/tool_skill_manifest.json")):
+    targets[mirror] = {"canonical_skill_sha256": payload}
+for path, pins in targets.items():
+    text = original = path.read_text(encoding="utf-8")
+    for key, digest in pins.items():
+        text, hits = re.subn(
+            rf'("{key}":\s*")[0-9a-f]{{64}}(")', rf"\g<1>{digest}\g<2>", text
+        )
+        if hits != 1:
+            raise SystemExit(f"{path}: expected exactly one {key} pin, found {hits}")
+    if text != original:
+        path.write_text(text, encoding="utf-8")
+    print(f"{path.relative_to(root)}: payload={payload[:12]}")
+PY
+```
+
+`just check` and `preflight` fail on a stale pin, so this is the only supported way to refresh them.
+It is idempotent — running it when nothing changed rewrites no bytes, including the mirrors' own
+contract digests — which is what makes it safe to run before you know whether you needed it.
 
 ## Version and release flow
 

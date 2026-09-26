@@ -54,14 +54,32 @@ Small, unscheduled, each one a real gap rather than a polish item.
 - `preflight` accepts a tag that already exists, so double publication is stopped only by the person
   running the runbook. A mechanical guard has to decide which host to ask, because a checkout of one
   host cannot see a tag published only on the other.
-- Nothing lets a third party trace a published tarball back to its source commit: packaged manifests
-  carry the literal `tool_commit: "@release"` by design and there are no build attestations, so the
-  measured table in [release-governance.md](release-governance.md) is currently the only bridge.
+- Nothing lets a third party *cryptographically* trace a published tarball back to its source commit:
+  packaged manifests carry the literal `tool_commit: "@release"` by design and there are no build
+  attestations. The bridge that does exist is reproducible construction — build from the tag and
+  compare digests, as [release-governance.md](release-governance.md) documents. An attestation step
+  would need `id-token`/`attestations` permissions, which the governance document currently forbids.
+- Only the GitHub job checks the bytes after publication. The Gitea publisher creates a draft, uploads
+  `dist/` and flips it public, then prints an asset count — it never re-downloads what it published,
+  so a partially uploaded or replaced Gitea release can pass. Give the Gitea job the same
+  re-download-and-compare step the GitHub job runs, against the digest recorded before upload.
 - The `docs/...` links in the shipped `README.md` resolve in the repository, not inside the tarball,
   because `docs/` is not part of the package. Either outcome is fine, but choosing it changes the
   artifact file set, so it belongs to a version batch.
 - `.gitea/workflows/release.yml` has not run as shipped since the `v1.5.0` candidate edited it: the
   Gitea release job last executed on older bytes, so the next Gitea release is its first real test.
+- The release jobs do not record the environment that produced a digest. Both install a pinned Python
+  that nothing then executes (every gate calls `python3`, and the shipped CLI hardcodes
+  `/usr/bin/python3`), the GitHub runner image is pinned while the Gitea runner asks for
+  `ubuntu-latest`, and `tar`/`gzip`/locale are the variables the byte recipe cannot control. Print
+  `python3 -V`, `tar --version` and `gzip --version` into the job log, or drop the unused interpreter
+  install, so a cross-host divergence is attributable instead of arguable.
+- `just check` runs the same commands on both hosts but not always the same set of suites: a few
+  groups are gated on an optional integration being installed on `PATH` and report themselves as
+  skipped rather than failing. That is intended, but it means a green check on one host is not
+  proof that the other executed the same number of groups, so read the skipped-group counts in the
+  job log instead of assuming parity. Making that comparison mechanical (a recorded expected count
+  per host) needs a decision about which host owns which expectation.
 
 ## 5. Dependency automation (Renovate)
 

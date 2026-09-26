@@ -43,6 +43,24 @@ change is in the released-lineage gate of `tool-skill-sync`, described in the se
   newly added document cannot ship unscanned. Released `CHANGELOG.md` sections stay outside the
   private-path scan: a published section is immutable, and older ones quote the paths they
   documented as removed.
+- `scripts/release.py verify` refuses to create `dist/SHA256SUMS.txt` when it is missing: a check that
+  can write its own expected value proves nothing, so only `build` authors checksums. The GitHub
+  release job now records the digest before uploading and compares the re-downloaded tarball against
+  that value, and asserts that the published release carries exactly the checksum file and the
+  tarball — an extra or missing asset fails the job instead of passing unnoticed.
+- The Gitea release job got the two guards the quality job already had: a per-tag `concurrency` group
+  (its publisher is a check-then-create sequence, so two runs for one tag could both see "no release
+  yet") and a best-effort shellcheck warm-up, since `just lint` resolves the linter itself.
+- New gates: release jobs cannot publish the same tag twice, a linter warm-up may not fail a run that
+  can lint, and all four workflow files must pin the same action revisions and tool versions — one
+  host's dependency bot can no longer drift the build environment silently.
+- Corrected documentation that credited gates with work they do not do: `preflight` never reads
+  `CHANGELOG.md` and binds only the Chinese README declaration (the English one and the CHANGELOG
+  section are bound by `just check`, and the release notes by `changelog.py extract`); the release
+  trigger glob accepts tags `preflight` rejects; a re-run of a job that already published fails at
+  create rather than republishing; only GitHub verifies bytes after publication. `CONTRIBUTING.md`
+  gains a verified re-pin command for the manifest digests, notes that each sibling mirror keeps its
+  own contract digest, and marks `just skill-check` as needing an installed Skill.
 
 ## 1.5.0
 

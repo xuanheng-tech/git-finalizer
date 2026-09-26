@@ -31,31 +31,44 @@ Both hosts evaluate a release workflow **from the tree of the pushed tag's commi
   none of those commits contained `.github/workflows`.
 - The first tag created from a commit that *does* contain `.github/workflows/release.yml` will create
   a real public GitHub Release. Treat that as irreversible.
-- Trigger shape differs only in publication mechanics, never in gating:
-  - Gitea: `POST` draft release → upload assets from `dist/` → `PATCH {"draft":false}` →
-    prints `published_release=<tag> assets=<n>`.
+- The trigger glob is wider than the release contract: `v*.*.*` also matches `v1.6.0-rc.1` and
+  `v1.6.0.1`, both of which `preflight` rejects. Pushing one buys a red release run for a version
+  that will never ship, and the tag then stays. Release tags are `vX.Y.Z` and nothing else.
+- Publication mechanics differ, and with them the post-publish guarantee:
+  - Gitea: `GET` the tag's release first and refuse if one exists → `POST` draft → upload assets
+    from `dist/` → `PATCH {"draft":false}` → prints `published_release=<tag> assets=<n>`. It does
+    **not** re-download what it published.
   - GitHub: `gh release create` publishes immediately with both assets attached, then a following
-    step re-downloads the published assets and verifies them.
+    step re-downloads the assets and verifies them.
+  Both hosts run the same gates before publishing; only GitHub verifies the bytes after publication.
+  That asymmetry is a standing item in [maintenance-backlog.md](maintenance-backlog.md).
 
 Both run, in this order and on both hosts: `preflight` → `just lint` → `just check` → `build` →
 `verify` → release-notes extraction → publish. A tag whose version batch disagrees fails at
 `preflight` before anything is published.
 
+Every one of those steps reads the **working tree**, not the tag object: nothing in
+`scripts/release.py` inspects `git status` or compares a file against `HEAD`. The release jobs are
+safe because they check out the tag commit and assert `HEAD` equals it before running anything, so a
+manual run has to happen in a clean checkout of the commit being tagged.
+
 ## Version batch (what preflight enforces)
 
 `scripts/release.py preflight vX.Y.Z` refuses the release unless all of the following agree:
 
-- the tag name equals the `git-finalize` `VERSION`, and `VERSION` equals the README declarations;
+- the tag name equals the `git-finalize` `VERSION`, and `VERSION` equals the README `当前版本`
+  declaration (the English `Current stable release:` line is bound by `just check`, not here);
 - all three governance companions declare the same `VERSION`;
 - `tool_cli_contract.json` and `tool_skill_manifest.json` declare the same `tool_version`, and
   `contract_version` matches `toolchain_compatibility.json`;
 - the manifest's `public_cli_contract_sha256` equals the bytes of the shipped
   `tool_cli_contract.json`;
-- the root manifest **and both sibling mirrors** bind the actual Skill payload tree hash;
-- `LICENSE` is present in the packaged surface.
-
-It also refuses to run against a dirty worktree implicitly: the workflow checks out the exact tag
-commit, so the gate always sees the tagged bytes.
+- the root manifest **and both sibling mirrors** bind the actual Skill payload tree hash. A mirror's
+  own `public_cli_contract_sha256` is that sibling's contract digest, which this repository does not
+  ship and therefore does not verify — never overwrite it with Git Finalizer's digest;
+- `LICENSE` is present in the packaged surface;
+- the `CHANGELOG.md` section is **not** checked here: `just check` requires the declared version to
+  have a section, and the release job fails when `scripts/changelog.py extract` returns nothing.
 
 ## Artifact and checksum consistency
 
@@ -67,13 +80,16 @@ same commit.
 
 Per-run guarantees:
 
-- `build` produces the tarball, rebuilds it in the same job, and fails if the two differ;
+- `build` produces the tarball, rebuilds it in the same job, and fails if the two differ; it is the
+  only step allowed to author `dist/SHA256SUMS.txt`;
 - `verify` re-opens the artifact and fails unless the file set equals the installation contract, no
   member path is absolute or traverses `..`, the entry point is `0755`, and its embedded `VERSION`
-  equals the tag;
-- `dist/SHA256SUMS.txt` is written from the artifact bytes and checked with `sha256sum --check`;
-- the GitHub job additionally **downloads the assets back from the published release** and verifies
-  the digest, so a checksum is never only self-declared.
+  equals the tag. It compares against the checksum file `build` wrote and **refuses to create one**,
+  because a check that can write its own expected value is not a check;
+- the GitHub job additionally **downloads the assets back from the published release** and compares
+  the downloaded tarball against the digest recorded *before* the upload, asserts that the published
+  release carries exactly `SHA256SUMS.txt` plus the tarball, and re-checks the checksum file itself —
+  so the value proven is not one that arrived in the same download.
 
 <a name="cross-host-parity"></a>
 ### Cross-host parity
@@ -95,7 +111,8 @@ sort order, or runner image), not something to paper over by publishing one host
 
 ## Publishing permissions
 
-- `ci.yml` / `quality.yml`: `permissions: contents: read`.
+- `ci.yml` and `quality.yml` (`.github/workflows/ci.yml`, `.gitea/workflows/quality.yml`):
+  `permissions: contents: read`.
 - `release.yml` (both hosts): `permissions: contents: write` only — no packages, no pull-request
   writes, no id-token.
 - GitHub organization setting for this repository: default workflow permissions `read`, and
@@ -120,7 +137,8 @@ source repository rather than the release artifact.
 
 1. A release-preparation batch is merged to `main` and contains: version bump in `git-finalize` and
    the three companions, README current-release declarations, `tool_version` in contract and manifest,
-   a dated `CHANGELOG.md` section, and any manifest/contract re-pins made in the same commit.
+   a `CHANGELOG.md` section for that version, and any manifest/contract re-pins made in the same
+   commit.
 2. Decide the host. For the first public release the host is **GitHub**; do not also publish that
    version on Gitea unless you intend to mirror it and compare digests.
 3. Confirm the candidate:
@@ -138,7 +156,9 @@ source repository rather than the release artifact.
 5. Record the release decision in the release request: candidate SHA, the `preflight` line it
    printed, the `selfcheck` digest, which host publishes, and that no other host will publish the
    same version unless the digest comparison below is performed afterwards. The approved decisions
-   become a row in [Release record](#release-record) once the release exists.
+   become a row in [Release record](#release-record) once the release exists. A digest is a property
+   of the commit it was built from: run `selfcheck` while standing on the candidate, because a later
+   commit — even a docs-only one — yields a different number for the same version.
 
 The first release out of this model was `v1.5.0`: the open-sourcing, maintenance-governance and CI
 batch that follows the released `1.4.0` line. `v1.4.0` stays exactly as published on Gitea and is
@@ -187,6 +207,11 @@ Accept the release only when all of these hold:
 ### If it fails
 
 - Workflow failure: fix forward with a normal commit and re-run the job. The tag may stay.
+- A re-run of a job that already published will not quietly republish: GitHub's create call refuses a
+  second release for the same tag, and Gitea refuses earlier still at its pre-create lookup. Both
+  release jobs group concurrency by tag, so two runs for one tag cannot overlap. Read the existing
+  release object before assuming the publication is broken — usually it is fine and only the job went
+  red.
 - Wrong bytes or wrong assets attached: delete **the release object** (`gh release delete v1.5.0
   --repo … --cleanup-history` is history cleanup of a *release*, never of the repository) and
   republish after the fix.
@@ -195,6 +220,26 @@ Accept the release only when all of these hold:
   version's section.
 - A release whose existence you must retract is an incident, not a maintenance action: say so
   explicitly in the next release notes.
+
+## Verifying a release without trusting this project
+
+There is no build attestation, no signature and no SBOM, and the packaged manifests carry the
+placeholder `tool_commit: "@release"` because a tracked file cannot contain its own commit id. So a
+third party's verification procedure is reproducible by construction:
+
+```bash
+git clone --branch v1.5.0 https://github.com/xuanheng-tech/git-finalizer.git && cd git-finalizer
+python3 -B scripts/release.py build v1.5.0
+sha256sum dist/git-finalizer-1.5.0.tar.gz   # must equal the published SHA256SUMS.txt entry
+```
+
+If the two differ, the difference is in the build environment, and the recipe is deliberately narrow
+enough to make that diagnosable: `tar` and `gzip` behaviour and locale sort order are the variables,
+which is why the member metadata is pinned in the recipe (sorted names, `ustar`, numeric uid/gid `0`,
+mtime from the commit, `gzip -n`, staged directories `0755`). The runner image is part of that
+environment: GitHub pins `ubuntu-24.04`, while the Gitea job asks for `ubuntu-latest`, so a Gitea
+digest is only comparable once the two hosts are known to run the same tools — an open item in
+[maintenance-backlog.md](maintenance-backlog.md).
 
 ## Release record
 
