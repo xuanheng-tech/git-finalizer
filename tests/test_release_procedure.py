@@ -188,6 +188,17 @@ class ReleaseProcedureTests(unittest.TestCase):
                         f"{relative} has a mis-indented step header: {line!r}",
                     )
 
+    def test_checkouts_fetch_the_tags_the_gates_read(self) -> None:
+        """A depth-1 checkout has no tags, and the contract gate reads them."""
+        for relative in (
+            ".gitea/workflows/quality.yml",
+            ".github/workflows/ci.yml",
+            ".github/workflows/release.yml",
+        ):
+            with self.subTest(workflow=relative):
+                text = (ROOT / relative).read_text(encoding="utf-8")
+                self.assertIn("fetch-depth: 0", text, f"{relative} cannot see any tags")
+
     def test_lint_script_resolves_a_usable_shellcheck(self) -> None:
         script = (ROOT / "scripts" / "lint.sh").read_text(encoding="utf-8")
         self.assertIn('"$@" --version', script)

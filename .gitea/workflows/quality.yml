@@ -17,6 +17,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          # The contract gate reads annotated tags (release record, version history), so a
+          # depth-1 checkout cannot run it.
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install uv

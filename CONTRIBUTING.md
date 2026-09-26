@@ -40,6 +40,11 @@ keep running on a clean clone with no extra tooling. Static lint of the shell su
 present-but-unusable binary falls back to `uvx --from shellcheck-py`) and fails with a clear message
 when neither is available.
 
+The gate reads the repository's annotated tags — the release record in
+[docs/release-governance.md](docs/release-governance.md) is checked against them — so a shallow clone
+has to be completed first: `git fetch --unshallow --tags`. CI checks out with `fetch-depth: 0` for
+the same reason.
+
 ## How a change is expected to look
 
 1. **State the surface.** Which command, mode or contract element changes? Public CLI flags,

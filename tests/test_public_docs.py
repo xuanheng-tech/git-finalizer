@@ -108,6 +108,11 @@ class PublicDocumentationTests(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(rows), 2, "release record lost its rows")
         tags = set(git_output("tag", "--list").split())
+        if not tags:
+            self.fail(
+                "this checkout carries no tags, so the record cannot be checked: clone without "
+                "--depth, or run `git fetch --unshallow --tags`"
+            )
         seen: set[str] = set()
         for version, host, commit, tag_object, digest, size in rows:
             tag = version.strip("`")
