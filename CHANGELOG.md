@@ -138,7 +138,9 @@ Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released
   gate. The resolver proves a usable `shellcheck` by executing it and falls back to
   `uvx --from shellcheck-py`, because a host may ship the binary without execute permission for the
   CI user; a workflow step that only tested `command -v shellcheck` reported success while the lint
-  itself died with exit 127.
+  itself died with exit 127. The Gitea workflows now install the dependency explicitly for the build
+  user before linting, `scripts/lint.sh` accepts a `GF_SHELLCHECK` override, probes each candidate by
+  executing it twice, and exits with a stated remedy when none is usable.
 - Release preparation batch for `1.5.0`: version literals in the entrypoint and the three governed
   companions, `tool_version` in the CLI contract and root manifest, the README release declarations,
   and the manifest's `public_cli_contract_sha256` re-pin to the new contract bytes move together.

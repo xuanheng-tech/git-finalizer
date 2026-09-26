@@ -60,11 +60,22 @@ jobs:
           set -euo pipefail
           python3 -B scripts/release.py preflight "$RELEASE_TAG"
 
+      - name: Install shellcheck
+        run: |
+          set -euo pipefail
+          chown -R ubuntu:ubuntu "$GITHUB_WORKSPACE"
+          if ! sudo -u ubuntu -H env "PATH=/home/ubuntu/.local/bin:$PATH" \
+              shellcheck --version >/dev/null 2>&1; then
+            sudo -u ubuntu -H env "PATH=$PATH" uv tool install shellcheck-py
+          fi
+          sudo -u ubuntu -H env "PATH=/home/ubuntu/.local/bin:$PATH" \
+            shellcheck --version >/dev/null
+
       - name: Lint shell scripts
         run: |
           set -euo pipefail
           chown -R ubuntu:ubuntu "$GITHUB_WORKSPACE"
-          sudo -u ubuntu -H env "PATH=$PATH" just lint
+          sudo -u ubuntu -H env "PATH=/home/ubuntu/.local/bin:$PATH" just lint
 
       - name: Run project checks
         run: |

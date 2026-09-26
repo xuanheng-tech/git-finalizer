@@ -190,10 +190,54 @@ class ReleaseProcedureTests(unittest.TestCase):
 
     def test_lint_script_resolves_a_usable_shellcheck(self) -> None:
         script = (ROOT / "scripts" / "lint.sh").read_text(encoding="utf-8")
-        self.assertIn("shellcheck --version", script)
+        self.assertIn('"$@" --version', script)
+        self.assertIn("GF_SHELLCHECK", script)
         self.assertIn("shellcheck-py", script)
         self.assertIn("no usable shellcheck", script)
         self.assertTrue((ROOT / "scripts" / "lint.sh").stat().st_mode & 0o111)
+
+    def test_lint_resolver_uses_an_explicit_override_or_fails_cleanly(self) -> None:
+        """A CI host may only have a shellcheck the build user cannot execute."""
+        with tempfile.TemporaryDirectory(prefix="gf-lint-resolver-") as temporary:
+            directory = Path(temporary)
+            stub = directory / "shellcheck"
+            log = directory / "invocations.log"
+            stub.write_text(
+                "#!/bin/sh\n"
+                'if [ "$1" = "--version" ]; then echo stub; exit 0; fi\n'
+                'echo "invoked: $*" >> "$STUB_LOG"\nexit 0\n',
+                encoding="utf-8",
+            )
+            stub.chmod(0o755)
+            environment = {
+                "PATH": "/usr/bin:/bin",
+                "HOME": str(directory),
+                "GF_SHELLCHECK": str(stub),
+                "STUB_LOG": str(log),
+            }
+            override = subprocess.run(
+                ["/bin/bash", "scripts/lint.sh"],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(override.returncode, 0, override.stderr)
+            invocations = log.read_text(encoding="utf-8")
+            self.assertIn("--exclude=SC2016", invocations)
+            self.assertIn("git-finalize", invocations)
+
+            missing = subprocess.run(
+                ["/bin/bash", "scripts/lint.sh"],
+                cwd=ROOT,
+                env={"PATH": str(directory / "empty"), "HOME": str(directory)},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(missing.returncode, 2, missing.stdout)
+            self.assertIn("no usable shellcheck", missing.stderr)
 
 
     def test_verify_rejects_a_package_with_the_wrong_file_set(self) -> None:
