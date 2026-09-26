@@ -198,7 +198,8 @@ precise blockers and zero mutation in that environment.
 ## Development and releases
 
 ```bash
-just check        # shell suites, unit tests, Skill validation, contract check, shellcheck
+just check        # shell suites, unit tests, Skill validation, contract check
+just lint         # shellcheck over the bash entrypoint, scripts and test harness
 bash tests/run.sh # shell test suites alone
 ```
 
@@ -215,7 +216,9 @@ deterministic tarball, rebuilds it to prove byte-identical output, checks the fi
 installation contract, and publishes the artifact with `SHA256SUMS.txt`.
 
 CI and releases run on both Gitea Actions (`.gitea/workflows/`) and GitHub Actions
-(`.github/workflows/`) against the same `just check` gate and the same build recipe.
+(`.github/workflows/`) against the same `just check` gate plus a separate `just lint` step, and
+the same build recipe. `just check` deliberately needs only Bash, Git, Python and `just`, so a
+clean clone can run the contract gate without installing extra linters.
 
 ## License
 

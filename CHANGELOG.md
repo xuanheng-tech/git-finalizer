@@ -56,16 +56,22 @@ as `tool-skill-sync` 2.0.0. Per the header rule this note does not backfill or r
   secret-shaped files, session and workspace-policy directories), a host-only workspace policy file that
   no code path reads was untracked while remaining on disk, and a stray empty tracked file named `0600`
   was removed.
+- Repaired the Gitea release workflow, which the step extraction had left with three mis-indented
+  step headers and therefore unparseable YAML: it would have failed the next tag on that host. All
+  four workflow files are now parse-checked by test, and a structural guard rejects any step header
+  that is not at the indentation these files use.
 - Documented one pre-existing classification asymmetry instead of silently changing it: an empty
   staged scope is reported as `blocked`/`local_validation`/`resolve_blocker_and_retry` by
   `--mode verify-only` but as `failed`/`staging`/`inspect_failure` by `--mode commit-only` and the
   default mode, with the same reason and the same zero-mutation outcome. The behaviour is identical
   in the released 1.3.0 and 1.4.0 binaries, is now pinned by test, and normalising it is left to a
   dedicated classification batch rather than bundled into open-sourcing.
-- Wired `shellcheck` into `just check`, so the bash entrypoint and every shell suite are linted by the
-  same gate CI runs. This batch does not bump the version: the next release preparation batch must
-  declare a new version, matching README declarations and a dated CHANGELOG section before any tag is
-  created.
+- Added `just lint` (`scripts/lint.sh`) as a separate CI step on all four workflows, and kept
+  `just check` limited to Bash, Git, Python and `just` so a clean clone can always run the contract
+  gate. The resolver proves a usable `shellcheck` by executing it and falls back to
+  `uvx --from shellcheck-py`, because a host may ship the binary without execute permission for the
+  CI user; a workflow step that only tested `command -v shellcheck` reported success while the lint
+  itself died with exit 127.
 
 Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released trees):
 

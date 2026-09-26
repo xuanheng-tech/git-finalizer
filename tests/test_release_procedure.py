@@ -143,6 +143,40 @@ class ReleaseProcedureTests(unittest.TestCase):
         ):
             self.assertIn(required, members)
 
+    def test_ci_workflows_are_well_formed_and_gate_lint_and_checks(self) -> None:
+        import re as _re
+
+        workflows = (
+            ".gitea/workflows/quality.yml",
+            ".gitea/workflows/release.yml",
+            ".github/workflows/ci.yml",
+            ".github/workflows/release.yml",
+        )
+        for relative in workflows:
+            with self.subTest(workflow=relative):
+                text = (ROOT / relative).read_text(encoding="utf-8")
+                self.assertIn("just check", text)
+                self.assertIn("just lint", text)
+                # A step header must sit at the six-space indentation used by these
+                # files; deeper or shallower indentation silently breaks parsing.
+                for line in text.splitlines():
+                    header = _re.match(r"^( *)- name:", line)
+                    if header is None:
+                        continue
+                    self.assertIn(
+                        len(header.group(1)),
+                        (0, 6),
+                        f"{relative} has a mis-indented step header: {line!r}",
+                    )
+
+    def test_lint_script_resolves_a_usable_shellcheck(self) -> None:
+        script = (ROOT / "scripts" / "lint.sh").read_text(encoding="utf-8")
+        self.assertIn("shellcheck --version", script)
+        self.assertIn("shellcheck-py", script)
+        self.assertIn("no usable shellcheck", script)
+        self.assertTrue((ROOT / "scripts" / "lint.sh").stat().st_mode & 0o111)
+
+
     def test_verify_rejects_a_package_with_the_wrong_file_set(self) -> None:
         # Removing one packaged file must fail the file-set gate, not silently pass.
         repository = self.fixture()

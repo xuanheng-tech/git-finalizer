@@ -51,12 +51,18 @@ jobs:
           just-version: "1.21.0"
           github-token: ""
 
-            - name: Verify release version
+      - name: Verify release version
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           python3 -B scripts/release.py preflight "$RELEASE_TAG"
+
+      - name: Lint shell scripts
+        run: |
+          set -euo pipefail
+          chown -R ubuntu:ubuntu "$GITHUB_WORKSPACE"
+          sudo -u ubuntu -H env "PATH=$PATH" just lint
 
       - name: Run project checks
         run: |
@@ -64,14 +70,14 @@ jobs:
           chown -R ubuntu:ubuntu "$GITHUB_WORKSPACE"
           sudo -u ubuntu -H env "PATH=$PATH" just check
 
-            - name: Build deterministic release package
+      - name: Build deterministic release package
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           python3 -B scripts/release.py build "$RELEASE_TAG"
 
-            - name: Verify release package and write checksums
+      - name: Verify release package and write checksums
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |

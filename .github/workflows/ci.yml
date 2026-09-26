@@ -28,5 +28,8 @@ jobs:
           github-token: ""
       - name: Ensure shellcheck
         run: command -v shellcheck || (sudo apt-get update -y && sudo apt-get install -y --no-install-recommends shellcheck)
+      - name: Lint shell scripts
+        run: just lint
+
       - name: Run project checks
         run: just check

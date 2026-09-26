@@ -53,6 +53,9 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: python3 -B scripts/release.py preflight "$RELEASE_TAG"
+      - name: Lint shell scripts
+        run: just lint
+
       - name: Run project checks
         run: just check
       - name: Build deterministic release package

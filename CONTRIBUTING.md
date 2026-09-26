@@ -29,12 +29,16 @@ Verified baseline: **Ubuntu 24.04 LTS** with system Bash, Git and Python 3.12, p
 
 ```bash
 just check        # full gate: shell suites, unit tests, Skill validation, contract check
-just shellcheck   # bash entrypoint and test harness lint
+just lint         # shellcheck over git-finalize, tool-skill-sync, scripts/ and tests/
 just skill-check  # source/live Skill consistency (diagnostic only, writes nothing)
 bash tests/run.sh # the shell test suites on their own
 ```
 
-`just check` is the gate CI runs. A pull request is expected to pass it on a clean checkout.
+`just check` is the portable contract gate: it needs only Bash, Git, Python and `just`, so it must
+keep running on a clean clone with no extra tooling. Static lint of the shell surface is a separate
+`just lint` step that CI runs in addition; `scripts/lint.sh` resolves a usable `shellcheck` (a
+present-but-unusable binary falls back to `uvx --from shellcheck-py`) and fails with a clear message
+when neither is available.
 
 ## How a change is expected to look
 

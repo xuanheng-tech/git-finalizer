@@ -3,7 +3,6 @@ default:
 
 check:
     bash tests/run.sh
-    shellcheck --exclude=SC2016 -- git-finalize tool-skill-sync tests/*.sh
     python3 -B -m unittest discover -s tests -p 'test_*.py'
     python3 -B skills/git-change-delivery/quick_validate.py skills/git-change-delivery
     python3 -B -m unittest discover -s skills/git-change-delivery -p 'test_*.py'
@@ -14,8 +13,10 @@ toolchain-check source_root="..":
     ./tool-skill-sync --source-root "{{source_root}}" --source-repo git-finalizer="$PWD" check --source-only snapshot-runner
     ./tool-skill-sync --source-root "{{source_root}}" --source-repo git-finalizer="$PWD" check --source-only git-finalizer
 
-shellcheck:
-    shellcheck --exclude=SC2016 -- git-finalize tool-skill-sync tests/*.sh
+lint:
+    bash scripts/lint.sh
+
+shellcheck: lint
 
 skill-check:
     python3 -B skills/git-change-delivery/deploy.py check
