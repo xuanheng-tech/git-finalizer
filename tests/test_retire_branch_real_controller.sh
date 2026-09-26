@@ -17,6 +17,7 @@ finalizer=$project_root/git-finalize
 tmp_root=$(mktemp -d /tmp/git-finalizer-real-controller.XXXXXX)
 current_case='startup'
 passed=0
+skipped=0
 feature_branch='feat/real-controller'
 
 cleanup() {
@@ -207,7 +208,7 @@ run_case() {
     shift
     if ! controller_available; then
         printf 'ok - %s (skipped: worktree-controller unavailable)\n' "$current_case"
-        passed=$((passed + 1))
+        skipped=$((skipped + 1))
         return
     fi
     "$@"
@@ -382,19 +383,21 @@ test_namespace_and_capability_blockers() {
         fail_assertion 'failed probe deleted the branch anyway'
 }
 
-if controller_available; then
-    run_case 'real controller plan validates and finalizer dry-run accepts' \
-        test_plan_status_and_finalizer_accept
-    run_case 'real retirement records receipt and blocks replay' \
-        test_retirement_record_and_replay_guards
-    run_case 'authority, policy, and OID drift fail closed' \
-        test_authority_and_oid_drift_fail_closed
-    run_case 'tampered plan and lock contention never mutate' \
-        test_tampered_plan_and_lock_contention
-    run_case 'namespace and capability blockers fail closed' \
-        test_namespace_and_capability_blockers
-else
-    printf 'ok - real controller suite skipped: worktree-controller unavailable\n'
-fi
+run_case 'real controller plan validates and finalizer dry-run accepts' \
+    test_plan_status_and_finalizer_accept
+run_case 'real retirement records receipt and blocks replay' \
+    test_retirement_record_and_replay_guards
+run_case 'authority, policy, and OID drift fail closed' \
+    test_authority_and_oid_drift_fail_closed
+run_case 'tampered plan and lock contention never mutate' \
+    test_tampered_plan_and_lock_contention
+run_case 'namespace and capability blockers fail closed' \
+    test_namespace_and_capability_blockers
 
-printf 'all %s real-controller integration groups passed\n' "$passed"
+if ((passed == 0 && skipped > 0)); then
+    printf 'real-controller integration: 0 groups executed, %s skipped (worktree-controller absent from PATH)\n' "$skipped"
+else
+    printf 'all %s real-controller integration groups passed' "$passed"
+    ((skipped == 0)) || printf ', %s skipped' "$skipped"
+    printf '\n'
+fi
