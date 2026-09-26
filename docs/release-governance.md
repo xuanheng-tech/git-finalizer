@@ -79,8 +79,12 @@ Per-run guarantees:
 Known-good anchor: the published `v1.4.0` artifact (`ae1d29683ca36a91…`, Gitea-only release) is
 reproduced byte-for-byte by `scripts/release.py` at that commit under `umask` 022, 002 and 077.
 
-GitHub has not published a release yet, so **cross-host byte equality is expected, not yet
-proven**. When the same version is ever published on both hosts, the two `git-finalizer-<version>.tar.gz`
+No version has been published on **both** hosts yet — `v1.4.0` is Gitea-only and `v1.5.0` is
+GitHub-only — so cross-host byte equality for one and the same version is still expected, not yet
+proven. What `v1.5.0` did prove is host independence of the recipe: the digest the GitHub runner
+built and published equals, byte for byte, the digest `scripts/release.py selfcheck` produced
+locally from the same commit (see the release record below), on different machines with different
+images. When the same version is ever published on both hosts, the two `git-finalizer-<version>.tar.gz`
 digests must be compared; a mismatch is a release defect (differing `tar`/`gzip` builds, locale
 sort order, or runner image), not something to paper over by publishing one host's file on the other.
 
@@ -121,10 +125,11 @@ source repository rather than the release artifact.
 4. Announce nothing before the tag exists; the tag is the release trigger.
 5. Record the release decision in the release request: candidate SHA, the `preflight` line it
    printed, the `selfcheck` digest, which host publishes, and that no other host will publish the
-   same version unless the digest comparison below is performed afterwards.
+   same version unless the digest comparison below is performed afterwards. The approved decisions
+   become a row in [Release record](#release-record) once the release exists.
 
-The first release out of this model is `v1.5.0`: the open-sourcing, maintenance-governance and
-CI batch that follows the released `1.4.0` line. `v1.4.0` stays exactly as published on Gitea and is
+The first release out of this model was `v1.5.0`: the open-sourcing, maintenance-governance and CI
+batch that follows the released `1.4.0` line. `v1.4.0` stays exactly as published on Gitea and is
 **never** re-created, re-tagged or re-published on GitHub — the GitHub history for it is the tag and
 the source, not a release object.
 
@@ -178,6 +183,24 @@ Accept the release only when all of these hold:
   version's section.
 - A release whose existence you must retract is an incident, not a maintenance action: say so
   explicitly in the next release notes.
+
+## Release record
+
+One row per published version, because the one-host rule is only auditable if the host each version
+went out on is written down. Production activation is tracked by `tool-skill-sync` on the
+maintainer machine and is deliberately **not** part of this record.
+
+| Version | Publishing host | Candidate commit | Annotated tag object | Artifact SHA-256 |
+| --- | --- | --- | --- | --- |
+| `v1.0.0` – `v1.4.0` | Gitea | `64806dae0805b3dc707e7eab848c8b40ee952ad3` for `v1.4.0` | `f768a6197268dc4a9be1b5d466464a3c2f6bf73c` for `v1.4.0` | `ae1d29683ca36a91…` |
+| `v1.5.0` | GitHub | `a59773ae5ea4aca781152ac289d46afcc91a93b9` | `12cc0f60d0a04296e1cf8527aa14673c3cb42cfb` | `8e16fc878de5e2ff715d035dde74292a240842a3bc296a4c4755c061f18df77c` |
+
+`v1.5.0` is the first release published through this model, and the first GitHub Release for the
+repository: tag pushed only to GitHub, published by `.github/workflows/release.yml` (run
+`36245062595`), with **no** Gitea release object for that version and no mirror. `v1.0.0` – `v1.4.0`
+keep their Gitea releases; their GitHub presence is the tags and the source history, never a release
+object. A future version may be mirrored on the second host only together with the digest comparison
+in [Cross-host parity](#cross-host-parity).
 
 ## Support boundary of the release contract
 
