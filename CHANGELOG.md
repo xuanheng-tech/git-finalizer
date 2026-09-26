@@ -60,6 +60,23 @@ as `tool-skill-sync` 2.0.0. Per the header rule this note does not backfill or r
   step headers and therefore unparseable YAML: it would have failed the next tag on that host. All
   four workflow files are now parse-checked by test, and a structural guard rejects any step header
   that is not at the indentation these files use.
+- Added `docs/release-governance.md` as the single authority for how a version is published: role
+  split (GitHub is the public distribution entry, Gitea is the governed delivery remote and holds the
+  v1.0.0 – v1.4.0 release record, production installation comes from `tool-skill-sync` bundles and
+  consumes neither host's artifact), the one-host-per-version rule, tag-trigger semantics on both hosts
+  including why pre-existing tags published nothing on GitHub, what `preflight` gates, the fixed build
+  recipe, the fact that cross-host byte equality is expected but not yet proven, the minimal
+  permissions each workflow declares, and a step-by-step first-public-release runbook with its
+  acceptance checks and explicit "never" list. Both release workflows and `CONTRIBUTING.md` point at
+  it, and the phase-closure SOP was corrected where it still claimed Gitea was the only release host.
+- Completed the public maintenance surface: README gained a `## Support` section stating the supported
+  standalone scope, the opt-in and non-promise status of optional integrations, and the unsupported
+  set; issue and pull-request templates now carry the review gate (affected surface, negative test,
+  hash-bound files, no private endpoints in the diff). A new documentation gate test enforces that
+  relative links resolve, that public documents contain no private endpoints or host paths, and that
+  the governance, support and template invariants stay in place — it immediately caught one
+  repository-root link left behind when the operating guide was relocated into `docs/`.
+
 - Documented one pre-existing classification asymmetry instead of silently changing it: an empty
   staged scope is reported as `blocked`/`local_validation`/`resolve_blocker_and_retry` by
   `--mode verify-only` but as `failed`/`staging`/`inspect_failure` by `--mode commit-only` and the

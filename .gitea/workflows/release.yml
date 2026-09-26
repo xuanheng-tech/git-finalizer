@@ -1,4 +1,6 @@
 name: release
+# Release authority, one-host-per-version, cross-host artifact parity and the first-public-release
+# runbook: see docs/release-governance.md
 
 # Gitea evaluates workflows from the pushed tag's commit; this does not backfill older commits.
 

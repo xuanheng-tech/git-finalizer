@@ -209,16 +209,39 @@ contract or the Skill payload: [CONTRIBUTING.md](CONTRIBUTING.md).
 Version-relevant work updates, in one preparation batch: the `git-finalize` `VERSION`, the companion
 `VERSION` literals, the two current-release declarations above, `tool_version` in
 `tool_cli_contract.json` and `tool_skill_manifest.json`, and the matching `CHANGELOG.md` section.
+`scripts/release.py preflight <tag>` is the gate that checks all of it.
 `CHANGELOG.md` is the authoritative record and the source of release notes. **Merging to the default
 branch is not a release**: a release happens only when a separately created annotated tag is pushed,
 which triggers the release workflow. That workflow re-verifies the version batch, builds a
 deterministic tarball, rebuilds it to prove byte-identical output, checks the file set against the
 installation contract, and publishes the artifact with `SHA256SUMS.txt`.
 
-CI and releases run on both Gitea Actions (`.gitea/workflows/`) and GitHub Actions
-(`.github/workflows/`) against the same `just check` gate plus a separate `just lint` step, and
-the same build recipe. `just check` deliberately needs only Bash, Git, Python and `just`, so a
-clean clone can run the contract gate without installing extra linters.
+`just check` deliberately needs only Bash, Git, Python and `just`, so a clean clone runs the
+contract gate without extra tooling; `just lint` (shellcheck) is a separate CI step. Both hosts —
+Gitea Actions (`.gitea/workflows/`) and GitHub Actions (`.github/workflows/`) — run the same gates
+and the same build recipe through `scripts/release.py`.
+
+**A version is published on exactly one host.** GitHub is the public distribution entry
+(release notes, tarball, checksums); Gitea is the governed delivery remote and holds the v1.0.0 –
+v1.4.0 release record. Trigger rules, permissions, cross-host artifact parity, and the step-by-step
+first-public-release runbook are in
+[docs/release-governance.md](docs/release-governance.md).
+
+## Support
+
+- **Supported:** the standalone CLI on Linux/POSIX — Bash, Git and Python 3 with the standard
+  library only, verified on Ubuntu 24.04 LTS — and the machine-readable result contract described in
+  [docs/agent-contract.md](docs/agent-contract.md). Only the latest stable release receives fixes.
+- **Supported as opt-in, not as an upstream promise:** Worktree Controller governance, Snapshot
+  Runner evidence binding, Gitea repository bootstrap and the review-file contracts. Git Finalizer
+  guarantees that a missing, unreadable or drifted external authority produces a precise blocker and
+  zero mutation; it does not guarantee that an unpublished or still-moving external contract keeps
+  working, and it will not weaken its own gates to accommodate one.
+- **Not supported:** Windows, `file://` or non-HTTP(S) hosting endpoints, destructive Git
+  operations (force push, amend, rebase, history rewrite, tag creation), and any workflow that
+  requires the tool to infer authorization it was not given.
+- **Not a security boundary:** the tool executes Git as your own user. Treat repository content,
+  diffs and captured evidence as untrusted input. See [SECURITY.md](SECURITY.md).
 
 ## License
 

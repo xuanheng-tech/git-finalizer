@@ -418,6 +418,6 @@ Gitea 目标）只在被明确请求时生效；缺失对应 authority 或依赖
 
 每个可选集成的外部布局知识都收敛到唯一带 `GF-INTEGRATION-ADAPTER` 标记的 adapter，边界矩阵、
 fail-closed blocker 与 Agent-facing machine-readable 结果合同见
-[`docs/integration-boundaries.md`](docs/integration-boundaries.md)，由
+[`integration-boundaries.md`](integration-boundaries.md)，由
 `tests/test_integration_boundaries.sh` 机器核对。
 

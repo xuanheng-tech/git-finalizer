@@ -20,7 +20,8 @@ branch retirement verified；随后才按现有人工流程处理 local worktree
 不自主清理、不删除 worktree。Worktree Controller 为 `available_external`（contract v5 绑定
 contract 3），其 plan/lease 生产与 lifecycle 更新仍属上层职责，不得据此声称自动清理。工具项目还
 必须记录 binary/entry 与 canonical Skill compatibility（含 installed live 与 source canonical 的
-tree hash 对照）；非工具项目记 `N/A`。正式 release 只由 pushed tag 触发的 `release.yml` 产生；
-合入 main 不构成发布，也不产生 Gitea Release 或 artifact。
+tree hash 对照）；非工具项目记 `N/A`。正式 release 只由 pushed tag 触发的 `release.yml` 产生，且一个版本只在一个主机首发（GitHub 为公开分发入口，
+Gitea 为受治理交付与历史记录；规则见 [`docs/release-governance.md`](../release-governance.md)）；
+合入 main 不构成发布，也不产生任何主机的 Release 或 artifact。
 
 使用 [`phase-closure-report-template.md`](phase-closure-report-template.md) 保留最小证据。

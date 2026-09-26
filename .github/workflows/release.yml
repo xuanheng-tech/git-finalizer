@@ -1,4 +1,6 @@
 name: release
+# Release authority, one-host-per-version, cross-host artifact parity and the first-public-release
+# runbook: see docs/release-governance.md
 
 # Gitea and GitHub both verify the same release contract through scripts/release.py.
 # Merging to the default branch is not a release: this runs only on an annotated tag push.

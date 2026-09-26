@@ -73,6 +73,9 @@ rewritten. Correct the record in a new section instead.
 
 ## Version and release flow
 
+See [docs/release-governance.md](docs/release-governance.md) for the authoritative process and the
+first-public-release runbook.
+
 - Version-relevant work updates the entrypoint `VERSION`, the companions, the README
   declarations, `tool_cli_contract.json`/`tool_skill_manifest.json`, and the matching
   `CHANGELOG.md` section in one preparation batch.
