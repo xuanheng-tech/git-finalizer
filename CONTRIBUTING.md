@@ -79,13 +79,17 @@ rewritten. Correct the record in a new section instead.
 ## Version and release flow
 
 See [docs/release-governance.md](docs/release-governance.md) for the authoritative process and the
-first-public-release runbook.
+first-public-release runbook, and [docs/maintenance-backlog.md](docs/maintenance-backlog.md) for work
+that is deferred on purpose: each entry names the condition that unblocks it, so an ordinary change
+must not quietly do part of it.
 
 - Version-relevant work updates the entrypoint `VERSION`, the companions, the README
   declarations, `tool_cli_contract.json`/`tool_skill_manifest.json`, and the matching
   `CHANGELOG.md` section in one preparation batch.
-- Merging to the default branch is **not** a release. A release happens only when a signed-off
-  annotated tag is pushed, which triggers the release workflow.
+- Merging to the default branch is **not** a release. A release happens only when an approved
+  annotated tag is pushed, which triggers the release workflow. Tags are annotated and carry the
+  release summary; they are not GPG-signed, which is why immutability is a process rule rather than a
+  host guarantee (see the release governance document).
 - The release job re-verifies the whole version batch, builds a deterministic tarball, rebuilds
   it for comparison, verifies the file set against the installation contract, and publishes the
   artifact with `SHA256SUMS.txt`. The tool itself never creates or pushes tags.

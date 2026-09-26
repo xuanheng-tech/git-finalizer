@@ -21,6 +21,10 @@ RELEASED_CANONICAL_LINEAGE = (
     ("v1.1.1", "3c8679b6cfd6578da41007feeea43e7ff83e8152e3daea9ab9154055642a92e2"),
     ("v1.2.0", "7b85ec9da739bd60f76736ae6352e642dbf880bbd089058cce4cf7a9c0b5c665"),
     ("v1.3.0", "9c05e5b279731a37b3ce15e2fbda7ae9962f81355cbafb86fa410f28ec19f527"),
+    # The integration-boundary release and the first public release shipped the
+    # same canonical payload, so both refs attest one digest.
+    ("v1.4.0", "0c82bceb12edde749aa6deddab25acb4ec083aeea92a37970ec64179ef92726b"),
+    ("v1.5.0", "0c82bceb12edde749aa6deddab25acb4ec083aeea92a37970ec64179ef92726b"),
 )
 
 
@@ -305,16 +309,38 @@ class ToolContractTests(unittest.TestCase):
             set(sync.RELEASED_CANONICAL_SKILL_SHA256),
             set(deploy.RELEASED_CANONICAL_SKILL_SHA256),
         )
-        incoming = sync.tree_sha256(
-            ROOT / "skills" / "git-change-delivery", sync.SKILL_PAYLOAD
-        )
-        self.assertNotIn(incoming, sync.RELEASED_CANONICAL_SKILL_SHA256)
         # The hand-enriched production tree captured during migration stays
         # untrusted on purpose: it was never a released canonical payload.
         self.assertNotIn(
             "c930b3564e5fbdd8ea9a1857eef9e5d1d7c04a2b02cd8ee2f0e95f2e12a3bc90",
             sync.RELEASED_CANONICAL_SKILL_SHA256,
         )
+        # A payload is released lineage because a released ref carries it, not because a
+        # maintainer says so: registration requires attestation by one of the listed refs, and a
+        # payload no released ref carries must stay unregistered so activation treats it as drift.
+        incoming = sync.tree_sha256(
+            ROOT / "skills" / "git-change-delivery", sync.SKILL_PAYLOAD
+        )
+        attestations = [
+            self._tagged_skill_tree(ref)
+            for ref, digest in RELEASED_CANONICAL_LINEAGE
+            if digest == incoming
+        ]
+        attested = [tree for tree in attestations if tree is not None]
+        if incoming in sync.RELEASED_CANONICAL_SKILL_SHA256:
+            self.assertIn(
+                incoming,
+                attested,
+                "the source payload is registered, but no listed ref carries it",
+            )
+        elif attestations and not attested:
+            self.skipTest("the refs that would attest the source payload are absent here")
+        else:
+            self.assertNotIn(
+                incoming,
+                sync.RELEASED_CANONICAL_SKILL_SHA256,
+                "an unreleased payload must not be registered as released lineage",
+            )
 
     def test_registry_entries_trace_to_released_history(self) -> None:
         for ref, digest in RELEASED_CANONICAL_LINEAGE:

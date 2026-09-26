@@ -55,6 +55,10 @@ RELEASED_CANONICAL_SKILL_SHA256 = frozenset(
         # Canonical payload carried by the handoff-documentation release, which
         # is also the installed production tree this batch upgrades from.
         "9c05e5b279731a37b3ce15e2fbda7ae9962f81355cbafb86fa410f28ec19f527",
+        # Canonical payload carried by the integration-boundary release and by
+        # the first publicly released line after it; both tags shipped it
+        # unchanged, so a production tree holding it is released lineage.
+        "0c82bceb12edde749aa6deddab25acb4ec083aeea92a37970ec64179ef92726b",
     }
 )
 

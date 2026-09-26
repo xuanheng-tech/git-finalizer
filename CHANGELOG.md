@@ -13,58 +13,36 @@ section is invented for it.
 
 ## Unreleased
 
-No pending unreleased changes are recorded. The prepared `1.5.0` batch is documented in its
-own section below, because release notes are extracted per version tag and a release must not
-depend on the Unreleased heading.
+Maintenance-only changes on top of the released `1.5.0` line. None of them alters CLI behaviour, the
+machine-readable contract, the Skill payload, or any released section below; the one behavioural
+change is in the released-lineage gate of `tool-skill-sync`, described in the second bullet.
 
-Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released trees):
-
-- Update `codex-skill-sync` to 1.5.0 with a declared canonical uv installation policy.
-  `tools.<tool>.uv_install_policy` in `toolchain_compatibility.json` is authoritative for the
-  entrypoint bin directory, package index and `--no-build`, so `upgrade` normalizes a drifted
-  receipt instead of faithfully preserving it. Without a declared policy the observed receipt
-  is still preserved. A deployment-only normalization reports `NORMALIZED`, and the intended
-  bin-directory move relaxes only the retained-path assertions while every other verification
-  stays fail closed.
-- Declare the Snapshot Runner policy: dedicated `~/.local/share/snapshot-runner/bin` entrypoint
-  ownership, `https://pypi.org/simple` as the deterministic package source, and `--no-build`.
-- Fix a misleading diagnostic: entrypoints that resolve into no uv tool installation now say so
-  instead of reporting more than one root.
-
-- Migrate the Snapshot Runner integration to the provider-neutral 2.0.0 contract. The
-  manifest now declares `2.0.0` with the single `snapshot-runner` entrypoint, the toolchain
-  binding moves Snapshot Runner's public CLI contract to version 2, the Skill reference
-  documents `snapshot-runner <command>` and the neutral
-  `~/.local/state/snapshot-runner/snapshots/` artifact namespace, and the PreToolUse bridge
-  treats `/home/hsd/bin/snapshot-runner` as the inert read-only reference entry in place of
-  the removed `codex-diff-audit` alias.
-
-- Record the Snapshot Runner dual-remote topology: one canonical source tree and one commit
-  history hosted on both GitHub (public source/release/PyPI authority, Finalizer upstream)
-  and Gitea (governed daily delivery). "Single source of truth" means one source tree and
-  one history, not one remote. Documents the explicit non-force dual-push, dual branch-OID
-  post-verify, release tag-object/peeled-commit parity check, missing-remote-only retry, and
-  the one-time bootstrap exception where no Finalizer mode applies.
-
-- Update `codex-skill-sync` to 1.2.0. `check <tool>` now validates the installed
-  production state as well as the canonical source contract, so a stale or mismatched
-  installation can no longer report a clean PASS; `--source-only` keeps the previous
-  source-contract-only behavior for build environments with no installation.
-- Make the public `snapshot-runner` repository the canonical Snapshot Runner runtime and
-  release source, and own its `ToolSkillManifest` at
-  `manifests/snapshot-runner/tool_skill_manifest.json` covering the primary
-  `snapshot-runner` entrypoint alongside the four retained `codex-*` aliases.
-- Update `codex-skill-sync` to 1.3.0 with `upgrade <tool>`, the safe production upgrade
-  path for `python_console_scripts` tools. It preserves the recorded `UV_TOOL_BIN_DIR`,
-  index list and `no-build`, installs with `uv tool install --force` so entrypoint
-  conflicts cannot strand production without a CLI, verifies every entrypoint, version,
-  receipt field, symlink target and the installed files against the published wheel
-  `RECORD`, and reinstalls the previous release if any step fails.
-- Point the Snapshot Runner canonical source directory at `snapshot-runner` after the
-  public tree was consolidated into that path. The former private Snapshot Runner
-  repository is preserved as a read-only archive and is no longer an active source; the
-  private `ToolSkillManifest` continues to live here.
-
+- Registered the `v1.5.0` release decision (GitHub as publishing host, no Gitea mirror) as a
+  per-version table in `docs/release-governance.md` whose identifiers are measured, and made
+  `tests/test_public_docs.py` re-derive its tag and commit columns from the repository's own refs.
+  This also corrected an inherited claim that `v1.0.0` had been published on Gitea: no `v1.0.0` tag
+  has ever existed, and the released line is `v0.4.0` onwards.
+- Registered the canonical Skill payload that the two most recent releases shipped, in both the
+  sync module and the Skill deployment mirror. Production holds that tree, so the released-lineage
+  registry was stale by two releases and the next activation would have reported the very state it
+  exists to upgrade as unknown content drift. `tests/test_tool_skill_sync.py` now activates from a
+  freshly released production tree and fails without the registration, and
+  `tests/test_tool_contract.py` replaced its "the source payload must stay unregistered" rule with
+  the accurate one: registration requires a released ref that carries the payload, so an
+  unreleased local edit is still treated as drift.
+- Stated what branch protection on `main` actually requires today, and reworded the tag-immutability
+  claim from a host guarantee into the policy it is.
+- `README.md` now names where a release is fetched from, verifies the checksum before installing,
+  and says that the `docs/...` links inside the shipped bundle resolve in the repository.
+- `scripts/release.py selfcheck` builds entirely inside a temporary directory: it no longer clears
+  `dist/` or stages inside the checkout it has just validated.
+- The Gitea quality job checks out with `fetch-depth: 0`, because the documentation gate reads
+  annotated tags; its shellcheck pre-install step is best effort, since `just lint` resolves the
+  linter itself and fails with a remedy when none is usable.
+- The documentation gate now covers every published markdown file instead of a curated list, so a
+  newly added document cannot ship unscanned. Released `CHANGELOG.md` sections stay outside the
+  private-path scan: a published section is immutable, and older ones quote the paths they
+  documented as removed.
 
 ## 1.5.0
 

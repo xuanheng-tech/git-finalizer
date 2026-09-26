@@ -473,8 +473,8 @@ class SkillSyncTests(unittest.TestCase):
         manifest["public_cli_contract_sha256"] = sync.sha256_file(contract_path)
         write_json(manifest_path, manifest)
 
-    def _overlay_released_production_tree(self) -> bool:
-        """Put the payload the released v1.3 tag carried into the live Skill."""
+    def _overlay_released_production_tree(self, ref: str = "v1.3.0") -> bool:
+        """Put the payload a released tag carried into the live Skill directory."""
         repository = Path(sync.__file__).resolve().parents[1]
         installed = self.agents_root / "skills" / sync.SKILL_NAME
         blobs = {}
@@ -483,7 +483,7 @@ class SkillSyncTests(unittest.TestCase):
                 [
                     "git",
                     "show",
-                    f"v1.3.0:skills/{sync.SKILL_NAME}/{relative}",
+                    f"{ref}:skills/{sync.SKILL_NAME}/{relative}",
                 ],
                 cwd=repository,
                 capture_output=True,
@@ -538,6 +538,59 @@ class SkillSyncTests(unittest.TestCase):
             bin_dir=self.bin_dir,
             hooks_dir=self.hooks_dir,
         )
+
+    def test_activation_upgrades_from_the_newest_released_production_tree(self) -> None:
+        """The tree the newest public release shipped must count as released lineage.
+
+        Production sits on exactly this payload between releases. If the registry forgets it, the
+        next activation refuses the state it exists to upgrade and the tool blocks its own job.
+        """
+        self._install_production("git-finalizer")
+        ref = next(
+            (tag for tag in ("v1.5.0", "v1.4.0") if self._released_ref_available(tag)),
+            None,
+        )
+        if ref is None or not self._overlay_released_production_tree(ref):
+            self.skipTest("no post-handoff released Skill tree is present in this checkout")
+        installed = self.agents_root / "skills" / sync.SKILL_NAME
+        live_tree = sync.tree_sha256(installed, sync.SKILL_PAYLOAD)
+        self.assertIn(
+            live_tree,
+            sync.RELEASED_CANONICAL_SKILL_SHA256,
+            f"the payload released at {ref} is not registered as released lineage",
+        )
+        previous = self._current("git-finalizer")
+        self._bump_finalizer_source_release("2.0.0")
+
+        result = sync.install(
+            self.sources,
+            "git-finalizer",
+            self.install_root,
+            allow_dirty_source=True,
+            activate_production=True,
+            agents_root=self.agents_root,
+            bin_dir=self.bin_dir,
+            hooks_dir=self.hooks_dir,
+        )
+
+        self.assertEqual(result["status"], "INSTALLED")
+        self.assertNotEqual(self._current("git-finalizer"), previous)
+        sync.verify_production_bundle(
+            self._current("git-finalizer"),
+            agents_root=self.agents_root,
+            bin_dir=self.bin_dir,
+            hooks_dir=self.hooks_dir,
+        )
+
+    @staticmethod
+    def _released_ref_available(ref: str) -> bool:
+        repository = Path(sync.__file__).resolve().parents[1]
+        return subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", f"refs/tags/{ref}"],
+            cwd=repository,
+            capture_output=True,
+            check=False,
+        ).returncode == 0
 
     def test_activation_refuses_hand_drift_on_a_released_production_tree(self) -> None:
         self._install_production("git-finalizer")

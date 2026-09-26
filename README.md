@@ -155,6 +155,8 @@ success and `1` for everything else on the bash-owned commands.
   [docs/agent-contract.md](docs/agent-contract.md)
 - Optional-integration blockers and the adapter boundary matrix:
   [docs/integration-boundaries.md](docs/integration-boundaries.md)
+- Work deferred on purpose, each entry with the condition that unblocks it:
+  [docs/maintenance-backlog.md](docs/maintenance-backlog.md)
 
 Never upgrade a result. A `push.result` of `uncertain` means "not confirmed", not "failed, try
 harder": re-inspect the remote with a resume interface rather than force-pushing.

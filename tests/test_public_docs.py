@@ -8,19 +8,23 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 
-PUBLIC_MARKDOWN = [
-    ROOT / "README.md",
-    ROOT / "CONTRIBUTING.md",
-    ROOT / "SECURITY.md",
-    ROOT / "AGENTS.md",
-    ROOT / "docs" / "agent-contract.md",
-    ROOT / "docs" / "release-governance.md",
-    ROOT / "docs" / "integration-boundaries.md",
-    ROOT / "docs" / "tool-skill-sync.md",
-    ROOT / "docs" / "cli-guide.zh.md",
-    ROOT / ".github" / "PULL_REQUEST_TEMPLATE.md",
-    ROOT / ".github" / "ISSUE_TEMPLATE" / "bug_report.md",
-]
+# Every markdown file this repository publishes. The set is derived rather than curated: an authored
+# list silently stops covering new documents, which is how docs/process/ and the shipped Skill
+# references ended up outside the gate.
+DOCUMENTED_SUBTREES = (
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "AGENTS.md",
+    "docs/",
+    ".github/",
+    "skills/",
+)
+
+# Released CHANGELOG sections quote the private paths they documented as removed, and a published
+# section is immutable. Only the Unreleased heading of these files is scannable.
+HISTORY_DOCUMENTS = frozenset({ROOT / "CHANGELOG.md"})
 
 PRIVATE_MARKERS = (
     "127.0.0.1:3000",
@@ -53,10 +57,44 @@ def git_output(*arguments: str) -> str:
     return git_run(*arguments).stdout.strip()
 
 
+def public_markdown() -> list[Path]:
+    """Every tracked markdown file, i.e. everything a release publishes as readable text."""
+    listed = git_run("ls-files", "-z", "--", "*.md").stdout
+    return sorted(ROOT / entry for entry in listed.split("\0") if entry)
+
+
+def marker_scannable_text(document: Path) -> str:
+    text = document.read_text(encoding="utf-8")
+    if document not in HISTORY_DOCUMENTS:
+        return text
+    pending = re.search(r"^## Unreleased\b.*?(?=^## )", text, re.MULTILINE | re.DOTALL)
+    return pending.group(0) if pending else ""
+
+
+def marker_scannable_text(document: Path) -> str:
+    if document not in HISTORY_DOCUMENTS:
+        return document.read_text(encoding="utf-8")
+    text = document.read_text(encoding="utf-8")
+    pending = re.search(r"^## Unreleased\b.*?(?=^## )", text, re.M | re.S)
+    return pending.group(0) if pending else ""
+
+
 class PublicDocumentationTests(unittest.TestCase):
+    def test_every_published_markdown_has_a_documented_home(self) -> None:
+        documents = public_markdown()
+        self.assertGreaterEqual(len(documents), 15, "the markdown inventory shrank unexpectedly")
+        for document in documents:
+            relative = str(document.relative_to(ROOT))
+            with self.subTest(document=relative):
+                self.assertTrue(
+                    relative.startswith(DOCUMENTED_SUBTREES),
+                    f"{relative} is published but belongs to no documented subtree: decide where it "
+                    "belongs and list that subtree here",
+                )
+
     def test_relative_links_resolve(self) -> None:
-        for document in PUBLIC_MARKDOWN:
-            with self.subTest(document=document.name):
+        for document in public_markdown():
+            with self.subTest(document=str(document.relative_to(ROOT))):
                 self.assertTrue(document.is_file(), f"missing public document: {document}")
                 for target in link_targets(document.read_text(encoding="utf-8")):
                     path = target.split("#", 1)[0]
@@ -69,9 +107,9 @@ class PublicDocumentationTests(unittest.TestCase):
                     )
 
     def test_public_documents_hold_no_private_infrastructure(self) -> None:
-        for document in PUBLIC_MARKDOWN:
-            with self.subTest(document=document.name):
-                text = document.read_text(encoding="utf-8")
+        for document in public_markdown():
+            with self.subTest(document=str(document.relative_to(ROOT))):
+                text = marker_scannable_text(document)
                 for marker in PRIVATE_MARKERS:
                     self.assertNotIn(
                         marker, text, f"{document.name} exposes {marker!r}"
