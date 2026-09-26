@@ -7,7 +7,7 @@ missing on another. Subcommands:
   preflight <tag>       verify the version batch and the hash-bound files
   build <tag>           stage the package, build it deterministically, verify it, write checksums
   verify <tag>          verify an already-built artifact and (re)write SHA256SUMS.txt
-  selfcheck <tag>       run the whole chain against a scratch copy and report the digest
+  selfcheck <tag>       build twice entirely inside a temporary directory and report the digest
 
 The build recipe is fixed: ustar, sorted members, owner/group 0, numeric owner ids, mtime pinned to
 the commit timestamp, and gzip without a name or timestamp. Two builds of one commit must be
@@ -178,12 +178,12 @@ def tar_bytes(stage_root: Path, package: str, timestamp: str) -> bytes:
     return gzip
 
 
-def build(version_tag: str, dist: Path | None = None) -> Path:
+def build(version_tag: str, dist: Path | None = None, staging: Path | None = None) -> Path:
     version = version_tag[1:]
     package = package_name(version)
     dist_root = dist or ROOT / "dist"
-    stage_root = ROOT / ".release-stage"
-    for path in (ROOT / "dist", stage_root):
+    stage_root = staging or ROOT / ".release-stage"
+    for path in (dist_root, stage_root):
         if path.exists():
             shutil.rmtree(path)
     dist_root.mkdir(parents=True, exist_ok=True)
@@ -273,8 +273,8 @@ def selfcheck(version_tag: str) -> str:
     """Build twice into scratch space and report the digest; writes nothing into the repository."""
     with tempfile.TemporaryDirectory(prefix="git-finalizer-selfcheck-") as temporary:
         scratch = Path(temporary)
-        first = build(version_tag, dist=scratch / "one")
-        second = build(version_tag, dist=scratch / "two")
+        first = build(version_tag, dist=scratch / "one", staging=scratch / "stage-one")
+        second = build(version_tag, dist=scratch / "two", staging=scratch / "stage-two")
         digest_one = hashlib.sha256(first.read_bytes()).hexdigest()
         digest_two = hashlib.sha256(second.read_bytes()).hexdigest()
         if digest_one != digest_two:
