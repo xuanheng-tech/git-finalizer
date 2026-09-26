@@ -5,8 +5,10 @@ Machine-readable results for automation. This page is the public, versioned desc
 agent should request `--summary` exactly once per invocation and parse the single JSON object it
 prints.
 
-`tests/test_integration_boundaries.sh` extracts the vocabularies below from the implementation and
+`tests/test_agent_contract.py` extracts the vocabularies below from the implementation and
 fails if a value exists in code but not here, so this page cannot silently drift.
+(`tests/test_integration_boundaries.sh` is the analogous guard for
+`docs/integration-boundaries.md`, not for this page.)
 
 ## Envelope
 

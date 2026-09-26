@@ -177,13 +177,18 @@ particular is **optional**: ordinary commit and publication work needs only Bash
 | Context Loader | not used at runtime — the CLI never invokes it | nothing |
 | Shared `git-change-delivery` Skill | optional agent workflow documentation and helpers | not a dependency and not an authorization source |
 
-Each integration's knowledge of another project's layout lives in exactly one
-`# GF-INTEGRATION-ADAPTER` site, and that confinement is machine-checked by
+Each integration's knowledge of another project's layout lives only in the files that carry its
+`# GF-INTEGRATION-ADAPTER` marker — one marker per adapter file, and retirement uses two because both
+the CLI and the plan verifier speak to that integration. That confinement is machine-checked by
 `tests/test_integration_boundaries.sh`.
 
 ## Security model
 
-- Protected branches and the remote default branch are refused for publication and retirement.
+- Branch retirement refuses a protected branch name or the remote's live default branch, and
+  publishing a *first* branch refuses protected names; updating the upstream of the branch you
+  already stand on is deliberately allowed, because that is the ordinary delivery path. Two
+  interfaces — `--publish-existing-history` and its resume form — may target a protected branch,
+  since the branch already exists there.
 - Pushes are non-force with an explicit branch refspec and `--no-follow-tags`; deletions are
   `--force-with-lease`-style expected-OID compare-and-set, never unconditional force operations.
 - No amend, rebase, history rewrite, automatic conflict resolution, duplicate commit creation, tag

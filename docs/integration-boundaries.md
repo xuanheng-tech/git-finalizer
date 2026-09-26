@@ -2,9 +2,10 @@
 
 Git Finalizer（GF）核心只依赖 bash、Git 与 `/usr/bin/python3`。所有外部集成都是
 **请求触发**的 adapter；本文件是适配器边界的权威清单，由
-`tests/test_integration_boundaries.sh` 机器核对。每个 adapter 在源码中以唯一
-`# GF-INTEGRATION-ADAPTER: <name> (single site...)` 标记锚定其外部布局知识，禁止在
-其他位置新增同类布局字面量。
+`tests/test_integration_boundaries.sh` 机器核对。每个 adapter 在其**每个**承载文件中以唯一
+`# GF-INTEGRATION-ADAPTER: <name> (single site...)` 标记锚定外部布局知识；同一 adapter 可以
+跨文件（retirement 同时标记 CLI 与 plan verifier），但任何文件内不得出现第二处该标记，
+其他位置禁止新增同类布局字面量。
 
 ## 边界矩阵
 

@@ -54,6 +54,13 @@ change is in the released-lineage gate of `tool-skill-sync`, described in the se
 - New gates: release jobs cannot publish the same tag twice, a linter warm-up may not fail a run that
   can lint, and all four workflow files must pin the same action revisions and tool versions — one
   host's dependency bot can no longer drift the build environment silently.
+- Corrected three documentation claims that a re-audit against the implementation disproved: the
+  Security-model bullet credited every publication path with the protected-branch and
+  remote-default-branch refusal that branch retirement and *first* branch publication perform;
+  the adapter rule was stated as one marker per integration, while the enforced rule is one marker
+  per adapter file and retirement legitimately marks two; and `docs/agent-contract.md` named
+  `tests/test_integration_boundaries.sh` as its own drift guard when that page is guarded by
+  `tests/test_agent_contract.py`.
 - Corrected documentation that credited gates with work they do not do: `preflight` never reads
   `CHANGELOG.md` and binds only the Chinese README declaration (the English one and the CHANGELOG
   section are bound by `just check`, and the release notes by `changelog.py extract`); the release
