@@ -97,6 +97,9 @@ sort order, or runner image), not something to paper over by publishing one host
 ## Runbook: first public GitHub release
 
 Do not execute any of this as part of a maintenance change; it is a deliberate release action.
+Production activation on the maintainer machine is a **separate** authorised step that follows a
+successful release, and it uses `tool-skill-sync install --activate-production` from the canonical
+source repository rather than the release artifact.
 
 ### Before
 
@@ -116,8 +119,19 @@ Do not execute any of this as part of a maintenance change; it is a deliberate r
    ```
 
 4. Announce nothing before the tag exists; the tag is the release trigger.
+5. Record the release decision in the release request: candidate SHA, the `preflight` line it
+   printed, the `selfcheck` digest, which host publishes, and that no other host will publish the
+   same version unless the digest comparison below is performed afterwards.
+
+The first release out of this model is `v1.5.0`: the open-sourcing, maintenance-governance and
+CI batch that follows the released `1.4.0` line. `v1.4.0` stays exactly as published on Gitea and is
+**never** re-created, re-tagged or re-published on GitHub — the GitHub history for it is the tag and
+the source, not a release object.
 
 ### Publish
+
+`<candidate-sha>` is the tip of `main` at the moment the release is approved — never a re-created
+commit, and never a commit that `preflight` has not been run against.
 
 ```bash
 git tag -a v1.5.0 <candidate-sha> -m 'v1.5.0 — <one-line summary>'

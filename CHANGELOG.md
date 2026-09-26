@@ -13,10 +13,60 @@ section is invented for it.
 
 ## Unreleased
 
-Open-source readiness work described below. The historical addendum underneath it stays verbatim for
-the record: those bullets describe work already shipped in the 1.1.0 and 1.1.1 trees, and the tool
-versions they quote (1.2.0/1.3.0/1.5.0) were pre-rename source versions of the component now shipped
-as `tool-skill-sync` 2.0.0. Per the header rule this note does not backfill or rewrite dated sections.
+No pending unreleased changes are recorded. The prepared `1.5.0` batch is documented in its
+own section below, because release notes are extracted per version tag and a release must not
+depend on the Unreleased heading.
+
+Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released trees):
+
+- Update `codex-skill-sync` to 1.5.0 with a declared canonical uv installation policy.
+  `tools.<tool>.uv_install_policy` in `toolchain_compatibility.json` is authoritative for the
+  entrypoint bin directory, package index and `--no-build`, so `upgrade` normalizes a drifted
+  receipt instead of faithfully preserving it. Without a declared policy the observed receipt
+  is still preserved. A deployment-only normalization reports `NORMALIZED`, and the intended
+  bin-directory move relaxes only the retained-path assertions while every other verification
+  stays fail closed.
+- Declare the Snapshot Runner policy: dedicated `~/.local/share/snapshot-runner/bin` entrypoint
+  ownership, `https://pypi.org/simple` as the deterministic package source, and `--no-build`.
+- Fix a misleading diagnostic: entrypoints that resolve into no uv tool installation now say so
+  instead of reporting more than one root.
+
+- Migrate the Snapshot Runner integration to the provider-neutral 2.0.0 contract. The
+  manifest now declares `2.0.0` with the single `snapshot-runner` entrypoint, the toolchain
+  binding moves Snapshot Runner's public CLI contract to version 2, the Skill reference
+  documents `snapshot-runner <command>` and the neutral
+  `~/.local/state/snapshot-runner/snapshots/` artifact namespace, and the PreToolUse bridge
+  treats `/home/hsd/bin/snapshot-runner` as the inert read-only reference entry in place of
+  the removed `codex-diff-audit` alias.
+
+- Record the Snapshot Runner dual-remote topology: one canonical source tree and one commit
+  history hosted on both GitHub (public source/release/PyPI authority, Finalizer upstream)
+  and Gitea (governed daily delivery). "Single source of truth" means one source tree and
+  one history, not one remote. Documents the explicit non-force dual-push, dual branch-OID
+  post-verify, release tag-object/peeled-commit parity check, missing-remote-only retry, and
+  the one-time bootstrap exception where no Finalizer mode applies.
+
+- Update `codex-skill-sync` to 1.2.0. `check <tool>` now validates the installed
+  production state as well as the canonical source contract, so a stale or mismatched
+  installation can no longer report a clean PASS; `--source-only` keeps the previous
+  source-contract-only behavior for build environments with no installation.
+- Make the public `snapshot-runner` repository the canonical Snapshot Runner runtime and
+  release source, and own its `ToolSkillManifest` at
+  `manifests/snapshot-runner/tool_skill_manifest.json` covering the primary
+  `snapshot-runner` entrypoint alongside the four retained `codex-*` aliases.
+- Update `codex-skill-sync` to 1.3.0 with `upgrade <tool>`, the safe production upgrade
+  path for `python_console_scripts` tools. It preserves the recorded `UV_TOOL_BIN_DIR`,
+  index list and `no-build`, installs with `uv tool install --force` so entrypoint
+  conflicts cannot strand production without a CLI, verifies every entrypoint, version,
+  receipt field, symlink target and the installed files against the published wheel
+  `RECORD`, and reinstalls the previous release if any step fails.
+- Point the Snapshot Runner canonical source directory at `snapshot-runner` after the
+  public tree was consolidated into that path. The former private Snapshot Runner
+  repository is preserved as a read-only archive and is no longer an active source; the
+  private `ToolSkillManifest` continues to live here.
+
+
+## 1.5.0
 
 - Open-source readiness batch. Added the Apache-2.0 `LICENSE` (shipped in the release package),
   `SECURITY.md` recording the reporting channel and the refusal behaviours treated as security
@@ -89,54 +139,12 @@ as `tool-skill-sync` 2.0.0. Per the header rule this note does not backfill or r
   `uvx --from shellcheck-py`, because a host may ship the binary without execute permission for the
   CI user; a workflow step that only tested `command -v shellcheck` reported success while the lint
   itself died with exit 127.
-
-Historical addendum (verbatim; already contained in the 1.1.0 and 1.1.1 released trees):
-
-- Update `codex-skill-sync` to 1.5.0 with a declared canonical uv installation policy.
-  `tools.<tool>.uv_install_policy` in `toolchain_compatibility.json` is authoritative for the
-  entrypoint bin directory, package index and `--no-build`, so `upgrade` normalizes a drifted
-  receipt instead of faithfully preserving it. Without a declared policy the observed receipt
-  is still preserved. A deployment-only normalization reports `NORMALIZED`, and the intended
-  bin-directory move relaxes only the retained-path assertions while every other verification
-  stays fail closed.
-- Declare the Snapshot Runner policy: dedicated `~/.local/share/snapshot-runner/bin` entrypoint
-  ownership, `https://pypi.org/simple` as the deterministic package source, and `--no-build`.
-- Fix a misleading diagnostic: entrypoints that resolve into no uv tool installation now say so
-  instead of reporting more than one root.
-
-- Migrate the Snapshot Runner integration to the provider-neutral 2.0.0 contract. The
-  manifest now declares `2.0.0` with the single `snapshot-runner` entrypoint, the toolchain
-  binding moves Snapshot Runner's public CLI contract to version 2, the Skill reference
-  documents `snapshot-runner <command>` and the neutral
-  `~/.local/state/snapshot-runner/snapshots/` artifact namespace, and the PreToolUse bridge
-  treats `/home/hsd/bin/snapshot-runner` as the inert read-only reference entry in place of
-  the removed `codex-diff-audit` alias.
-
-- Record the Snapshot Runner dual-remote topology: one canonical source tree and one commit
-  history hosted on both GitHub (public source/release/PyPI authority, Finalizer upstream)
-  and Gitea (governed daily delivery). "Single source of truth" means one source tree and
-  one history, not one remote. Documents the explicit non-force dual-push, dual branch-OID
-  post-verify, release tag-object/peeled-commit parity check, missing-remote-only retry, and
-  the one-time bootstrap exception where no Finalizer mode applies.
-
-- Update `codex-skill-sync` to 1.2.0. `check <tool>` now validates the installed
-  production state as well as the canonical source contract, so a stale or mismatched
-  installation can no longer report a clean PASS; `--source-only` keeps the previous
-  source-contract-only behavior for build environments with no installation.
-- Make the public `snapshot-runner` repository the canonical Snapshot Runner runtime and
-  release source, and own its `ToolSkillManifest` at
-  `manifests/snapshot-runner/tool_skill_manifest.json` covering the primary
-  `snapshot-runner` entrypoint alongside the four retained `codex-*` aliases.
-- Update `codex-skill-sync` to 1.3.0 with `upgrade <tool>`, the safe production upgrade
-  path for `python_console_scripts` tools. It preserves the recorded `UV_TOOL_BIN_DIR`,
-  index list and `no-build`, installs with `uv tool install --force` so entrypoint
-  conflicts cannot strand production without a CLI, verifies every entrypoint, version,
-  receipt field, symlink target and the installed files against the published wheel
-  `RECORD`, and reinstalls the previous release if any step fails.
-- Point the Snapshot Runner canonical source directory at `snapshot-runner` after the
-  public tree was consolidated into that path. The former private Snapshot Runner
-  repository is preserved as a read-only archive and is no longer an active source; the
-  private `ToolSkillManifest` continues to live here.
+- Release preparation batch for `1.5.0`: version literals in the entrypoint and the three governed
+  companions, `tool_version` in the CLI contract and root manifest, the README release declarations,
+  and the manifest's `public_cli_contract_sha256` re-pin to the new contract bytes move together.
+  Nothing user-visible in behaviour changes: `contract_version` stays 4, the canonical Skill payload
+  stays `0c82bceb…` and is therefore not added to the released-lineage registry ahead of release,
+  and both sibling manifests keep pinning `1.3.1` and `2.3.1`.
 
 ## 1.4.0
 

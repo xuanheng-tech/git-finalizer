@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 # GF-INTEGRATION-ADAPTER: worktree-controller-retirement (single site)
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 BRANCH_RETIREMENT_CAPABILITY = "branch_retirement_version"
 # Legacy compatibility mirror of the frozen v1 authority layout (see module
 # boundary note above).

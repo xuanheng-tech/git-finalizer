@@ -150,7 +150,10 @@ companion file missing or unsafe, or when an uncaught traceback occurs.
 
 ## Examples
 
-Real output from `1.4.0`, captured against a local scratch repository with a local bare remote.
+Real output captured from the released `1.4.0` binary against a local scratch repository with a
+local bare remote. `finalizer_version` always mirrors the running binary, so expect the version you
+installed there; every other field is stable across releases and is asserted against the source by
+`tests/test_agent_contract.py`.
 
 Success (`--summary --repo <repo> --message 'docs: capture success example' -- f.txt`):
 
@@ -247,7 +250,7 @@ Retirement runs additionally report `mode_result.result` with the uppercase verd
 ### Documented asymmetry: nothing to stage
 
 The same underlying condition, "the requested explicit paths contain no staged change", is
-classified differently by mode. This is released behaviour (`1.3.0` and `1.4.0`) and is
+classified differently by mode. This is released behaviour (`1.3.0` and `1.4.0`, unchanged since)
 `tests/test_agent_contract.py`-pinned, so an agent can rely on it:
 
 | Mode | `status` | `final_phase` | `next_action` |

@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Completing an implementation, passing tests, or a previous
 one-time authorization never authorizes the next commit or push.
 
-Current stable release: **1.4.0**.
+Current stable release: **1.5.0**.
 
-当前版本：`1.4.0`
+当前版本：`1.5.0`
 
 ## Why it exists
 
@@ -53,9 +53,9 @@ From a release tarball (files `git-finalize*` must stay in one directory, becaus
 locates its companions relative to itself):
 
 ```bash
-tar -xzf git-finalizer-1.4.0.tar.gz
+tar -xzf git-finalizer-1.5.0.tar.gz
 install -d -m 0755 "$HOME/.local/bin"
-cp git-finalizer-1.4.0/git-finalize git-finalizer-1.4.0/git-finalize-*.py "$HOME/.local/bin/"
+cp git-finalizer-1.5.0/git-finalize git-finalizer-1.5.0/git-finalize-*.py "$HOME/.local/bin/"
 chmod 0755 "$HOME/.local/bin/git-finalize"
 export PATH="$HOME/.local/bin:$PATH"
 git-finalize --version
