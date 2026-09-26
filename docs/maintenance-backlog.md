@@ -65,13 +65,15 @@ Small, unscheduled, each one a real gap rather than a polish item.
 
 ## 5. Dependency automation (Renovate)
 
-`renovate.json` is published and pins the same preset shape as the sibling repositories, but nothing
-observed on GitHub acts on it: no bot commits, no bot pull requests, and the configured
-`local>xuanheng-tech/renovate-config` preset is not reachable by an unauthenticated or member-level
-read.
+`renovate.json` is published and extends `local>xuanheng-tech/renovate-config`. That preset exists
+only on the private Gitea instance and returns "not found" on GitHub, and GitHub shows no Renovate
+activity at all: no bot commit, no bot pull request. On Gitea the same configuration is alive — it
+opened the still-unmerged proposal to move the `astral-sh/setup-uv` pin forward, which is also how
+one learns that the pins in the workflows do drift.
 
-- Unblock: an organisation admin installs the Renovate app on this repository and publishes or
-  relocates the preset, then merges the onboarding pull request.
-- Never: repoint `extends` at a public preset just to make the file look satisfied. That hides the
-  blocker while leaving the automation inactive, and the pinned action SHAs in
-  `.github/workflows` are exactly what the automation exists to keep current.
+- Unblock: an organisation admin installs the Renovate app on the GitHub repository and publishes or
+  relocates the preset so the `extends` target resolves there, then merges the onboarding pull
+  request.
+- Never: repoint `extends` at a public preset just to satisfy the file. That hides the blocker while
+  leaving the automation inactive, and the pinned action SHAs in `.github/workflows` are exactly what
+  the automation exists to keep current.
