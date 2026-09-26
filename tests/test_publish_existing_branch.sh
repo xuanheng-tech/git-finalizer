@@ -363,7 +363,11 @@ test_summary_proves_no_commit_and_remote_verify() {
     expect_success "$output" "$finalizer" --summary --publish-existing-branch \
         "$head_before" --remote origin --remote-branch "$feature_branch" --repo "$test_repo"
 
-    /usr/bin/python3 -B - "$output" "$head_before" "$feature_branch" <<'PY'
+        local declared_version
+    declared_version=$(sed -n 's/^readonly VERSION="\([0-9.]*\)"$/\1/p' \
+        "$project_root/git-finalize" | head -1)
+    [[ -n $declared_version ]] || fail_assertion 'Finalizer version is unreadable'
+/usr/bin/python3 -B - "$output" "$head_before" "$feature_branch" "$declared_version" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -371,7 +375,7 @@ import sys
 data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 head = sys.argv[2]
 branch = sys.argv[3]
-assert data["finalizer_version"] == "1.4.0"
+assert data["finalizer_version"] == sys.argv[4]
 assert data["mode"] == "publish_existing_branch"
 assert data["status"] == "success"
 assert data["branch"] == branch

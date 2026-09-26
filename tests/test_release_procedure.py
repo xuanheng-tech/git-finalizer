@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -10,7 +11,23 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "release.py"
-RELEASE_TAG = "v1.4.0"
+
+
+def declared_version() -> str:
+    match = re.search(
+        r'^readonly VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$',
+        (ROOT / "git-finalize").read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    if match is None:
+        raise AssertionError("cannot read the declared Finalizer version")
+    return match.group(1)
+
+
+# Derived so a version batch cannot silently leave this gate behind.
+VERSION = declared_version()
+RELEASE_TAG = f"v{VERSION}"
+PACKAGE = f"git-finalizer-{VERSION}"
 
 
 def run_script(action: str, cwd: Path, tag: str = RELEASE_TAG) -> subprocess.CompletedProcess[str]:
@@ -71,13 +88,15 @@ class ReleaseProcedureTests(unittest.TestCase):
     def test_preflight_accepts_the_current_version_batch(self) -> None:
         result = run_script("preflight", ROOT)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("release_version=1.4.0", result.stdout)
+        self.assertIn(f"release_version={VERSION}", result.stdout)
 
     def test_preflight_rejects_a_declaration_mismatch(self) -> None:
         repository = self.fixture()
         readme = repository / "README.md"
         readme.write_text(
-            readme.read_text(encoding="utf-8").replace("当前版本：`1.4.0`", "当前版本：`1.4.1`"),
+            readme.read_text(encoding="utf-8").replace(
+                f"当前版本：`{VERSION}`", "当前版本：`0.0.0`"
+            ),
             encoding="utf-8",
         )
         result = run_script("preflight", repository)
@@ -107,7 +126,7 @@ class ReleaseProcedureTests(unittest.TestCase):
         repository = self.fixture()
         first = run_script("build", repository)
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
-        artifact = repository / "dist" / "git-finalizer-1.4.0.tar.gz"
+        artifact = repository / "dist" / f"{PACKAGE}.tar.gz"
         self.assertTrue(artifact.is_file())
         digest_one = artifact.read_bytes()
         for umask in (0o022, 0o002, 0o077):
@@ -127,19 +146,19 @@ class ReleaseProcedureTests(unittest.TestCase):
         result = run_script("build", repository)
         self.assertEqual(result.returncode, 0, result.stderr)
         listing = subprocess.run(
-            ["tar", "-tzf", str(repository / "dist" / "git-finalizer-1.4.0.tar.gz")],
+            ["tar", "-tzf", str(repository / "dist" / f"{PACKAGE}.tar.gz")],
             capture_output=True,
             text=True,
             check=True,
         )
         members = set(listing.stdout.splitlines())
         for required in (
-            "git-finalizer-1.4.0/LICENSE",
-            "git-finalizer-1.4.0/tool_cli_contract.json",
-            "git-finalizer-1.4.0/tool_skill_manifest.json",
-            "git-finalizer-1.4.0/git-finalize",
-            "git-finalizer-1.4.0/SECURITY.md",
-            "git-finalizer-1.4.0/CONTRIBUTING.md",
+            f"{PACKAGE}/LICENSE",
+            f"{PACKAGE}/tool_cli_contract.json",
+            f"{PACKAGE}/tool_skill_manifest.json",
+            f"{PACKAGE}/git-finalize",
+            f"{PACKAGE}/SECURITY.md",
+            f"{PACKAGE}/CONTRIBUTING.md",
         ):
             self.assertIn(required, members)
 
@@ -181,12 +200,12 @@ class ReleaseProcedureTests(unittest.TestCase):
         # Removing one packaged file must fail the file-set gate, not silently pass.
         repository = self.fixture()
         run_script("build", repository)
-        artifact = repository / "dist" / "git-finalizer-1.4.0.tar.gz"
+        artifact = repository / "dist" / f"{PACKAGE}.tar.gz"
         staging = repository / "drop"
         subprocess.run(
             ["tar", "-xzf", str(artifact), "-C", str(self._mkdir(staging))], check=True
         )
-        (staging / "git-finalizer-1.4.0" / "LICENSE").unlink()
+        (staging / PACKAGE / "LICENSE").unlink()
         packed = subprocess.run(
             [
                 "tar",
@@ -199,7 +218,7 @@ class ReleaseProcedureTests(unittest.TestCase):
                 str(staging),
                 "-cf",
                 "-",
-                "git-finalizer-1.4.0",
+                PACKAGE,
             ],
             capture_output=True,
             check=True,

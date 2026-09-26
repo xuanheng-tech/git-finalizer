@@ -5,6 +5,7 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -23,6 +24,17 @@ assert SPEC is not None and SPEC.loader is not None
 bootstrap = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = bootstrap
 SPEC.loader.exec_module(bootstrap)
+
+
+def declared_finalizer_version() -> str:
+    """The version the entrypoint declares, so this gate survives a version batch."""
+    match = re.search(
+        r'^readonly VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$',
+        (ROOT / "git-finalize").read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert match is not None, "cannot read the declared Finalizer version"
+    return match.group(1)
 
 
 def git(repo: Path, *arguments: str) -> str:
@@ -310,7 +322,9 @@ class RepositoryBootstrapTests(unittest.TestCase):
             code, receipt = self.execute(self.arguments(server), password=marker)
             self.assertEqual(code, 0)
             self.assertEqual(receipt["summary_schema_version"], 1)
-            self.assertEqual(receipt["finalizer_version"], "1.4.0")
+            self.assertEqual(
+                receipt["finalizer_version"], declared_finalizer_version()
+            )
             self.assertEqual(receipt["repository_id"], "controller-repository")
             self.assertEqual(receipt["allocation_id"], "allocation")
             self.assertEqual(receipt["task_key"], "task")

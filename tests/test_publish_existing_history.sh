@@ -160,14 +160,18 @@ test_multi_commit_to_empty_remote() {
     make_repo "$case_dir" 3
     expect_success "$output" "$finalizer" --summary --publish-existing-history \
         "$expected_head" --remote origin --remote-branch main --repo "$test_repo"
-    /usr/bin/python3 -B - "$output" "$expected_head" <<'PY'
+        local declared_version
+    declared_version=$(sed -n 's/^readonly VERSION="\([0-9.]*\)"$/\1/p' \
+        "$project_root/git-finalize" | head -1)
+    [[ -n $declared_version ]] || fail_assertion 'Finalizer version is unreadable'
+/usr/bin/python3 -B - "$output" "$expected_head" "$declared_version" <<'PY'
 import json
 from pathlib import Path
 import sys
 
 data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 head = sys.argv[2]
-assert data["finalizer_version"] == "1.4.0"
+assert data["finalizer_version"] == sys.argv[3]
 assert data["mode"] == "publish_existing_history"
 assert data["status"] == "success"
 assert data["branch"] == "main"

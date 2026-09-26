@@ -1879,7 +1879,11 @@ test_release_contract() {
     printf '%s\n' '#!/usr/bin/env bash' ": >\"\$GIT_PROBE\"" 'exit 97' \
         >"$fake_bin/git"
     chmod 700 "$fake_bin/git"
-    printf 'git-finalize 1.4.0\n' >"$version_expected"
+    local version_declared
+    version_declared=$(sed -n 's/^readonly VERSION="\([0-9.]*\)"$/\1/p' \
+        "$project_root/git-finalize" | head -1)
+    [[ -n $version_declared ]] || fail_assertion 'script version constant is unreadable'
+    printf 'git-finalize %s\n' "$version_declared" >"$version_expected"
 
     GIT_PROBE="$git_probe" PATH="$fake_bin:$PATH" \
         "$finalizer" --version >"$version_output" 2>"$version_error"
@@ -1917,10 +1921,26 @@ test_release_contract() {
         'large binary override missing from help'
     assert_file_contains "$help_output" '--snapshot' \
         'snapshot evidence option missing from help'
-    assert_file_contains "$project_root/git-finalize" \
-        'readonly VERSION="1.4.0"' 'script version constant drifted'
-    assert_file_contains "$project_root/README.md" "当前版本：\`1.4.0\`" \
-        'README version drifted'
+    local declared_version
+    declared_version=$(sed -n 's/^readonly VERSION="\([0-9.]*\)"$/\1/p' \
+        "$project_root/git-finalize" | head -1)
+    [[ -n $declared_version ]] || fail_assertion 'script version constant is unreadable'
+    assert_file_contains "$project_root/README.md" "当前版本：\`${declared_version}\`" \
+        'README Chinese version declaration drifted'
+    assert_file_contains "$project_root/README.md" \
+        "Current stable release: **${declared_version}**." \
+        'README English version declaration drifted'
+    assert_file_contains "$project_root/tool_cli_contract.json" \
+        "\"tool_version\": \"${declared_version}\"" \
+        'CLI contract version declaration drifted'
+    assert_file_contains "$project_root/tool_skill_manifest.json" \
+        "\"tool_version\": \"${declared_version}\"" \
+        'root manifest version declaration drifted'
+    for companion in git-finalize-integration-publish.py git-finalize-repo-bootstrap.py \
+        git-finalize-retirement-plan.py; do
+        assert_file_contains "$project_root/$companion" \
+            "VERSION = \"${declared_version}\"" "$companion version drifted"
+    done
     [[ -f "$project_root/git-finalize-snapshot-verify.py" ]] ||
         fail_assertion 'snapshot verifier companion is missing'
     assert_file_contains "$project_root/git-finalize" \
