@@ -47,9 +47,18 @@ terminal and an automation layer can rely on "it stopped, and here is why".
 
 ## Installation
 
-There is no package index. Install the published artifact, or run from the checkout.
+There is no package index. Releases are published as GitHub Release assets:
+each one carries `git-finalizer-<version>.tar.gz` plus a `SHA256SUMS.txt` that names it, from
+<https://github.com/xuanheng-tech/git-finalizer/releases>. Fetch both, verify the artifact, then
+install it.
 
-From a release tarball (files `git-finalize*` must stay in one directory, because the entrypoint
+```bash
+curl -fsSLO https://github.com/xuanheng-tech/git-finalizer/releases/download/v1.5.0/SHA256SUMS.txt
+curl -fsSLO https://github.com/xuanheng-tech/git-finalizer/releases/download/v1.5.0/git-finalizer-1.5.0.tar.gz
+sha256sum --check SHA256SUMS.txt
+```
+
+From the verified tarball (files `git-finalize*` must stay in one directory, because the entrypoint
 locates its companions relative to itself):
 
 ```bash
@@ -61,16 +70,13 @@ export PATH="$HOME/.local/bin:$PATH"
 git-finalize --version
 ```
 
+The bundle ships the CLI, its companions and the shared Skill. The `docs/…` links elsewhere in this
+README resolve in the source repository; they are not inside the unpacked bundle.
+
 From a checkout:
 
 ```bash
 ./git-finalize --version
-```
-
-Verify a published artifact before installing it:
-
-```bash
-sha256sum --check SHA256SUMS.txt
 ```
 
 The bundle also ships `tool-skill-sync` and `tooling/`, which manage the optional shared
