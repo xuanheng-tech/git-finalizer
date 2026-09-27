@@ -272,6 +272,7 @@ record.
 | `v1.3.0` | Gitea | `cfbc6d05d125f852786e6e5dacb681db13f9695e` | `f06b1745d37acdb254018ce36fa7ae0ecb200454` | `3502230ecbd1213042443fd44351068dcd321940f9f6d1e30449e132f3e6d3e9` | 150148 |
 | `v1.4.0` | Gitea | `64806dae0805b3dc707e7eab848c8b40ee952ad3` | `f768a6197268dc4a9be1b5d466464a3c2f6bf73c` | `ae1d29683ca36a911993eb138b769577961f7708d61e8eeb47ac402419b7f0f9` | 157304 |
 | `v1.5.0` | GitHub | `a59773ae5ea4aca781152ac289d46afcc91a93b9` | `12cc0f60d0a04296e1cf8527aa14673c3cb42cfb` | `8e16fc878de5e2ff715d035dde74292a240842a3bc296a4c4755c061f18df77c` | 160480 |
+| `v1.6.0` | GitHub | `930c5ec3e489fe9a160349d4dc9fad9390697877` | `e0aa67de0e22aebd93ecccab6868c48bef89e017` | `70741393ffbc837d44b82cac9031be2dfe0aac5c3661802b42c7110752c769eb` | 164273 |
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
@@ -280,9 +281,13 @@ every version string in this repository was ever released: thirteen sections of 
 therefore no `v1.0.0` release anywhere, and a range such as "v1.0.0 – v1.4.0" must not be used for the
 Gitea line.
 
-`v1.5.0` is the first release published through this model and the repository's first GitHub Release:
-the tag went to GitHub only and `.github/workflows/release.yml` (run `36245062595`) built, published
-and re-verified it, with **no** Gitea release object for that version and no mirror. The Gitea release
+`v1.5.0` was the first release published through this model and the repository's first GitHub
+Release: the tag went to GitHub only and `.github/workflows/release.yml` (run `36245062595`) built,
+published and re-verified it, with **no** Gitea release object for that version and no mirror.
+`v1.6.0` repeated that decision rather than reopening it: annotated tag pushed to GitHub only,
+published by run `36305958586`, and its published digest equals the digest measured locally from the
+same commit before tagging, so the two independent witnesses agree to the byte. Gitea again carries no
+release object for it. The Gitea release
 job last ran at `v1.4.0`, on workflow bytes that predate the current
 `.gitea/workflows/release.yml` — that file was last edited by the `v1.5.0` candidate itself, so its
 publish path has never executed as shipped and its first real test is the next Gitea release. A future
