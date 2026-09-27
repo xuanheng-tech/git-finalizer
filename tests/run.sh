@@ -1930,6 +1930,20 @@ test_release_contract() {
     assert_file_contains "$project_root/README.md" \
         "Current stable release: **${declared_version}**." \
         'README English version declaration drifted'
+    # The acquisition block is the one claim a stranger cannot work around: an outside user reads
+    # these URLs and nothing else, so they must name the version this batch declares.
+    assert_file_contains "$project_root/README.md" \
+        "releases/download/v${declared_version}/SHA256SUMS.txt" \
+        'README checksum URL does not name the declared version'
+    assert_file_contains "$project_root/README.md" \
+        "releases/download/v${declared_version}/git-finalizer-${declared_version}.tar.gz" \
+        'README artifact URL does not name the declared version'
+    assert_file_contains "$project_root/README.md" \
+        "tar -xzf git-finalizer-${declared_version}.tar.gz" \
+        'README unpack command does not name the declared version'
+    assert_file_contains "$project_root/README.md" \
+        "cp git-finalizer-${declared_version}/git-finalize " \
+        'README install command does not name the declared version'
     assert_file_contains "$project_root/tool_cli_contract.json" \
         "\"tool_version\": \"${declared_version}\"" \
         'CLI contract version declaration drifted'

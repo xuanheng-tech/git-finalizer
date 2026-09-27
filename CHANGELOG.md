@@ -13,10 +13,17 @@ section is invented for it.
 
 ## Unreleased
 
-Maintenance-only changes on top of the released `1.5.0` line. None of them alters CLI behaviour, the
-machine-readable contract, or any released section below. The canonical Skill payload does change (the
-release-granularity rule below), so the three manifest payload pins move with it; the two behavioural
-changes are the `verify` checksum rule and the released-lineage registry.
+No pending unreleased changes are recorded. The prepared `1.6.0` batch is documented in its own
+section below, because release notes are extracted per version tag and a release must not depend on
+the Unreleased heading.
+
+## 1.6.0
+
+Authorization-boundary release. It carries the rule that lets an approved delivery finish inside one
+task without a fresh request per command, the contract that the layer asking for approval binds a
+grant to, and the correctness fixes found while auditing the first public release. CLI behaviour,
+`contract_version` (still 4) and the machine-readable summary are unchanged, so an existing caller
+needs no edit to upgrade.
 
 - Investigated why ordinary commit/push work kept asking for approval. Git Finalizer is not the
   asker: it reads no stdin, keeps no grant, and writes nothing that a later run could consult, so it
@@ -41,7 +48,7 @@ changes are the `verify` checksum rule and the released-lineage registry.
   succeeded three times, nothing is persisted under `HOME`, the summary carries the binding fields,
   and the entrypoint has no unconditional force-push token and no tag mutation.
 
-- Registered the `v1.5.0` release decision (GitHub as publishing host, no Gitea mirror) as a
+- Recorded the `v1.5.0` release decision (GitHub as publishing host, no Gitea mirror) as a
   per-version table in `docs/release-governance.md` whose identifiers are measured, and made
   `tests/test_public_docs.py` re-derive its tag and commit columns from the repository's own refs.
   This also corrected an inherited claim that `v1.0.0` had been published on Gitea: no `v1.0.0` tag
@@ -92,6 +99,13 @@ changes are the `verify` checksum rule and the released-lineage registry.
   create rather than republishing; only GitHub verifies bytes after publication. `CONTRIBUTING.md`
   gains a verified re-pin command for the manifest digests, notes that each sibling mirror keeps its
   own contract digest, and marks `just skill-check` as needing an installed Skill.
+
+- Lineage is handled by rule rather than by hope: this batch ships the canonical Skill payload
+  `943ebf4e56ae344cf88ab3dc579d5e497663b052c8ccbade5c42f1f52b5efa93`, and that digest is deliberately
+  **not** added to `RELEASED_CANONICAL_SKILL_SHA256` here. Registration requires a released ref that
+  carries the payload, so it belongs to the batch that follows a publication, exactly as `0c82bceb…`
+  was registered only after `v1.4.0` shipped. `tests/test_tool_contract.py` enforces both directions.
+- No tag, release or production activation is part of this batch.
 
 ## 1.5.0
 

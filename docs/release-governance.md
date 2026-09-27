@@ -129,7 +129,9 @@ sort order, or runner image), not something to paper over by publishing one host
 
 ## Runbook: first public GitHub release
 
-Do not execute any of this as part of a maintenance change; it is a deliberate release action.
+The heading is history: this began as the first-public-release runbook and is now the runbook for
+every release. Do not execute any of this as part of a maintenance change; it is a deliberate release
+action.
 Production activation on the maintainer machine is a **separate** authorised step that follows a
 successful release, and it uses `tool-skill-sync install --activate-production` from the canonical
 source repository rather than the release artifact.
@@ -145,12 +147,14 @@ source repository rather than the release artifact.
 3. Confirm the candidate:
 
    ```bash
+   VERSION=$(sed -n 's/^readonly VERSION="\(.*\)"$/\1/p' git-finalize)
    git fetch --all --tags --prune
    git log --oneline -3 github/main   # or origin/main, the branch being tagged
    git status --porcelain=v1          # must be empty in the checkout used for tagging
-   python3 -B scripts/release.py preflight v1.5.0   # exact new tag name
-   python3 -B scripts/release.py selfcheck v1.5.0   # two builds inside one temporary directory;
-                                                    # writes nothing into the checkout
+   python3 -B scripts/release.py preflight "v$VERSION"    # exact new tag name
+   python3 -B scripts/release.py selfcheck "v$VERSION"    # two builds inside one temporary
+                                                            # directory; writes nothing into
+                                                            # the checkout
    ```
 
 4. Announce nothing before the tag exists; the tag is the release trigger.
@@ -172,9 +176,9 @@ the source, not a release object.
 commit, and never a commit that `preflight` has not been run against.
 
 ```bash
-git tag -a v1.5.0 <candidate-sha> -m 'v1.5.0 — <one-line summary>'
-git rev-parse 'v1.5.0^{commit}'    # must print <candidate-sha>
-git push github v1.5.0             # normal push; never --force, never re-create a moved tag
+git tag -a "v$VERSION" <candidate-sha> -m "v$VERSION — <one-line summary>"
+git rev-parse "v$VERSION^{commit}"    # must print <candidate-sha>
+git push github "v$VERSION"           # normal push; never --force, never re-create a moved tag
 ```
 
 Then watch the run:
@@ -187,21 +191,22 @@ gh run watch <run-id> --repo xuanheng-tech/git-finalizer --exit-status
 ### After
 
 ```bash
-gh release view v1.5.0 --repo xuanheng-tech/git-finalizer \
+VERSION=$(sed -n 's/^readonly VERSION="\(.*\)"$/\1/p' git-finalize)
+gh release view "v$VERSION" --repo xuanheng-tech/git-finalizer \
   --json tagName,isDraft,isPrerelease,assets,targetCommitish
 ```
 
 Accept the release only when all of these hold:
 
 - `isDraft=false`, `isPrerelease=false`, `tagName` equals the tag;
-- `targetCommitish` equals the candidate SHA and equals `git rev-parse 'v1.5.0^{commit}'`;
-- exactly two assets: `git-finalizer-1.5.0.tar.gz` and `SHA256SUMS.txt`;
+- `targetCommitish` equals the candidate SHA and equals `git rev-parse "v$VERSION^{commit}"`;
+- exactly two assets: `git-finalizer-$VERSION.tar.gz` and `SHA256SUMS.txt`;
 - release notes are the CHANGELOG section for that version (non-empty);
 - independent re-download verification passes:
 
   ```bash
   work=$(mktemp -d)
-  gh release download v1.5.0 --repo xuanheng-tech/git-finalizer --dir "$work"
+  gh release download "v$VERSION" --repo xuanheng-tech/git-finalizer --dir "$work"
   (cd "$work" && sha256sum --check SHA256SUMS.txt)
   ```
 
@@ -213,7 +218,7 @@ Accept the release only when all of these hold:
   release jobs group concurrency by tag, so two runs for one tag cannot overlap. Read the existing
   release object before assuming the publication is broken — usually it is fine and only the job went
   red.
-- Wrong bytes or wrong assets attached: delete **the release object** (`gh release delete v1.5.0
+- Wrong bytes or wrong assets attached: delete **the release object** (`gh release delete "v$VERSION"
   --repo … --cleanup-history` is history cleanup of a *release*, never of the repository) and
   republish after the fix.
 - **Never**: force-push a tag, move/delete-and-recreate a published tag, rewrite history, or edit a

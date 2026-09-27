@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Completing an implementation, passing tests, or a previous
 one-time authorization never authorizes the next commit or push.
 
-Current stable release: **1.5.0**.
+Current stable release: **1.6.0**.
 
-当前版本：`1.5.0`
+当前版本：`1.6.0`
 
 ## Why it exists
 
@@ -55,8 +55,8 @@ onward; earlier versions were published on the governed delivery remote describe
 verify the artifact, then install it.
 
 ```bash
-curl -fsSLO https://github.com/xuanheng-tech/git-finalizer/releases/download/v1.5.0/SHA256SUMS.txt
-curl -fsSLO https://github.com/xuanheng-tech/git-finalizer/releases/download/v1.5.0/git-finalizer-1.5.0.tar.gz
+curl -fsSLO https://github.com/xuanheng-tech/git-finalizer/releases/download/v1.6.0/SHA256SUMS.txt
+curl -fsSLO https://github.com/xuanheng-tech/git-finalizer/releases/download/v1.6.0/git-finalizer-1.6.0.tar.gz
 sha256sum --check SHA256SUMS.txt
 ```
 
@@ -64,9 +64,9 @@ From the verified tarball (files `git-finalize*` must stay in one directory, bec
 locates its companions relative to itself):
 
 ```bash
-tar -xzf git-finalizer-1.5.0.tar.gz
+tar -xzf git-finalizer-1.6.0.tar.gz
 install -d -m 0755 "$HOME/.local/bin"
-cp git-finalizer-1.5.0/git-finalize git-finalizer-1.5.0/git-finalize-*.py "$HOME/.local/bin/"
+cp git-finalizer-1.6.0/git-finalize git-finalizer-1.6.0/git-finalize-*.py "$HOME/.local/bin/"
 chmod 0755 "$HOME/.local/bin/git-finalize"
 export PATH="$HOME/.local/bin:$PATH"
 git-finalize --version
