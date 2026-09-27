@@ -143,6 +143,15 @@ Git 动作和风险范围且仍未撤销的持续授权；不得从历史行为�
 二者仍需分别列明，但无需逐步骤重复授权。两项均被覆盖、范围未变且交付门槛通过时，直接按默认
 模式完成 commit、push 和远端核验，不因阶段切换再次请求授权；这不授权 merge、公开发布或生产部署。
 
+“范围未变”按以下四项机械判定，全部相同即视为同一范围，同一任务内的后续普通 commit/push
+不得再次请求授权：同一 repository（含同一 worktree 路径）、同一 remote 与目标 branch、
+同一 `Finalization scope`（`commit_only` 或 `commit_and_push`）、同一文件所有权边界。任一
+项改变即离开原范围，须重新取得对应授权；commit message 文本、文件行数、重试次数与验收失败
+后的再次提交都不改变上述四项，不构成重新授权理由。每次实际执行仍逐次调用 Git Finalizer 并
+如实报告该次结果：不重复询问不等于不报告，也不得用前一次调用的结果代替后续调用的证据。
+跨越上述范围的动作为独立授权项：force push、tag 或 release 创建、branch 退役或删除、
+production 激活、公开或保护分支写入，均须另行明确授权，不因本段的连续性规则自动通过。
+
 ### Finalization scope
 
 当 `Publication decision: publish_now` 时，必须在执行前按当前有效的明确授权确定一个 scope：

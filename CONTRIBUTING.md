@@ -84,10 +84,10 @@ A released `CHANGELOG.md` section and any pushed tag are history: they are never
 rewritten. Correct the record in a new section instead.
 
 Re-pin the digests after changing anything bound, rather than editing them by hand. The root manifest
-carries Git Finalizer's own contract digest; each mirror under `manifests/` carries **its own
-tool's** contract digest and must keep it — the only value shared by all three is the Skill payload.
-So the update rewrites one key on the root manifest and one key per mirror, in place, preserving each
-file's formatting:
+carries Git Finalizer's own contract digest **and** the shared Skill payload; each mirror under
+`manifests/` carries **its own tool's** contract digest and the same Skill payload, so a mirror's
+contract pin must never be overwritten with Git Finalizer's. The update therefore rewrites two keys on
+the root manifest and one key per mirror, in place, preserving each file's formatting:
 
 ```bash
 python3 -B - <<'PY'
@@ -100,7 +100,9 @@ contract = sync.sha256_file(root / "tool_cli_contract.json")
 payload = sync.tree_sha256(root / "skills" / sync.SKILL_NAME, sync.SKILL_PAYLOAD)
 targets = {root / "tool_skill_manifest.json": {"public_cli_contract_sha256": contract}}
 for mirror in sorted((root / "manifests").glob("*/tool_skill_manifest.json")):
-    targets[mirror] = {"canonical_skill_sha256": payload}
+    targets[mirror] = {}
+for path in targets:
+    targets[path]["canonical_skill_sha256"] = payload
 for path, pins in targets.items():
     text = original = path.read_text(encoding="utf-8")
     for key, digest in pins.items():
