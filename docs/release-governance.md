@@ -10,6 +10,7 @@ supported-version policy.
 | Concern | Owner |
 | --- | --- |
 | What a release *is* | An annotated tag `vX.Y.Z` whose tree passes `scripts/release.py preflight` |
+| Who authorises a release | Never a delivery grant: tag creation, publication and production activation each need their own explicit authorisation, see [authorization-boundary.md](authorization-boundary.md) |
 | Build recipe and verification gates | `scripts/release.py` — the only implementation, shared by both hosts |
 | Public distribution for outside users | **GitHub** `xuanheng-tech/git-finalizer` (releases, release notes, artifacts, checksums) |
 | Governed daily delivery and the historical release record | **Gitea** `xuanheng-tech/git-finalizer` (the ten releases `v0.4.0` – `v1.4.0` were published here; `v1.5.0` onward is GitHub) |

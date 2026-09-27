@@ -14,8 +14,32 @@ section is invented for it.
 ## Unreleased
 
 Maintenance-only changes on top of the released `1.5.0` line. None of them alters CLI behaviour, the
-machine-readable contract, the Skill payload, or any released section below; the one behavioural
-change is in the released-lineage gate of `tool-skill-sync`, described in the second bullet.
+machine-readable contract, or any released section below. The canonical Skill payload does change (the
+release-granularity rule below), so the three manifest payload pins move with it; the two behavioural
+changes are the `verify` checksum rule and the released-lineage registry.
+
+- Investigated why ordinary commit/push work kept asking for approval. Git Finalizer is not the
+  asker: it reads no stdin, keeps no grant, and writes nothing that a later run could consult, so it
+  cannot gate its second invocation. What asks is the layer in front of it, which matches
+  **exact command strings** and therefore treats every new message, path list or flag as a fresh
+  decision. `docs/authorization-boundary.md` now states the boundary that layer needs: a tier per
+  interface read straight out of `tool_cli_contract.json` (`read_only`, `local_mutation`,
+  `remote_mutation` plus the gated retirement interfaces), the protected operations that no scope
+  expression may grant, and the `--summary` fields a task-scoped grant must bind to (repository,
+  ref, mode, task linkage, tool version) so an approval can be re-checked and audited instead of
+  re-typed. The gap left in the Agent Workspace layer is named there rather than implemented here.
+- The `git-change-delivery` Skill now defines "scope unchanged" mechanically — same repository and
+  worktree, same remote and target branch, same finalization scope, same file-ownership boundary —
+  and states that while all four hold, consecutive ordinary commits and pushes in one task proceed
+  without a fresh request, because a commit message, a retry or a failed acceptance round does not
+  change the scope. Re-asking less is not reporting less: every invocation is still called and
+  reported on its own. Force push, tag or release creation, branch retirement or deletion, production
+  activation, and writes to public or protected branches stay separate authorisations.
+- `tests/test_authorization_boundary.py` holds the boundary from both sides: the tier table is a
+  projection of the published contract rather than a second opinion, every protected operation is
+  documented as ungrantable, a run never reads stdin, three in-scope commits behave like one that
+  succeeded three times, nothing is persisted under `HOME`, the summary carries the binding fields,
+  and the entrypoint has no unconditional force-push token and no tag mutation.
 
 - Registered the `v1.5.0` release decision (GitHub as publishing host, no Gitea mirror) as a
   per-version table in `docs/release-governance.md` whose identifiers are measured, and made

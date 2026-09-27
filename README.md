@@ -157,6 +157,8 @@ success and `1` for everything else on the bash-owned commands.
   [docs/agent-contract.md](docs/agent-contract.md)
 - Optional-integration blockers and the adapter boundary matrix:
   [docs/integration-boundaries.md](docs/integration-boundaries.md)
+- Which operation class needs which approval, and who asks the human:
+  [docs/authorization-boundary.md](docs/authorization-boundary.md)
 - Work deferred on purpose, each entry with the condition that unblocks it:
   [docs/maintenance-backlog.md](docs/maintenance-backlog.md)
 
