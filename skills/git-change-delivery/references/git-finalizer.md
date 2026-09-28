@@ -22,9 +22,10 @@ Controller schema v2 integration candidate publication 也是独立接口。它�
 canonical checkout 发布，也不由 caller 另行选择 remote/main；只消费 Controller 已签发的同一
 publication lease，并把 verified receipt 交回 Controller 完成 lifecycle。
 
-选择模式不得扩大当前任务或适用持续授权所明确覆盖的 commit/push 边界：只验证使用
-`--mode verify-only`，只授权本地 commit 使用 `--mode commit-only`，只有明确授权 commit 和
-push 且任务达到交付状态才使用默认模式。调用绝对入口 `$HOME/bin/git-finalize` 前，还必须满足：
+先应用当前用户的持续自动交付授权。其覆盖普通开发任务时，验收后直接 commit/push，不要求
+逐次人工确认；缺少远端时先安全地本地 commit。只读或更窄的 no-commit/no-push 指令优先：
+只验证用 `--mode verify-only`，仅本地提交用 `--mode commit-only`，已覆盖 commit/push 且达到
+交付状态用默认模式或正式首次发布/恢复接口。调用绝对入口 `$HOME/bin/git-finalize` 前，还必须满足：
 
 - 实现已完成，相关测试和检查实际通过；
 - Snapshot Runner 的相关审查已通过，阻断项已经解决；

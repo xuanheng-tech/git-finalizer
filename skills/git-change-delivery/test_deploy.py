@@ -371,6 +371,15 @@ class SkillContractTest(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, section)
 
+    def test_automatic_delivery_requires_user_grant_and_narrower_limits(self) -> None:
+        content = (VERSIONED_SOURCE / "SKILL.md").read_text(encoding="utf-8")
+        section = quick_validate.contract_section(content)
+        self.assertIn("自动交付授权覆盖的仓库开发任务", section)
+        self.assertIn("遵守这次更窄指令", section)
+        self.assertIn("没有适用持续授权时才补充", section)
+        self.assertNotIn("保持 explicit-only", section)
+        self.assertNotIn("一般实现、测试或验收要求都不构成 commit/push 授权", section)
+
     def test_historical_and_edge_scenarios(self) -> None:
         cases = {
             "read_only": render_finalization_report(

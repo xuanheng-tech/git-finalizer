@@ -2,11 +2,11 @@
 
 ## 共同边界
 
-唯一公共入口 `$HOME/bin/snapshot-runner` 必须以绝对路径直接调用（五个子命令：四个证据收集命令加一个 `read`），并通过原生权限机制使用 `require_escalated`；不得使用 PATH 简写、`bash -lc`、`sh -c` 或其他 wrapper。它们收集目标仓库的只读证据，不对目标仓库执行 Git 写入。
+唯一公共入口 `$HOME/bin/snapshot-runner` 必须以绝对路径直接调用（五个子命令：四个证据收集命令加一个 `read`），使用执行器实际提供的原生权限通道；不要求不存在或被禁止的权限参数；不得使用 PATH 简写、`bash -lc`、`sh -c` 或其他 wrapper。它们收集目标仓库的只读证据，不对目标仓库执行 Git 写入。
 
 Runner 会在目标仓库之外创建本地状态和内容寻址产物。默认位置为 `~/.local/state/snapshot-runner/snapshots/<snapshot-id>/`；若设置了绝对 `XDG_STATE_HOME`，则使用其下的 `snapshot-runner/snapshots/`。状态目录必须已存在、由当前用户拥有且权限为 `0700`。
 
-当前正式合同为 Snapshot Runner 2.3.1（public CLI contract 3）。四个收集子命令默认显式添加 `--summary`，无需每个任务重复检查版本；`read` 不支持 `--summary`。若实际命令不支持这些参数，报告安装或版本漂移并退回原有默认输出，不得伪造摘要结果。
+正式版本与 CLI contract 以 owner manifest 和已安装工具为准，由 `tool-skill-sync doctor` 检查，本文不复制发布版本。四个收集子命令默认显式添加 `--summary`，无需每个任务重复检查版本；`read` 不支持 `--summary`。若实际命令不支持这些参数，报告安装或版本漂移并退回原有默认输出，不得伪造摘要结果。
 
 `--summary` 成功时输出单行确定性 JSON，提供 `command`、`status`、`next_action`、`snapshot_id`/`artifact`、`repository`、`head`、`scope`、命令相关 `result` 计数、`warnings`/`warnings_omitted`、`truncated` 和 `evidence_gap`。摘要由同一正式 artifact 派生，只用于首轮决策；`snapshot.json` 仍是权威的有界快照证据。完整产物目录还包含：
 

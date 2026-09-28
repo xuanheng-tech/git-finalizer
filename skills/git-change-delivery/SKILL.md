@@ -16,9 +16,9 @@ description: "用于仓库文件变更的上下文加载、测试与 evidence �
 - 用户要求向完全空的 remote 首次发布，或发布已经存在的普通 local commits，或用已创建
   root commit 的完整 OID 恢复失败或不确定的 initial publish。
 
-触发本 Skill 不等于必须运行全部三工具或全量测试。不得从“完成实现”“修复问题”、历史行为或
-以往一次性授权推导 commit/push 授权；只有当前任务的明确授权，或用户明确授予且仍有效的持续
-授权，才能覆盖对应 Git 动作。
+触发本 Skill 不等于必须运行全部三工具或全量测试。先读取用户当前的自动交付/持续授权：
+覆盖本任务时，验收后自动 commit、push 和远端核验，不再要求用户逐次触发或确认。
+用户要求只读、不提交或不推送时遵守其更窄边界；本 Skill 自身不授予 Git 权限。
 
 ## 不适用场景
 
@@ -50,6 +50,15 @@ release 算法，也不创建或移除 worktree。流程边界是：
 incompatible change 而未同步更新该文件时，兼容检查必须失败。
 
 简单、局部且不发布的任务可跳过 Runner；不要机械运行四个 Runner 命令。需要发布时，只选择足以证明发布门槛的最小相关 Runner 集合，通常至少审查当前 diff；不得因为任务简单而跳过 Git Finalizer 所要求的 Snapshot Runner 审查。
+
+## 指令与工具更新入口
+
+仓库任务开始、恢复或工具更新后，使用已安装的
+`tool-skill-sync doctor --repo <actual-checkout> --summary` 核对四工具、配套 Skill 与指令指纹；
+变化时重新读取相关规则。checker 尚未安装时直接读取当前文件与工具合同。
+失败只阻止依赖该组件的步骤。源码候选、已安装 runtime 和已合入 canonical 是不同状态；
+不自动激活另一开发线。更新本 Skill 时同步 payload pins，通过 owner 的正式安装流程交付，
+并以实际安装检查收口；仅改 feature 分支或安装副本不能声称全局/main 已更新。
 
 ## Git Finalizer 模式选择
 
@@ -126,31 +135,26 @@ Publication decision 只回答：当前任务结束前，是否应执行被明�
 
 ### 明确发布授权
 
-保持 explicit-only。相应授权只能来自当前任务的明确要求，或用户明确授予、限定仓库或资源、
-Git 动作和风险范围且仍未撤销的持续授权；不得从历史行为、以往一次性授权、工具权限或完成状态
-推导。暂停、resume、上下文压缩或 Agent 交接不使仍在原范围内的授权失效。
+先执行用户已设定的自动 Git 交付规则，再判断是否有真正缺失的授权。当前任务请求、全局持续
+授权和仓库控制面的有效授权共同决定范围；不得把“自动 commit/push”重新解释为每次询问。
+在自动交付授权覆盖的仓库开发任务中，“完成”“修复”“继续推进”包含验收后的交付步骤；
+不能以用户本轮未重复写出 commit/push 为由留在未提交草稿。
 
-用户明确要求 commit、push、发布或使用 Git Finalizer，当前任务合同明确规定验收后的具体 Git
-动作，或适用的持续授权明确覆盖该动作，才构成相应授权；授权范围以用户明确要求的动作、仓库、
-文件以及适用的 remote/branch 为限。只验证选择 `verify-only`，
-仅要求 commit 选择 `commit-only` 且不得自行扩大为 push；只有明确授权 commit 和 push 才选择
-默认模式。已有普通 local commits 且只授权继续 push 时可选择 `--resume-publish`；无 upstream
-的首次分支发布可选择 `--publish-existing-branch`，两者授权均不包含创建新 commit。
-“完成这个任务”、“全权处理”、
-“修复这个问题”以及一般实现、测试或验收要求都不构成 commit/push 授权，不得从模糊意图、历史任务或完成状态推导权限。
+自动化仍以任务完成、范围明确、相应测试和 Snapshot 审查通过为门槛。已有明确 upstream 时用
+默认模式；任务 feature branch 尚无 upstream 时，向已有且授权的 origin 同名分支执行正式
+首次发布流程。只有缺少/不明确的远端、真实验证失败、未知改动、秘密内容、分叉或外部结果
+不确定才停下对应步骤。没有可用远端但本地提交安全时先用 `commit-only`，登记待推送原因。
+已有 commit 的恢复用 `--resume-publish` 或 `--publish-existing-branch`，不重复制造 commit。
 
-同一份持续授权可同时明确覆盖本地 commit 和向指定私有 remote 的 task/feature branch push；
-二者仍需分别列明，但无需逐步骤重复授权。两项均被覆盖、范围未变且交付门槛通过时，直接按默认
-模式完成 commit、push 和远端核验，不因阶段切换再次请求授权；这不授权 merge、公开发布或生产部署。
+只读请求使用 `verify-only`；明确要求不 commit、不 push、只保留草稿或仅本地 commit 时，
+遵守这次更窄指令。仅要求 commit 选择 `commit-only` 且不得自行扩大为 push。
+没有适用持续授权时才补充缺少的 Git 动作/目标授权；不得从本 Skill、
+工具权限或无关历史行为扩权。暂停、resume、压缩、重试和同一任务的受控 checkout 迁移都不
+使既有授权失效，文件行数和提交消息也不是重新授权理由。
 
-“范围未变”按以下四项机械判定，全部相同即视为同一范围，同一任务内的后续普通 commit/push
-不得再次请求授权：同一 repository（含同一 worktree 路径）、同一 remote 与目标 branch、
-同一 `Finalization scope`（`commit_only` 或 `commit_and_push`）、同一文件所有权边界。任一
-项改变即离开原范围，须重新取得对应授权；commit message 文本、文件行数、重试次数与验收失败
-后的再次提交都不改变上述四项，不构成重新授权理由。每次实际执行仍逐次调用 Git Finalizer 并
-如实报告该次结果：不重复询问不等于不报告，也不得用前一次调用的结果代替后续调用的证据。
-跨越上述范围的动作为独立授权项：force push、tag 或 release 创建、branch 退役或删除、
-production 激活、公开或保护分支写入，均须另行明确授权，不因本段的连续性规则自动通过。
+每次执行仍检查 repository、任务文件所有权、remote/branch 和风险边界，并调用 Git Finalizer
+返回本次真实证据。merge/main integration、扩大公开可见性、force push、history rewrite、
+tag/release、branch 删除和 production 激活保持独立授权；已被明确覆盖时直接继续，不重复问。
 
 ### Finalization scope
 
@@ -161,7 +165,7 @@ Finalization scope: <commit_only|commit_and_push>
 ```
 
 - 用户只明确授权 commit：`commit_only`。
-- 用户明确授权 commit + push、发布，或任务提示词明确规定验收后 commit + push：`commit_and_push`。
+- 当前请求或持续自动交付授权覆盖 commit + push：`commit_and_push`；验收后自动执行。
 - 已有普通 local commits 且只授权继续 push 的 `--resume-publish` 也属于 `commit_and_push`，但不授权创建新 commit。
 - 已有 clean local feature branch 首次发布的 `--publish-existing-branch` 也属于 `commit_and_push`，但不授权创建新 commit。
 - 不得把 commit 授权自动扩大为 push 授权；只有 Git Finalizer 实际支持的模式才能执行。

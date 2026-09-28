@@ -183,7 +183,7 @@ class ToolContractTests(unittest.TestCase):
         compatibility = json.loads(
             (ROOT / "toolchain_compatibility.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(compatibility["toolchain_contract_version"], 5)
+        self.assertEqual(compatibility["toolchain_contract_version"], 6)
         self.assertEqual(compatibility["context_loader_contract_version"], 3)
         # Sibling contracts advanced to v3 (Context Loader 1.3.1, Snapshot Runner 2.3.1);
         # per-tool contract advances do not move toolchain_contract_version by themselves.

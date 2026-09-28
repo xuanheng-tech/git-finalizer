@@ -19,7 +19,7 @@ import tomllib
 from typing import Any, Sequence
 
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 SCHEMA_VERSION = 1
 TOOL_SKILL_MANIFEST_SCHEMA_VERSION = 2
 SKILL_NAME = "git-change-delivery"
@@ -202,9 +202,11 @@ def project_version(repo: Path, tool_name: str) -> tuple[str, tuple[str, ...]]:
 
 class Sources:
     def __init__(
-        self, source_root: Path, source_repos: dict[str, Path] | None = None
+        self, source_root: Path, source_repos: dict[str, Path] | None = None,
+        source_refs: dict[str, str] | None = None,
     ) -> None:
         self.source_root = source_root.resolve()
+        self.source_refs = dict(source_refs or {})
         self.source_repos = {
             name: path.resolve() for name, path in (source_repos or {}).items()
         }
@@ -231,12 +233,46 @@ class Sources:
         if not isinstance(tools, dict) or not tools:
             raise SyncError("toolchain compatibility contract has no tools")
         self.tool_config = tools
-        if set(self.source_repos) - set(tools):
+        if (set(self.source_repos) | set(self.source_refs)) - set(tools):
             raise SyncError("source-repo names an unknown tool")
         self.skill_root = self.owner_repo / "skills" / SKILL_NAME
         self.compatibility_skill_root = (
             self.owner_repo / "skills" / COMPATIBILITY_SKILL_NAME
         )
+
+    def head(self, tool: str) -> str:
+        return self.source_refs.get(tool) or git_head(self.repo(tool))
+
+    def dirty(self, tool: str) -> bool:
+        return False if tool in self.source_refs else git_dirty(self.repo(tool))
+
+    def source_bytes(self, tool: str, relative: str) -> bytes:
+        if relative not in {"pyproject.toml", "tool_cli_contract.json"}:
+            raise SyncError("pinned source reads are limited to package metadata and contract")
+        repo = self.repo(tool)
+        if tool not in self.source_refs:
+            return (repo / relative).read_bytes()
+        oid = self.source_refs[tool]
+        if not FULL_GIT_OID.fullmatch(oid):
+            raise SyncError("source-ref requires a full commit OID")
+        manifest = read_json(self.manifest_path(tool))
+        if manifest["executable"]["kind"] != "python_console_scripts":
+            raise SyncError("source-ref only supports released Python console-script metadata")
+        if git(repo, "rev-parse", f"{oid}^{{commit}}") != oid:
+            raise SyncError("source-ref must identify a commit, not a tag object")
+        result = subprocess.run(
+            ["git", "-C", str(repo), "show", f"{oid}:{relative}"],
+            capture_output=True, check=False, timeout=30,
+        )
+        if result.returncode:
+            raise SyncError(f"pinned source file is unavailable: {tool}/{relative}")
+        return result.stdout
+
+    def project_identity(self, tool: str) -> tuple[str, tuple[str, ...]]:
+        if tool not in self.source_refs:
+            return project_version(self.repo(tool), tool)
+        data = tomllib.loads(self.source_bytes(tool, "pyproject.toml").decode())
+        return data["project"]["version"], tuple(sorted(data["project"]["scripts"]))
 
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self.tool_config))
@@ -415,14 +451,35 @@ def validate_manifest_static_fields(
         raise SyncError("ToolSkillManifest compatibility Skill SHA is invalid")
 
 
+def validate_controller_requirements(requirements: Any) -> None:
+    keys = {"cli_contract_versions", "storage_layout_versions", "capability_versions"}
+    if not isinstance(requirements, dict) or set(requirements) != keys:
+        raise SyncError("missing or malformed reviewed Controller runtime requirements")
+    for key in ("cli_contract_versions", "storage_layout_versions"):
+        values = requirements[key]
+        if (not isinstance(values, list) or not values
+                or any(type(value) is not int or value <= 0 for value in values)
+                or len(set(values)) != len(values)):
+            raise SyncError(f"invalid Controller {key}")
+    capabilities = requirements["capability_versions"]
+    if not isinstance(capabilities, dict) or "capabilities_version" not in capabilities:
+        raise SyncError("Controller capability_versions must bind capabilities_version")
+    for name, value in capabilities.items():
+        if (not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_]*_version", name)
+                or type(value) is not int or value <= 0):
+            raise SyncError("invalid Controller capability version binding")
+
+
 def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
     errors: list[str] = []
     repo = sources.repo(tool)
     manifest_path = sources.manifest_path(tool)
-    contract_path = repo / "tool_cli_contract.json"
     try:
         manifest = read_json(manifest_path)
-        contract = read_json(contract_path)
+        raw_contract = sources.source_bytes(tool, "tool_cli_contract.json")
+        contract = json.loads(raw_contract.decode("utf-8"))
+        if not isinstance(contract, dict) or canonical_json(contract) != raw_contract:
+            raise SyncError("source contract is not deterministically serialized")
         if manifest.get("schema_version") != TOOL_SKILL_MANIFEST_SCHEMA_VERSION:
             raise SyncError("unsupported ToolSkillManifest schema_version")
         if contract.get("schema_version") != SCHEMA_VERSION:
@@ -433,7 +490,7 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
         validate_contract_shape(contract)
         if manifest.get("tool_version") != contract.get("tool_version"):
             raise SyncError("tool version mismatch between manifest and CLI contract")
-        source_version, source_entrypoints = project_version(repo, tool)
+        source_version, source_entrypoints = sources.project_identity(tool)
         if source_version != manifest.get("tool_version"):
             raise SyncError("source version does not match ToolSkillManifest")
         entrypoints = validate_install_targets(manifest)
@@ -441,8 +498,8 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
             raise SyncError("source public entrypoints do not match ToolSkillManifest")
         if manifest.get("tool_commit") != "@release":
             raise SyncError("canonical source manifest tool_commit must be @release")
-        git_head(repo)
-        contract_sha = sha256_file(contract_path)
+        sources.head(tool)
+        contract_sha = sha256_bytes(raw_contract)
         if manifest.get("public_cli_contract_sha256") != contract_sha:
             raise SyncError("public CLI contract SHA mismatch")
         skill_sha = tree_sha256(sources.skill_root, SKILL_PAYLOAD)
@@ -452,8 +509,13 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
         if manifest["compatibility_skill"]["sha256"] != compatibility_sha:
             raise SyncError("compatibility Skill SHA mismatch")
         compatibility_version = sources.compatibility.get("toolchain_contract_version")
-        if compatibility_version not in {1, 2, 3, 4, 5}:
+        if compatibility_version not in {1, 2, 3, 4, 5, 6}:
             raise SyncError("unsupported toolchain compatibility contract version")
+        if compatibility_version == 6:
+            runtime_requirements = sources.compatibility.get("runtime_requirements")
+            if not isinstance(runtime_requirements, dict):
+                raise SyncError("v6 requires explicit runtime_requirements")
+            validate_controller_requirements(runtime_requirements.get("worktree-controller"))
         if (
             manifest.get("compatible_toolchain_contract_version")
             != compatibility_version
@@ -493,7 +555,7 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
             raise SyncError(
                 "external Worktree Controller contract is incompatible with the toolchain"
             )
-    except SyncError as exc:
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError, SyncError) as exc:
         errors.append(str(exc))
         manifest = {}
         contract_sha = None
@@ -502,8 +564,10 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
     return {
         "tool": tool,
         "status": "PASS" if not errors else "FAIL",
-        "canonical_commit": git_head(repo),
-        "canonical_source_dirty": git_dirty(repo),
+        "canonical_commit": sources.head(tool),
+        "canonical_source_dirty": sources.dirty(tool),
+        "source_selection": "pinned_commit" if tool in sources.source_refs else "working_checkout",
+        "source_checkout_dirty": git_dirty(repo),
         "canonical_tool_version": manifest.get("tool_version"),
         "canonical_skill_sha256": skill_sha,
         "public_cli_contract_sha256": contract_sha,
@@ -876,6 +940,9 @@ def upgrade(
     previous_bundle: Path | None = None,
 ) -> dict[str, Any]:
     """Upgrade one console-script tool to its canonical release, or restore the old one."""
+    checked = check_tool(sources, tool)
+    if checked["status"] != "PASS":
+        raise SyncError("canonical check failed: " + "; ".join(checked["errors"]))
     manifest = read_json(sources.manifest_path(tool))
     entrypoints = validate_install_targets(manifest)
     if manifest["executable"]["kind"] != "python_console_scripts":
@@ -1058,8 +1125,8 @@ def status(sources: Sources, agents_root: Path, bin_dir: Path | None) -> dict[st
             {
                 "tool_name": tool,
                 "canonical_tool_version": manifest.get("tool_version"),
-                "canonical_commit": git_head(repo),
-                "canonical_source_dirty": git_dirty(repo),
+                "canonical_commit": sources.head(tool),
+                "canonical_source_dirty": sources.dirty(tool),
                 "canonical_skill_sha256": manifest.get("canonical_skill_sha256"),
                 "public_cli_contract_sha256": manifest.get(
                     "public_cli_contract_sha256"
@@ -1795,8 +1862,8 @@ def build_bundle(
     if checked["status"] != "PASS":
         raise SyncError("canonical check failed: " + "; ".join(checked["errors"]))
     repo = sources.repo(tool)
-    head = git_head(repo)
-    dirty = git_dirty(repo) or git_dirty(sources.owner_repo)
+    head = sources.head(tool)
+    dirty = sources.dirty(tool) or git_dirty(sources.owner_repo)
     if dirty and not allow_dirty_source:
         raise SyncError(
             "source repositories are dirty; release bundle requires committed sources"
@@ -1811,8 +1878,8 @@ def build_bundle(
     try:
         copy_skill_payload(sources.skill_root, staging)
         copy_compatibility_skill(sources.compatibility_skill_root, staging)
-        shutil.copyfile(
-            repo / "tool_cli_contract.json", staging / "tool_cli_contract.json"
+        (staging / "tool_cli_contract.json").write_bytes(
+            sources.source_bytes(tool, "tool_cli_contract.json")
         )
         (staging / "tool_cli_contract.json").chmod(0o600)
         write_json(staging / "tool_skill_manifest.json", manifest)
@@ -2081,6 +2148,10 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path.home() / ".local" / "state" / "tool-skill-sync",
     )
+    result.add_argument(
+        "--source-ref", action="append", default=[], metavar="TOOL=FULL_COMMIT_OID",
+        help="read released Python package metadata from an exact commit without touching its checkout",
+    )
     result.add_argument("--agents-root", type=Path, default=Path.home() / ".agents")
     result.add_argument("--bin-dir", type=Path)
     result.add_argument(
@@ -2088,6 +2159,18 @@ def parser() -> argparse.ArgumentParser:
     )
     subcommands = result.add_subparsers(dest="command", required=True)
     subcommands.add_parser("status")
+    doctor_parser = subcommands.add_parser(
+        "doctor", help="read-only four-tool deployment and instruction freshness check"
+    )
+    doctor_parser.add_argument("--repo", type=Path)
+    doctor_parser.add_argument("--summary", action="store_true")
+    doctor_parser.add_argument("--previous-fingerprint")
+    doctor_parser.add_argument("--codex-home", type=Path,
+                               default=Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")))
+    doctor_parser.add_argument("--controller", type=Path)
+    doctor_parser.add_argument("--controller-source", type=Path)
+    doctor_parser.add_argument("--controller-runtime-root", type=Path,
+                               default=Path.home() / ".local/share/worktree-controller")
     check_parser = subcommands.add_parser("check")
     check_parser.add_argument("tool")
     check_parser.add_argument(
@@ -2126,7 +2209,30 @@ def main(arguments: Sequence[str] | None = None) -> int:
             if name in source_repos:
                 raise SyncError("source-repo contains a duplicate tool")
             source_repos[name] = Path(path)
-        sources = Sources(args.source_root, source_repos)
+        source_refs = {}
+        for value in args.source_ref:
+            name, separator, oid = value.partition("=")
+            if not separator or not SAFE_NAME.fullmatch(name) or not FULL_GIT_OID.fullmatch(oid):
+                raise SyncError("source-ref requires TOOL=FULL_COMMIT_OID")
+            if name in source_refs:
+                raise SyncError("source-ref contains a duplicate tool")
+            source_refs[name] = oid
+        sources = Sources(args.source_root, source_repos, source_refs)
+        if args.command == "doctor":
+            try:
+                from . import workflow_health
+            except ImportError:
+                import workflow_health
+            output = workflow_health.doctor(
+                sources, agents_root=args.agents_root.resolve(), bin_dir=args.bin_dir,
+                hooks_dir=args.hooks_dir.resolve(), repo=args.repo,
+                codex_home=args.codex_home.resolve(), controller=args.controller,
+                controller_runtime_root=args.controller_runtime_root,
+                controller_source=args.controller_source or args.source_root / "worktree-controller",
+                previous_fingerprint=args.previous_fingerprint,
+            )
+            print(canonical_json(workflow_health.summary(output) if args.summary else output).decode(), end="")
+            return 0 if output["status"] == "PASS" else 1
         if args.command == "status":
             output = status(sources, args.agents_root.resolve(), args.bin_dir)
         else:

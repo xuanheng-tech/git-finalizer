@@ -1,9 +1,32 @@
 {
   "context_loader_contract_version": 3,
   "git_finalizer_contract_version": 4,
+  "runtime_requirements": {
+    "worktree-controller": {
+      "capability_versions": {
+        "branch_retirement_execution_version": 1,
+        "branch_retirement_verify_version": 1,
+        "branch_retirement_version": 1,
+        "capabilities_version": 1,
+        "delivered_closeout_version": 1,
+        "doctor_mount_version": 2,
+        "governance_version": 2,
+        "namespace_migration_version": 1,
+        "retained_archive_version": 1,
+        "writer_lease_schema_version": 2,
+        "writer_session_version": 2
+      },
+      "cli_contract_versions": [
+        37
+      ],
+      "storage_layout_versions": [
+        4
+      ]
+    }
+  },
   "schema_version": 1,
   "snapshot_runner_contract_version": 3,
-  "toolchain_contract_version": 5,
+  "toolchain_contract_version": 6,
   "tools": {
     "context-loader": {
       "public_cli_contract_version": 3,

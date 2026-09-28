@@ -37,9 +37,9 @@ compatibility shim 的独立 SHA-256 由 ToolSkillManifest v2 绑定，并随 bu
   contract 语义或 Worktree Controller binding 规则本身变化。per-tool contract 版本推进不属于升格。
   升格必须在同一提交内原子完成：`tool_skill_sync.check_tool` 的受支持版本集合与 controller
   binding 分支、`toolchain_compatibility.json`、全部 manifest 的
-  `compatible_toolchain_contract_version`、以及相关测试。当前受支持集合为 1–5；v4 起要求
-  Worktree Controller contract 2，v5 起固定为 3，且 binding 是本仓声明式合同，不与外部
-  Controller 仓库交叉验证。
+  `compatible_toolchain_contract_version`、以及相关测试。当前受支持集合为 1–6；v4 起要求
+  Worktree Controller contract 2，v5 起固定为 3，该数字是 adapter binding，独立于 WC CLI contract；v6 的 runtime requirements 另行校验
+  实际 active Controller 的 CLI、capability 与 storage 合同。
 
 ## Commands
 
@@ -124,3 +124,56 @@ CLI contract check
 
 单仓库 CI 运行本仓库的 contract tests；需要三个 checkout 的 bundle/compatibility gate 在共同
 release workspace 运行。现有生产发布脚本不被隐式改写。
+
+## Installed workflow and instruction check
+
+`tool-skill-sync doctor --repo <actual-checkout> --summary` is a read-only deployment gate.
+Exit 0 means the selected three-tool source manifests, actual binaries/sidecars, shared Skill,
+reviewed external Controller requirements and instruction discovery budget pass. Exit 1 reports
+component failures; it never installs, activates, commits, changes instructions or mutates a checkout.
+Use the full JSON only to investigate a named component. `--previous-fingerprint <sha256>` reports
+whether observed content changed; it cannot attest what a running model has loaded.
+
+The three managed tools keep their independent software/CLI versions. Toolchain contract v6 adds
+`runtime_requirements.worktree-controller` with separate accepted CLI contracts, storage layouts
+and required capability versions. The older `worktree_controller_contract_version` is the
+integration-adapter contract, not the WC CLI contract. Doctor observes the actual active pinned
+runtime and frozen contract, validates installed RECORD content, and reports its source checkout
+as a candidate separately. It does not activate a source HEAD, infer compatibility from software
+version alone, or treat equal CLI numbers as sufficient.
+
+Source-file tools verify all deployed executable/sidecar bytes, including Skill Sync. Python tools
+verify installed wheel RECORD content in addition to entrypoint versions. WC remains owned by its
+official stage/rollout/activate flow. A simultaneous WC development line can change its source
+without changing the active runtime; only dependent incompatible operations are blocked.
+
+Doctor resolves global override precedence, repository root-to-cwd instruction scope, real paths,
+shared personal Skills and optional Claude bridge. It reports instruction byte limits and uncommitted
+instruction changes in registered checkouts (bounded to 64). Such pending work is not integrated
+main. A differing checkout AGENTS is a review signal, not permission to overwrite branch-specific
+rules. No content is copied into other checkouts. The global task-start/resume rule invokes this
+gate and rereads changed files; no watcher, daemon, hook replacement or background upgrade is added.
+
+The v6 source gate validates the independent Controller requirements before any install. The doctor
+also binds the installed lifecycle Skill to the active Controller commit and refuses a mixed
+observation if the active pointer changes during its probe. Source checkout edits never select a new
+runtime. A linked checkout fingerprint includes canonical governance references, so a canonical update
+requires a reread even while the branch's own instructions remain unchanged.
+
+## Exact released package metadata
+
+A concurrently edited Python tool checkout need not be reset/stashed or copied to install a known
+release. `--source-ref <tool>=<full-commit-oid>` reads only `pyproject.toml` and
+`tool_cli_contract.json` directly from that local commit. The tool must be a Python console-script
+package; Git Finalizer's source-file payload still requires a clean committed source checkout.
+The pinned metadata must match the selected manifest's version, CLI hash and entrypoints.
+No Git checkout, ref, index or working file changes. Bundle provenance records the selected OID;
+the owner Skill source must still be clean. Arbitrary dirty sources remain test-only.
+
+Example after the exact released OID has been reviewed:
+
+`tool-skill-sync --source-ref snapshot-runner=<full-commit-oid> upgrade snapshot-runner --dry-run`
+
+Use the same pin for actual upgrade and managed install/activation. Upgrade now validates the source
+contract before invoking the package installer. Finish with installed smoke and doctor. Do not treat
+a package install as instruction integration, or advance a manifest solely to silence a failing gate.

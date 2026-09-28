@@ -3,13 +3,13 @@
     "owner": "git-finalizer",
     "path": "skills/git-change-delivery/SKILL.md"
   },
-  "canonical_skill_sha256": "943ebf4e56ae344cf88ab3dc579d5e497663b052c8ccbade5c42f1f52b5efa93",
+  "canonical_skill_sha256": "4bd73219160b4e51cfb823c332be604bf727e7070c156ee579acbc266696b379",
   "compatibility_skill": {
     "name": "three-tool-git-workflow",
     "path": "skills/three-tool-git-workflow/SKILL.md",
     "sha256": "68503da0ffb2e94e487afc8bbc8320390da9bdf7a8e6e7e902f6f6ab426dd8cd"
   },
-  "compatible_toolchain_contract_version": 5,
+  "compatible_toolchain_contract_version": 6,
   "executable": {
     "entrypoints": [
       "git-finalize"
@@ -24,7 +24,8 @@
       "git-finalize-source-review.py",
       "tool-skill-sync",
       "tooling/tool_skill_sync.py",
-      "tooling/tool_temp_dir.py"
+      "tooling/tool_temp_dir.py",
+      "tooling/workflow_health.py"
     ],
     "production_targets": {
       "git-finalize": "bin/git-finalize",
@@ -35,7 +36,8 @@
       "git-finalize-source-review.py": "bin/git-finalize-source-review.py",
       "tool-skill-sync": "bin/tool-skill-sync",
       "tooling/tool_skill_sync.py": "bin/tool-skill-sync-support/tool_skill_sync.py",
-      "tooling/tool_temp_dir.py": "bin/tool-temp-dir"
+      "tooling/tool_temp_dir.py": "bin/tool-temp-dir",
+      "tooling/workflow_health.py": "bin/tool-skill-sync-support/workflow_health.py"
     }
   },
   "install_targets": {

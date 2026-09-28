@@ -23,3 +23,7 @@ skill-check:
 
 skill-install:
     python3 -B skills/git-change-delivery/deploy.py install
+
+# Explicit local deployment gate; CI source-only checks remain independent.
+workflow-check repo="." source_root="..":
+    ./tool-skill-sync --source-root "{{source_root}}" --source-repo git-finalizer="$PWD" doctor --repo "{{repo}}" --summary
