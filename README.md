@@ -194,8 +194,8 @@ the standalone lifecycle without the optional four-tool workflow.
 For Skills, [Codex discovers `.agents/skills`](https://developers.openai.com/codex/skills), while
 [Claude Code discovers `.claude/skills`](https://code.claude.com/docs/en/skills). The shared personal
 payload can be linked into each client's discovery directory; keep one source and preserve existing
-links. Project instructions remain in `AGENTS.md`. Older Claude clients require a `CLAUDE.md`
-import (`@AGENTS.md`); the [Claude memory documentation](https://code.claude.com/docs/en/memory)
+links. Project instructions remain in `AGENTS.md`. This repository supplies a `CLAUDE.md`
+import (`@AGENTS.md`) for older Claude clients; the [Claude memory documentation](https://code.claude.com/docs/en/memory)
 describes both the import and newer native discovery. Other clients can read the same instructions
 explicitly according to their own discovery rules.
 
