@@ -3626,59 +3626,101 @@ validate_retirement_oid() {
 }
 
 # GF-INTEGRATION-ADAPTER: worktree-controller-retirement (single site)
-acquire_retirement_plan_lock() {
+verify_retirement_plan() {
     local operation=$1
     local common_dir
-    local controller_root
-    local lock_file
     local executable
-    local verifier
+    local verifier_output
+    local -a recovery=()
 
     ((retirement_plan_id_seen == 1)) || return 0
     common_dir=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir) || {
         retirement_validation_error='无法定位 Git common dir'
         return 1
     }
-    controller_root=$common_dir/worktree-controller/v1
-    if [[ ! -d "$controller_root" && -d "$common_dir/codex-worktree/v1" ]]; then
-        retirement_validation_error='检测到 legacy codex-worktree namespace；retirement 需先经 WC 治理激活 worktree-controller/v1，本工具拒绝读取非权威旧状态'
+    if [[ ! -d "$common_dir/worktree-controller/v1" &&
+        -d "$common_dir/codex-worktree/v1" ]]; then
+        retirement_validation_error='检测到 legacy codex-worktree namespace；retirement 需先经 WC 治理激活 worktree-controller/v1'
         return 1
     fi
-    lock_file=$controller_root/repo.lock
-    [[ -f "$lock_file" && ! -L "$lock_file" ]] || {
-        retirement_validation_error='Controller repo.lock 缺失或不安全'
-        return 1
-    }
-    exec {retirement_plan_lock_fd}<>"$lock_file" || {
-        retirement_validation_error='无法打开 Controller repo.lock'
-        return 1
-    }
-    flock -x "$retirement_plan_lock_fd" || {
-        retirement_validation_error='无法取得 Controller retirement 执行锁'
-        return 1
-    }
     executable=$(realpath -e -- "${BASH_SOURCE[0]}") || {
         retirement_validation_error='无法解析 Finalizer 入口'
         return 1
     }
-    local verifier_output
-    verifier=${executable%/*}/git-finalize-retirement-plan.py
-    [[ -f "$verifier" && ! -L "$verifier" ]] || {
-        retirement_validation_error='缺少 retirement plan verifier companion'
+    retirement_verifier=${executable%/*}/git-finalize-retirement-plan.py
+    [[ -f "$retirement_verifier" && ! -L "$retirement_verifier" ]] || {
+        retirement_validation_error='缺少 retirement protocol companion'
         return 1
     }
-    if ! verifier_output=$("$PYTHON3_EXECUTABLE" -B "$verifier" \
+    ((dry_run == 1)) || recovery=(--recover)
+    if ! verifier_output=$("$PYTHON3_EXECUTABLE" -B "$retirement_verifier" \
         --repo "$repo" --plan-id "$retirement_plan_id_arg" --operation "$operation" \
         --branch "$retirement_feature_branch" --remote "$retirement_remote" \
         --integrated-into "$integrated_into_arg" \
         --expected-oid "$retirement_expected_oid" \
-        --expected-integrated-oid "$expected_integrated_oid_arg" 2>&1); then
+        --expected-integrated-oid "$expected_integrated_oid_arg" "${recovery[@]}" 2>&1); then
         retirement_validation_error="Controller retirement plan 校验失败: $(
             printf '%s\n' "$verifier_output" | tail -n 1
         )"
         return 1
     fi
     summary_retirement_plan_id=$retirement_plan_id_arg
+}
+
+run_retirement_plan_delete() {
+    local operation=$1
+    local output
+    local attempted
+    local completed=1
+
+    retirement_controller_error=''
+    if ! output=$(run_git_mutation "Controller-authorized $operation retirement CAS" \
+        "$PYTHON3_EXECUTABLE" -B "$retirement_verifier" \
+        --repo "$repo" --plan-id "$retirement_plan_id_arg" --operation "$operation" \
+        --branch "$retirement_feature_branch" --remote "$retirement_remote" \
+        --integrated-into "$integrated_into_arg" \
+        --expected-oid "$retirement_expected_oid" \
+        --expected-integrated-oid "$retirement_integration_oid_before" \
+        --recover --execute 2>&1); then
+        completed=0
+    fi
+    if ! attempted=$(printf '%s\n' "$output" | tail -n 1 |
+        "$PYTHON3_EXECUTABLE" -B -c '
+import json, sys
+value = json.load(sys.stdin)
+if not isinstance(value, dict) or type(value.get("controller_complete")) is not bool:
+    raise ValueError("invalid completion result")
+if sys.argv[1] == "1" and value["controller_complete"] is not True:
+    raise ValueError("completion not verified")
+attempted = value.get("mutation_attempted")
+if type(attempted) is not bool:
+    raise ValueError("invalid mutation result")
+print(str(attempted).lower())
+' "$completed" 2>/dev/null); then
+        if ((completed == 1)); then
+            retirement_controller_error='Controller retirement completion 结果无法验证'
+            return 1
+        fi
+    else
+        summary_retirement_lease_bound=$attempted
+        if [[ "$operation" == remote ]]; then
+            summary_push_executed=$attempted
+        fi
+    fi
+    if ((completed == 0)); then
+        retirement_controller_error="Controller retirement 未完成: $(printf '%s\n' "$output" |
+            sed -n '/^ERROR: retirement plan validation blocked:/p' | tail -n 1)"
+        return 1
+    fi
+}
+
+settle_absent_retirement_plan() {
+    local operation=$1
+    ((retirement_plan_id_seen == 1 && dry_run == 0)) || return 0
+    if ! run_retirement_plan_delete "$operation"; then
+        fail_retirement "$([[ "$operation" == local ]] && printf LOCAL_DELETE_UNVERIFIED || printf REMOTE_DELETE_UNVERIFIED)" \
+            "$retirement_controller_error"
+    fi
 }
 
 resolve_retirement_remote() {
@@ -4041,6 +4083,12 @@ fail_retirement() {
 }
 
 run_retirement_delete() {
+    if ((retirement_plan_id_seen == 1)); then
+        summary_push_branch_refspec_only=true
+        summary_push_follow_tags_disabled=true
+        run_retirement_plan_delete remote
+        return
+    fi
     local display='git push --no-follow-tags --force-with-lease=<ref>:<expected> <remote> :<ref>'
     local -a command=(
         git -C "$repo" push --no-follow-tags
@@ -4098,7 +4146,7 @@ retire_remote_branch_ref() {
         ! validate_retirement_oid "$expected_integrated_oid_arg" 'expected_integrated_oid'; then
         fail_retirement RETIREMENT_BLOCKED "$retirement_validation_error"
     fi
-    if ! acquire_retirement_plan_lock remote; then
+    if ! verify_retirement_plan remote; then
         fail_retirement RETIREMENT_BLOCKED "$retirement_validation_error"
     fi
     if ! capture_retirement_local_state; then
@@ -4158,6 +4206,7 @@ retire_remote_branch_ref() {
         if ! verify_retirement_remote_absent; then
             fail_retirement REMOTE_DELETE_UNVERIFIED "$retirement_verify_error"
         fi
+        settle_absent_retirement_plan remote
         summary_post_verify='passed'
         summary_remote_conclusion='already_absent_verified'
         summary_retirement_result='ALREADY_ABSENT_VERIFIED'
@@ -4212,6 +4261,7 @@ retire_remote_branch_ref() {
         if ! verify_retirement_remote_absent; then
             fail_retirement REMOTE_DELETE_UNVERIFIED "$retirement_verify_error"
         fi
+        settle_absent_retirement_plan remote
         summary_post_verify='passed'
         summary_remote_conclusion='already_absent_verified'
         summary_retirement_result='ALREADY_ABSENT_VERIFIED'
@@ -4227,9 +4277,12 @@ retire_remote_branch_ref() {
     fi
 
     summary_phase='remote_mutation'
-    summary_push_executed=true
+    ((retirement_plan_id_seen == 1)) || summary_push_executed=true
     if ! run_retirement_delete; then
         summary_push_result='uncertain'
+        if [[ -n "${retirement_controller_error:-}" ]]; then
+            fail_retirement REMOTE_DELETE_UNVERIFIED "$retirement_controller_error"
+        fi
         if query_retirement_refs && ((retirement_feature_present == 0)) &&
             [[ "$retirement_integration_oid" == "$retirement_integration_oid_before" ]]; then
             summary_push_result='confirmed_after_uncertain'
@@ -4344,9 +4397,7 @@ verify_retirement_local_absent() {
 }
 
 run_retirement_local_delete() {
-    summary_retirement_lease_bound=true
-    run_git_mutation 'git update-ref -d <local-ref> <expected-oid>' \
-        git -C "$repo" update-ref -d "$retirement_feature_ref" "$retirement_expected_oid"
+    run_retirement_plan_delete local
 }
 
 retire_local_branch_ref() {
@@ -4386,7 +4437,7 @@ retire_local_branch_ref() {
         ! validate_retirement_oid "$expected_integrated_oid_arg" 'expected_integrated_oid'; then
         fail_retirement RETIREMENT_BLOCKED "$retirement_validation_error"
     fi
-    if ! acquire_retirement_plan_lock local; then
+    if ! verify_retirement_plan local; then
         fail_retirement RETIREMENT_BLOCKED "$retirement_validation_error"
     fi
     if ! capture_retirement_local_state; then
@@ -4443,6 +4494,7 @@ retire_local_branch_ref() {
         if ! verify_retirement_local_absent; then
             fail_retirement LOCAL_DELETE_UNVERIFIED "$retirement_verify_error"
         fi
+        settle_absent_retirement_plan local
         summary_post_verify='passed'
         summary_remote_conclusion='local_branch_already_absent_verified'
         summary_retirement_result='ALREADY_ABSENT_VERIFIED'
@@ -4493,6 +4545,7 @@ retire_local_branch_ref() {
         if ! verify_retirement_local_absent; then
             fail_retirement LOCAL_DELETE_UNVERIFIED "$retirement_verify_error"
         fi
+        settle_absent_retirement_plan local
         summary_post_verify='passed'
         summary_remote_conclusion='local_branch_already_absent_verified'
         summary_retirement_result='ALREADY_ABSENT_VERIFIED'
@@ -4512,6 +4565,12 @@ retire_local_branch_ref() {
 
     summary_phase='local_mutation'
     if ! run_retirement_local_delete; then
+        if [[ -n "${retirement_controller_error:-}" ]]; then
+            if git -C "$repo" show-ref --verify --quiet "$retirement_feature_ref"; then
+                fail_retirement RETIREMENT_BLOCKED "$retirement_controller_error"
+            fi
+            fail_retirement LOCAL_DELETE_UNVERIFIED "$retirement_controller_error"
+        fi
         if git -C "$repo" show-ref --verify --quiet "$retirement_feature_ref"; then
             fail_retirement RETIREMENT_BLOCKED 'lease-bound local update-ref 删除被拒绝'
         fi
@@ -5183,7 +5242,6 @@ for command_name in git realpath stat grep sed; do
 done
 python3_available || fail 'Git Finalizer 要求 Python 3.11+ on PATH'
 if ((retirement_plan_id_seen == 1)); then
-    require_command flock
     python3_available || fail 'Controller retirement plan 验证要求 Python 3.11+ on PATH'
 fi
 if ((snapshot_seen == 1)); then

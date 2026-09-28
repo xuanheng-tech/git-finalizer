@@ -13,6 +13,9 @@ section is invented for it.
 
 ## Unreleased
 
+- Replace the mirrored Controller retirement digest with public verification, single-use CAS
+  authorization and completion. Recover interrupted requests without duplicate deletion, preserve
+  completion failures, and attest legacy already-absent refs through the producer.
 - Bind a created commit to the reviewed index tree, original branch and parent. Preserve hooks and
   report commits created by a failing hook instead of retrying or publishing unreviewed content.
 - Refuse pending Git operations and scan earlier unpublished commits in normal and initial-branch

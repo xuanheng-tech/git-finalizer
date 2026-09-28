@@ -71,17 +71,17 @@ production_surface() {
 
 adapter_files() {
     case "$1" in
-        legacy-namespace) printf 'git-finalize git-finalize-retirement-plan.py ' ;;
+        legacy-namespace) printf 'git-finalize ' ;;
         controller-state-root)
-            printf 'git-finalize git-finalize-integration-publish.py git-finalize-retirement-plan.py ' ;;
+            printf 'git-finalize git-finalize-integration-publish.py ' ;;
         controller-lock)
-            printf 'git-finalize git-finalize-integration-publish.py git-finalize-retirement-plan.py ' ;;
+            printf 'git-finalize-integration-publish.py ' ;;
         controller-lease)
-            printf 'git-finalize-integration-publish.py git-finalize-retirement-plan.py ' ;;
+            printf 'git-finalize-integration-publish.py ' ;;
         snapshot-state-root) printf 'git-finalize-snapshot-verify.py ' ;;
         gitea-api) printf 'git-finalize-repo-bootstrap.py ' ;;
-        retirement-plan-files) printf 'git-finalize-retirement-plan.py ' ;;
-        controller-policy-term) printf 'git-finalize-retirement-plan.py ' ;;
+        retirement-plan-files) printf '' ;;
+        controller-policy-term) printf '' ;;
         controller-executable-probe) printf 'git-finalize-retirement-plan.py tooling/workflow_health.py ' ;;
         controller-runtime-contract) printf 'tooling/workflow_health.py ' ;;
         *) printf 'unknown ledger: %s\n' "$1" >&2; return 1 ;;
@@ -166,11 +166,11 @@ test_documented_matrix_matches_code() {
         git -C "$project_root" grep -q -F -- "$needle" -- "$needle_file" ||
             fail_assertion "documented blocker missing from ${needle_file}: $needle"
     done <<'NEEDLES'
-capabilities probe failed	git-finalize-retirement-plan.py
-does not match plan schema	git-finalize-retirement-plan.py
+refused or failed	git-finalize-retirement-plan.py
+required public retirement protocols	git-finalize-retirement-plan.py
 already records a consumed receipt	git-finalize-retirement-plan.py
-repo.lock 缺失或不安全	git-finalize
-legacy codex-worktree namespace	git-finalize-retirement-plan.py
+Worktree Controller is required	git-finalize-retirement-plan.py
+legacy codex-worktree namespace	git-finalize
 source review 要求完整 Controller linkage	git-finalize
 snapshot evidence rejected	git-finalize-snapshot-verify.py
 BLOCK_INVALID_CONFIG	git-finalize-repo-bootstrap.py

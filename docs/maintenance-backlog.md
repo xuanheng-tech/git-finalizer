@@ -5,24 +5,7 @@ fixes completed in this branch are recorded under Unreleased in the Changelog. T
 sibling changes, production activation and artifact contracts are in [release-governance.md](release-governance.md) and
 [integration-boundaries.md](integration-boundaries.md).
 
-## 1. Hand branch-retirement verification back to the Worktree Controller
-
-Today Git Finalizer verifies a retirement plan itself: `git-finalize-retirement-plan.py` recomputes
-the controller's state digest, a path its own module docstring marks as legacy compatibility rather
-than published contract. A released Controller now advertises verifier and execution contracts.
-The verifier takes a shared repository lock, so calling it from Finalizer's exclusive lock would
-deadlock. An earlier lock-free verdict cannot substitute for the mutation guard either.
-
-- Next: consume the complete producer `branch-retirement-execution/v1` authorization/completion
-  protocol, with interruption recovery and compatibility for existing plan-only callers.
-- Then: delete the mirrored recipe, keep the fail-closed legacy-namespace migration blocker, and
-  re-derive the retirement rows of the boundary matrix in
-  [integration-boundaries.md](integration-boundaries.md) plus
-  `tests/test_integration_boundaries.sh`.
-- Never meanwhile: relax the digest comparison, or release a version that trusts an unpublished
-  upstream generation.
-
-## 2. Sibling pairing (Snapshot Runner, Context Loader)
+## 1. Sibling pairing (Snapshot Runner, Context Loader)
 
 `manifests/snapshot-runner/tool_skill_manifest.json` and
 `manifests/context-loader/tool_skill_manifest.json` pin the sibling generations Git Finalizer is
@@ -35,7 +18,7 @@ actual Skill payload tree.
   version batch — both mirrors are inside the release package, so the artifact file set is a
   contract.
 
-## 3. Production activation of a published release
+## 2. Production activation of a published release
 
 Publication and production activation are separate authorised actions. A source branch or a published
 artifact does not establish which bytes a maintainer currently runs.
@@ -47,7 +30,7 @@ artifact does not establish which bytes a maintainer currently runs.
   `RELEASED_CANONICAL_SKILL_SHA256`, otherwise the next activation treats its own released state as
   unknown drift (guarded by `tests/test_tool_skill_sync.py`).
 
-## 4. Release-process hardening
+## 3. Release-process hardening
 
 Small, unscheduled, each one a real gap rather than a polish item.
 
@@ -75,7 +58,7 @@ Small, unscheduled, each one a real gap rather than a polish item.
   job log instead of assuming parity. Making that comparison mechanical (a recorded expected count
   per host) needs a decision about which host owns which expectation.
 
-## 5. Dependency automation (Renovate)
+## 4. Dependency automation (Renovate)
 
 `renovate.json` uses built-in public presets and carries its conservative schedule, rate limits,
 release age and manual merge policy locally. It no longer requires a private Gitea preset.

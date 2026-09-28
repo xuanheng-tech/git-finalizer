@@ -17,6 +17,7 @@ DOCUMENTED_SUBTREES = (
     "CONTRIBUTING.md",
     "SECURITY.md",
     "AGENTS.md",
+    "CLAUDE.md",
     "docs/",
     ".github/",
     "skills/",
@@ -71,15 +72,11 @@ def marker_scannable_text(document: Path) -> str:
     return pending.group(0) if pending else ""
 
 
-def marker_scannable_text(document: Path) -> str:
-    if document not in HISTORY_DOCUMENTS:
-        return document.read_text(encoding="utf-8")
-    text = document.read_text(encoding="utf-8")
-    pending = re.search(r"^## Unreleased\b.*?(?=^## )", text, re.M | re.S)
-    return pending.group(0) if pending else ""
-
-
 class PublicDocumentationTests(unittest.TestCase):
+    def test_claude_import_uses_the_existing_project_authority(self) -> None:
+        self.assertEqual((ROOT / "CLAUDE.md").read_text().strip(), "@AGENTS.md")
+        self.assertTrue((ROOT / "AGENTS.md").is_file())
+
     def test_every_published_markdown_has_a_documented_home(self) -> None:
         documents = public_markdown()
         self.assertGreaterEqual(len(documents), 15, "the markdown inventory shrank unexpectedly")

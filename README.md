@@ -36,7 +36,8 @@ terminal and an automation layer can rely on "it stopped, and here is why".
 ## Requirements
 
 - GNU Bash, Git and GNU command-line utilities (`realpath`, `stat`, `grep`, `sed`). Verified baseline:
-  **Ubuntu 24.04 LTS** with its system Git. Governed retirement additionally requires `flock`.
+  **Ubuntu 24.04 LTS** with its system Git. Plan-bound retirement also requires a Controller that
+  advertises the public verification and execution protocols.
 - Python **3.11 or newer**, with the standard library only. The entrypoint resolves `python3` from
   `PATH` once and uses that interpreter for every companion and JSON summary. Verified baseline:
   **Python 3.12**; no Debian-specific interpreter path is required.
@@ -182,7 +183,7 @@ particular is **optional**: ordinary commit and publication work needs only Bash
 
 Each integration's knowledge of another project's layout lives only in the files that carry its
 `# GF-INTEGRATION-ADAPTER` marker — one marker per adapter file, and retirement uses two because both
-the CLI and the plan verifier speak to that integration. That confinement is machine-checked by
+the CLI and the authorization/completion companion speak to that integration. That confinement is machine-checked by
 `tests/test_integration_boundaries.sh`.
 
 ## Coding agents

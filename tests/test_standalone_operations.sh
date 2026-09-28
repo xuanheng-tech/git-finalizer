@@ -176,7 +176,7 @@ test_governed_paths_fail_closed_without_dependencies() {
         --expected-local-oid "$abandoned" \
         --expected-integrated-oid "$(git -C "$repo" rev-parse HEAD)" \
         --retirement-plan-id "$(printf 'e%.0s' $(seq 64))" --repo "$repo"
-    assert_file_contains "$case_dir/retire.log" 'repo.lock 缺失或不安全' \
+    assert_file_contains "$case_dir/retire.log" 'Worktree Controller is required' \
         'unmanaged repository did not fail closed on retirement'
     printf '{"files":[]}\n' >"$case_dir/review.json"
     expect_failure "$case_dir/reviewed.log" isolated "$finalizer" --summary \

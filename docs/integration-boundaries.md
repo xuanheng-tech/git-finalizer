@@ -4,14 +4,14 @@ Git Finalizer（GF）核心只依赖 GNU bash、Git、GNU utilities 与 `PATH` �
 **请求触发**的 adapter；本文件是适配器边界的权威清单，由
 `tests/test_integration_boundaries.sh` 机器核对。每个 adapter 在其**每个**承载文件中以唯一
 `# GF-INTEGRATION-ADAPTER: <name> (single site...)` 标记锚定外部布局知识；同一 adapter 可以
-跨文件（retirement 同时标记 CLI 与 plan verifier），但任何文件内不得出现第二处该标记，
+跨文件（retirement 同时标记 CLI 与 protocol companion），但任何文件内不得出现第二处该标记，
 其他位置禁止新增同类布局字面量。
 
 ## 边界矩阵
 
 | Integration | 触发命令 | 能力检测 | 版本兼容 | 不可用/不兼容时（fail-closed） | 允许的 adapter 内部知识 |
 | --- | --- | --- | --- | --- | --- |
-| Worktree Controller（retirement） | `--retire-local-branch` / `--retire-remote-branch` + `--retirement-plan-id` | `worktree-controller capabilities --json` 的 `decision.branch_retirement_version` 必须等于 plan `schema_version`；可执行文件缺席时**显式跳过**探测并落到文档化的 legacy 独立核验路径，探测不可读或不匹配一律 fail closed | plan schema v1；capability 版本必须显式匹配 | 无 state → `Controller repo.lock 缺失或不安全`；legacy namespace → `legacy codex-worktree namespace` 迁移 blocker；能力不可读/不匹配 → `capabilities probe failed` / `does not match plan schema`；plan 重放 → `already records a consumed receipt` | 状态根 `<GIT_COMMON_DIR>/worktree-controller/v1`、`repo.lock`、`branch-retirement-plans/<64hex>.json`、`branch-retirement-receipts/<id>-{local\|remote}.json`（receipt 仅存在性检查）、policy term `<canonical>/.agents/worktree-policy.toml`、`worktree-controller` 可执行文件名（唯一 `shutil.which` 位点）；legacy `codex-worktree` 只用于命名迁移 blocker，任何路径都不读遗留状态 |
+| Worktree Controller（retirement） | `--retire-local-branch` / `--retire-remote-branch` + `--retirement-plan-id` | `capabilities --json` 中 `branch_retirement_version`、`branch_retirement_verify_version`、`branch_retirement_execution_version` 均为 1 | plan v1、公开 `branch-retirement-execution/v1` 与 `retirement-execution-result/v1` | 缺执行器 → `Worktree Controller is required`；能力拒绝/不匹配 → `Controller capabilities refused or failed` / `required public retirement protocols`；receipt 与 ref 矛盾 → `already records a consumed receipt`；仅有旧 namespace → `legacy codex-worktree namespace` | 只消费公开 status/verify/authorize/complete 与 executions/record；digest 不透明，不读私有文件。CLI 仅检查旧/新 namespace 的目录存在性以产生迁移 blocker |
 | Worktree Controller（integration publication） | 仅 `--publish-integration-candidate` | 只读取 Controller 已签发的 lease 与其锁；不探测其余 authority 目录 | lease 字段按 GF 公开输入合同校验 | lease 缺失/漂移 → blocked，不写 remote | `publication-lease.json`、`repo.lock`、`repo.json`、`bindings/wt_<sha256(git-dir)>.json`、`records/<allocation_id>.json`、`integration-intents/*.json`（前缀枚举）、`prepared-candidate-receipts/<id>.json`。其中 `wt_` 键派生与 intent 语义是 Controller 内部事实，GF 只作镜像消费，已记为债务（见下节） |
 | Worktree Controller（reviewed sensitive source） | 仅 `--reviewed-sensitive-source <file>` | 无状态读取；linkage 四字段作为不透明 identity 消费 | review-file schema 由 GF 自身合同定义 | 缺 linkage → `source review 要求完整 Controller linkage` | 无（不触任何 WC state 布局） |
 | Workflow deployment health | 仅 `tool-skill-sync doctor` | 只读 installed Controller capabilities 与 frozen runtime contract | compatibility 中显式列出的 CLI、capability、storage 版本 | 无安装、字节或合同漂移 → `FAIL`；不激活 runtime | Controller 可执行文件名、active runtime 的 `site-packages/worktree_controller/tool_cli_contract.json`、installed instructions 与 Skills 的路径身份；只在 `tooling/workflow_health.py` 的独立 adapter 内 |
@@ -20,26 +20,17 @@ Git Finalizer（GF）核心只依赖 GNU bash、Git、GNU utilities 与 `PATH` �
 
 ## 遗留兼容性知识与版本边界
 
-- Worktree Controller 的 authority state digest 重算只存在于 retirement plan verifier 内，并显式
-  标注为**遗留兼容独立核验路径**。上游契约已把该 recipe 纳入公开的消费规则，并要求外部消费者
-  “只从 `branch-retirement-verify` 取得判定，不得复制 canonicalization、digest recipe 或 blocker
-  清单”。因此 GF 的镜像是**被上游点名的过渡性偏差（技术债务）**，不是中立的防御性设计。
-- 公开只读接口
-  `worktree-controller branch-retirement-verify --repo <path> --plan-id <sha256> --operation {local|remote} --json`
-  （read_only，判定 `VALID/PLAN_ABSENT/STATE_STALE/PLAN_MALFORMED` 一律以 rc 0 返回，只有
-  `ControllerError` 返回 2）已由发布的 Controller 提供；兼容性以当前 capabilities 与 frozen
-  contract 为准，不能继续假设 production 没有该动词。
-  它取得 shared repository lock，不能在 GF 的 exclusive retirement lock 内调用，否则会阻塞；
-  锁外 verdict 也不能证明 mutation 时 authority 未变。消除镜像需要完整接入 producer 的
-  `branch-retirement-execution/v1`（authorize、CAS delete、complete、interruption recovery），并
-  明确旧 plan-only 和无 Controller 客户端的兼容边界。不能通过去掉锁或跳过 digest 比较完成迁移。
-- 因此 digest 镜像继续承担无 controller 环境的 fail-closed 核验，位点不变、不扩展；它仍是被上游
-  点名的过渡性偏差（“不得复制 canonicalization、digest recipe 或 blocker 清单”），而不是中立的
-  防御性设计。
-- 版本边界由两处共同承担：`decision.branch_retirement_version` 必须等于 plan 的
-  `schema_version`（探测失败或不匹配即 fail closed；可执行文件缺席时显式跳过并走独立核验），以及
-  plan 文件名空间的 `worktree-controller/v1` 常量。legacy `codex-worktree` namespace 只用于产生
-  精确迁移 blocker；namespace 迁移本身归 Worktree Controller 治理，GF 不提供迁移通道。
+- retirement 的判定与 authority digest 属于 Controller。Finalizer 不复制 canonicalization、digest
+  recipe 或私有 authority 文件清单，也不在外部持有 exclusive lock 后调用 producer。
+- public verify 提供只读 verdict；authorize 在 producer lock 下重新核验并签发一次性授权，
+  Finalizer 执行 expected-OID CAS，complete 由 producer 验证结果并保存 `AUTHORIZED_EXECUTION`
+  凭据。任何 complete 拒绝都保留失败，不能仅凭 ref 缺失宣称完成。
+- 请求 identity 由 plan/operation 稳定绑定。仍存活的 executor 阻断重入；已结束且 expected ref
+  仍存在时通过公开 abandon 重新授权，已缺失时只完成原授权。已完成操作返回幂等结果；receipt
+  与重新出现的 ref 矛盾时拒绝。无未完成授权的旧消费者通过公开 record 登记 `ATTEST_ABSENT`，
+  provenance 为 `CONTROLLER_OBSERVED`，不伪装为授权 CAS。
+- plan-only CLI 输入不变；缺少 Controller 或任一 required public retirement protocols 时 fail
+  closed，不回退到私有文件核验。仅 legacy namespace 的仓库仍保留迁移 blocker，迁移归 producer。
 - Snapshot Runner 与 Gitea 的知识只到“对端已发布合同 + 形状”一层：GF 固定 Snapshot Runner README
   宣布的证据合同标识（`schema_version` 2、`producer_security_epoch` 4），并 fail-closed 镜像其
   **未发布**的字节上限；Gitea 侧只固定 REST `/api/v1` 端点形状。GF 不固定任何 sibling 的**工具
@@ -93,7 +84,7 @@ Git Finalizer（GF）核心只依赖 GNU bash、Git、GNU utilities 与 `PATH` �
 | 集成 | 正向 | 负向（fail-closed） | sibling 版本漂移隔离 |
 | --- | --- | --- | --- |
 | 核心生命周期（无外部集成） | `tests/test_standalone_operations.sh`（最小 HOME/PATH，无 controller/sibling/Skill/Gitea） | 同套件断言 governance 请求仍被精确 blocker 拒绝且零变更 | 完全独立：不加载任何 sibling |
-| WC retirement | `tests/test_retire_branch_real_controller.sh`（真实 controller 作 oracle，入口缺席时显式 skip）、`tests/test_retire_local_branch.sh`、`tests/test_retire_remote_branch.sh` | 篡改/drift/replay/lock 串行化 + capability probe 不可读或不匹配 | 不 import controller 代码、不复制其版本常量；contract 变化表现为能力/plan 校验失败而非测试崩溃 |
+| WC retirement | `tests/test_retire_branch_real_controller.sh`（真实 controller 作 oracle，入口缺席时显式 skip）、`tests/test_retire_local_branch.sh`、`tests/test_retire_remote_branch.sh` | 篡改/drift/receipt 矛盾/lock 串行化 + capability 拒绝、completion 拒绝与恢复；`tests/test_retirement_protocol.py` 覆盖过期授权、活跃 executor 和公开协议中断 | 不 import controller 代码、不复制其版本常量；contract 变化表现为能力/plan 校验失败而非测试崩溃 |
 | WC integration publication | `tests/test_integration_publish.py` | lease 缺失/漂移/锁不合法 → blocked | 只消费 lease JSON 字段（其余 inventory 项为上表登记的债务） |
 | WC reviewed sensitive source | `tests/test_reviewed_source.py` | linkage 不全 → `source review 要求完整 Controller linkage` | 四字段作不透明 identity |
 | Snapshot Runner evidence | `tests/run.sh` 内 `test_initial_snapshot_*` 用例（`XDG_STATE_HOME` 重定向 fixture） | `tests/test_standalone_operations.sh` 证据缺失用例 + `tests/test_integration_boundaries.sh` 状态根重定位探针 | 只读已发布合同标识与 artifact 形状，不校验生产者工具版本 |
@@ -108,14 +99,13 @@ Skill 参考和 `.gitea/workflows` 不在该范围内：前者必须能构造外
 运行时布局推导。`tooling/tool_skill_sync.py` 会按**名称**引用 sibling 工具（它是安装器），但
 不引用任何对端 state 布局；下面的 ledger 因此按布局字面量与外部可执行文件探测位点约束它。
 
-- `codex-worktree` 只允许出现在 retirement 的两个迁移 blocker 位点。
-- `worktree-controller/v1` 状态根只允许出现在三个带 marker 的 adapter 文件。
-- `repo.lock` 只允许出现在 retirement、integration publication 两个 lease adapter 与 bash 预检。
-- `publication-lease` 只允许出现在 integration publication 与 retirement 两个 lease adapter。
-- `branch-retirement-plans`/`branch-retirement-receipts` 文件名只允许出现在 retirement plan verifier。
-- `.agents/worktree-policy.toml` policy term 只允许出现在 retirement plan verifier。
+- `codex-worktree` 只允许出现在 CLI 的 namespace 迁移 blocker。
+- `worktree-controller/v1` 状态根只允许出现在 CLI 的目录存在性检查与 integration publication adapter。
+- `repo.lock`、`publication-lease` 只允许出现在 integration publication adapter。
+- `branch-retirement-plans`/`branch-retirement-receipts` 文件名和 `worktree-policy.toml` policy term
+  禁止出现在生产代码；retirement 只消费公开接口。
 - `worktree-controller` 可执行文件探测（`which("worktree-controller")`）只允许在 retirement
-  plan verifier 与 read-only deployment-health adapter；核心生命周期不得按名字调用 controller。
+  protocol companion 与 read-only deployment-health adapter；核心生命周期不得按名字调用 controller。
 - active runtime frozen contract 路径只允许在 deployment-health adapter。
 - `snapshot-runner/snapshots` 布局只允许出现在 snapshot adapter。
 - `/api/v1` 只允许出现在 Gitea bootstrap adapter。

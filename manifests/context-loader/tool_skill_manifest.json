@@ -3,7 +3,7 @@
     "owner": "git-finalizer",
     "path": "skills/git-change-delivery/SKILL.md"
   },
-  "canonical_skill_sha256": "3a370ac0ee66369756c6429ef9ff77687c66cbdaad1f27fe277bdf340d43fcd1",
+  "canonical_skill_sha256": "26cfc709c3fea30c96d4cc4211eb6c39910cf9d7811e23eebe39550eb437c8f9",
   "compatibility_skill": {
     "name": "three-tool-git-workflow",
     "path": "skills/three-tool-git-workflow/SKILL.md",

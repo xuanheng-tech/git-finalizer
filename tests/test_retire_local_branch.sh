@@ -14,6 +14,14 @@ current_case='startup'
 passed=0
 feature_branch='feat/integrated'
 
+# Unit cases use the public fake producer; real installed contracts have their own suite.
+mkdir -p -- "$tmp_root/controller-bin"
+printf '%s\n' '#!/usr/bin/env bash' \
+    'exec python3 -B "'"$project_root"'/tests/retirement_controller_fixture.py" "$@"' \
+    >"$tmp_root/controller-bin/worktree-controller"
+chmod 755 "$tmp_root/controller-bin/worktree-controller"
+export PATH="$tmp_root/controller-bin:$PATH"
+
 cleanup() {
     case "$tmp_root" in
         /tmp/git-finalizer-local-retirement.*) rm -rf -- "$tmp_root" ;;
@@ -317,6 +325,25 @@ test_remote_then_local_completion_is_independent() {
         'local continuation after remote retirement failed'
 }
 
+test_completion_failure_recovers_without_another_cas() {
+    local case_dir=$tmp_root/completion-failure
+    local first=$case_dir/first.json
+    local resumed=$case_dir/resumed.json
+    make_integrated_repo "$case_dir"
+    GF_RETIREMENT_FIXTURE_REFUSE_COMPLETE=1 expect_failure "$first" local_retire_command --summary
+    assert_equal 'LOCAL_DELETE_UNVERIFIED' "$(summary_field "$first" mode_result.result)" \
+        'ref absence hid Controller completion failure'
+    assert_equal 'true' "$(summary_field "$first" mode_result.expected_oid_lease_bound)" \
+        'failed completion lost the actual CAS attempt'
+    git -C "$test_repo" show-ref --verify --quiet "refs/heads/$feature_branch" &&
+        fail_assertion 'completion fault did not exercise a removed ref'
+    expect_success "$resumed" local_retire_command --summary
+    assert_equal 'ALREADY_ABSENT_VERIFIED' "$(summary_field "$resumed" mode_result.result)" \
+        'outstanding authorization did not recover'
+    assert_equal 'false' "$(summary_field "$resumed" mode_result.expected_oid_lease_bound)" \
+        'completion recovery claimed another CAS'
+}
+
 test_oid_drift_recheckout_and_controller_drift_block() {
     local case_dir output record
 
@@ -325,7 +352,9 @@ test_oid_drift_recheckout_and_controller_drift_block() {
     make_integrated_repo "$case_dir"
     git -C "$test_repo" branch -f "$feature_branch" main
     expect_failure "$output" local_retire_command
-    assert_file_contains "$output" 'local-only commit' 'local OID drift was accepted'
+    assert_file_contains "$output" 'Controller retirement verdict blocks' 'local OID drift was accepted'
+    git -C "$test_repo" show-ref --verify --quiet "refs/heads/$feature_branch" ||
+        fail_assertion 'OID drift deleted local ref'
 
     case_dir=$tmp_root/recheckout
     output=$case_dir/output.log
@@ -340,7 +369,7 @@ test_oid_drift_recheckout_and_controller_drift_block() {
     record=$test_repo/.git/worktree-controller/v1/records/11111111-1111-4111-8111-111111111111.json
     printf ' \n' >>"$record"
     expect_failure "$output" local_retire_command
-    assert_file_contains "$output" 'authority state drifted' \
+    assert_file_contains "$output" 'Controller retirement verdict blocks' \
         'concurrent Controller authority drift was accepted'
     git -C "$test_repo" show-ref --verify --quiet "refs/heads/$feature_branch" ||
         fail_assertion 'Controller drift deleted local ref'
@@ -433,6 +462,8 @@ run_case 'remote then local retirement also completes independently' \
     test_remote_then_local_completion_is_independent
 run_case 'OID drift recheckout and Controller authority drift fail closed' \
     test_oid_drift_recheckout_and_controller_drift_block
+run_case 'completion refusal remains a failure and resumes without duplicate CAS' \
+    test_completion_failure_recovers_without_another_cas
 run_case 'integration drift and protected refs fail closed' \
     test_integration_drift_and_protected_ref_block
 run_case 'plan-id canonical form, integration aliases, and consumed-receipt replay guard' \

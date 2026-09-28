@@ -252,8 +252,9 @@ local upstream 依赖。需要 CI 时增加 `--ci-required --ci-status SUCCESS -
 以及 `--ci-verification-source tool_authenticated|human_authenticated_ui`；CI OID 必须等于 live
 integration target OID。
 
-plan-bound 操作还会在现有 Controller repository lock 下重新核验 allocation/intent/runtime
-authority digest；任何 Controller 状态漂移都会在 Git ref mutation 前 fail closed。local 删除
+plan-bound 操作使用 Controller 的公开 verify/authorize/complete 协议：producer 在 repository
+lock 下核验 authority 并签发一次性授权，Finalizer 不读取私有 authority 文件或重算 digest。
+任何 Controller 状态漂移都会在 Git ref mutation 前 fail closed。local 删除
 只使用 `git update-ref -d <ref> <expected-oid>` 的 compare-and-delete，且验证目标缺失、其他 local
 refs、live remote、HEAD/index/worktree/tags 未变。local 与 remote summary/receipt 相互独立，
 允许任一侧完成后幂等续办，不声明原子性。cherry-equivalent、merge-only、UNIQUE/MIXED 以及历史
@@ -270,18 +271,23 @@ ref 缺失、integration OID 未变、HEAD/index/worktree/tags 未变。`--summa
 remote `mode_result.result` 为 `REMOTE_BRANCH_RETIRED_VERIFIED`、`ALREADY_ABSENT_VERIFIED`、
 `RETIREMENT_PREFLIGHT_PASSED`、`RETIREMENT_BLOCKED` 或 `REMOTE_DELETE_UNVERIFIED`，同时构成
 deterministic retirement receipt。local 对应 `LOCAL_BRANCH_RETIRED_VERIFIED` 和
-`LOCAL_DELETE_UNVERIFIED`；Finalizer 不另建持久 audit store，由 Controller 分别登记两类结果。
+`LOCAL_DELETE_UNVERIFIED`；Finalizer 不另建持久 audit store，通过公开 complete 由 Controller
+分别登记两类结果。Git 删除成功但 complete 被拒绝时仍报告失败。
 
 正式 handoff 全部走 Worktree Controller 公开合同：`worktree-controller
 branch-retirement-plan --repo <path> (--branch <b>|--allocation-id <id>) --remote <r>
 --integrated-into <t> --json` 在 Controller authority 下持久化 plan 并给出 `plan_id`；
-Finalizer 完成后把 `--summary` JSON 交给 `worktree-controller branch-retirement-record
---plan-id <id> --operation {local|remote} --summary-file <file>` 登记；
-`branch-retirement-status --plan-id <id>` 是唯一只读核对入口。plan 的 identity 绑定其创建时的
-authority 快照：branch 自身移动由 expected-OID CAS 兜底，任何 authority/policy 写入都会使
-Finalizer 在 mutation 前 fail closed，因此 plan 应在安静的短窗口内创建并立即消费。同一 plan
-的同一 operation 一旦留下 receipt 即视为已消费，重复激活会在 validation 阶段被拒绝；record
-对相同 evidence 的重复登记是幂等的。
+原有 plan-only CLI 参数不变，Finalizer 自动完成授权及登记，调用方不需要再执行 record。
+`branch-retirement-status --plan-id <id>` 和 `branch-retirement-executions --action list` 是公开
+核对入口。Controller 必须明确公布三个 retirement capability 的版本 1；缺配或未安装时阻断。
+plan 绑定创建时的 authority 快照，branch 自身移动由 expected-OID CAS 兜底，因此应在安静的
+短窗口内创建并消费。完成且 ref 仍缺失时重复调用返回 `ALREADY_ABSENT_VERIFIED`；receipt
+已存在而 ref 再现时拒绝。
+
+中断恢复使用同一 plan/operation request。旧 executor 仍存活时不重入；已结束且 ref 仍为
+expected OID 时通过公开 abandon 重新授权，ref 已缺失时只完成原授权，不重复删除。未知
+remote 结果先查询 live ref。旧消费者已删除且没有未完成授权的目标，通过公开 record 登记
+`ATTEST_ABSENT` 观察，Controller 凭据保留 `CONTROLLER_OBSERVED` 来源。
 
 ### 有界结果摘要
 
