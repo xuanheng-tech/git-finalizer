@@ -18,7 +18,8 @@
       },
       "cli_contract_versions": [
         37,
-        38
+        38,
+        39
       ],
       "storage_layout_versions": [
         4
