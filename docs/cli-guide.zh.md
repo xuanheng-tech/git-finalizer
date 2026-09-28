@@ -408,7 +408,7 @@ just check
 ## Standalone 边界
 
 Git Finalizer 核心（verify、commit、publish、resume、initial 系列）只要求 bash、Git 与
-`/usr/bin/python3`，可在无 Worktree Controller、无 Context Loader/Snapshot Runner、无共享
+`PATH` 中的 `python3`（Python 3.11+），可在无 Worktree Controller、无 Context Loader/Snapshot Runner、无共享
 Skill 安装、无私有 Gitea 配置的独立仓库中运行（`tests/test_standalone_operations.sh` 以最小
 HOME/PATH 环境证明）。Controller 治理（retirement、reviewed-sensitive-source linkage、
 integration publication）与可选集成（`--snapshot` 证据、`--repo-plan/--repo-ensure` 的显式
@@ -420,4 +420,3 @@ Gitea 目标）只在被明确请求时生效；缺失对应 authority 或依赖
 fail-closed blocker 与 Agent-facing machine-readable 结果合同见
 [`integration-boundaries.md`](integration-boundaries.md)，由
 `tests/test_integration_boundaries.sh` 机器核对。
-

@@ -72,7 +72,7 @@ expect_failure() {
 
 summary_field() {
     local file=$1 field=$2
-    /usr/bin/python3 -B -c '
+    python3 -B -c '
 import json, sys
 document = json.load(open(sys.argv[1]))
 value = document

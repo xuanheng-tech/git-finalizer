@@ -73,7 +73,7 @@ expect_success() {
 summary_field() {
     local path=$1
     local expression=$2
-    /usr/bin/python3 -B - "$path" "$expression" <<'PY'
+    python3 -B - "$path" "$expression" <<'PY'
 import json
 import sys
 
@@ -123,7 +123,7 @@ make_controller_plan() {
     local branch=$2
     local expected_oid=$3
     local integrated_oid=$4
-    /usr/bin/python3 -B - "$repo" "$branch" "$expected_oid" "$integrated_oid" <<'PY'
+    python3 -B - "$repo" "$branch" "$expected_oid" "$integrated_oid" <<'PY'
 from __future__ import annotations
 
 import hashlib

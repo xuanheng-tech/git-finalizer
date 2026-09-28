@@ -59,7 +59,8 @@ $HOME/bin/snapshot-runner test-triage --repo <absolute-repo> <repo-relative-log-
 ### `snapshot-runner read`
 
 ```bash
-$HOME/bin/snapshot-runner read --repo <absolute-repo> --field <field> [--path <repo-relative-path>]
+$HOME/bin/snapshot-runner read <snapshot-id> --repo <absolute-repo> --field <field>
+$HOME/bin/snapshot-runner read <snapshot-id> --repo <absolute-repo> --path <repo-relative-path>
 ```
 
 按需读取既有 content-addressed snapshot 的字段或有界文件内容，是把摘要展开为具体证据的正式通道。它要求快照已存在且 `--path` 不逃逸仓库；`read` 不收集新快照、不接受 `--summary`，其输出同样受截断与 evidence gap 语义约束。仅在摘要或 `snapshot.json` 仍不足以支持当前判断时使用。

@@ -7,11 +7,11 @@ contract (persisted plan identity, capability attestation via
 below is a transitional legacy-compatibility mirror of the frozen v1 layout:
 upstream has published that recipe together with a read-only
 `branch-retirement-verify` verdict API and forbids consumers from
-recomputing it, so this mirror is recorded debt. A tagged upstream generation
-does publish that API, but the controller runtime reachable here predates it,
-the same generation's semantics were still moving, and no controller-free
-equivalent exists, so this mirror stays the fail-closed authority where no
-controller is installed and must not absorb new governance logic.
+recomputing it, so this mirror is recorded debt. The released verifier takes a
+shared lock and cannot run inside Finalizer's exclusive execution lock. Replacing
+this path requires the complete producer authorization/completion protocol,
+not a nested verifier call or a lock-free observation substituted for a mutation
+guard. The mirror remains a bounded compatibility path, not a second producer.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ def git(repo: Path, *arguments: str) -> str:
         env={**os.environ, "LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0"},
     )
     if result.returncode != 0:
-        fail(result.stderr.strip() or "Git query failed")
+        fail(f"Git query failed (exit {result.returncode})")
     return result.stdout.strip()
 
 
@@ -203,8 +203,8 @@ def attest_controller_capability(repo: Path, plan_schema: int) -> None:
             timeout=30,
             check=False,
         )
-    except OSError as exc:
-        fail(f"cannot attest Worktree Controller capabilities: {exc}")
+    except (OSError, subprocess.TimeoutExpired):
+        fail("Worktree Controller capabilities probe failed or timed out")
     if result.returncode != 0:
         fail(
             "Worktree Controller capabilities probe failed; retirement is "
@@ -214,10 +214,12 @@ def attest_controller_capability(repo: Path, plan_schema: int) -> None:
         decision = json.loads(result.stdout)["decision"]
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         fail(f"Worktree Controller capabilities contract is unreadable: {exc}")
+    if not isinstance(decision, dict):
+        fail("Worktree Controller capabilities contract is unreadable: decision is not an object")
     version = decision.get(BRANCH_RETIREMENT_CAPABILITY)
     if version is None:
         fail("Worktree Controller does not advertise branch-retirement capability")
-    if version != plan_schema:
+    if type(version) is not int or version != plan_schema:
         fail(
             "Worktree Controller branch-retirement capability "
             f"{version} does not match plan schema {plan_schema}"
@@ -250,7 +252,7 @@ def main() -> int:
         fail(f"cannot read exact Controller plan: {exc}")
     if not isinstance(plan, dict):
         fail("Controller plan is not an object")
-    if plan.get("schema_version") != 1 or plan.get("plan_id") != arguments.plan_id:
+    if type(plan.get("schema_version")) is not int or plan.get("schema_version") != 1 or plan.get("plan_id") != arguments.plan_id:
         fail("Controller plan schema or identity differs")
     if plan_id(plan) != arguments.plan_id:
         fail("Controller plan content hash differs")

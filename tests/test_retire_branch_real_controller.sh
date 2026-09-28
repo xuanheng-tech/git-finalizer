@@ -78,7 +78,7 @@ expect_failure() {
 
 summary_field() {
     local file=$1 field=$2
-    /usr/bin/python3 -B -c '
+    python3 -B -c '
 import json, sys
 document = json.load(open(sys.argv[1]))
 value = document
@@ -115,7 +115,7 @@ make_env() {
     git -C "$test_repo" merge --quiet --no-ff -m "merge $feature_branch" "$feature_branch"
     git -C "$test_repo" push --quiet origin main
     integration_oid=$(git -C "$test_repo" rev-parse HEAD)
-    /usr/bin/python3 -B "$case_dir/build_store.py" "$test_repo" "$feature_branch" "$feature_oid"
+    python3 -B "$case_dir/build_store.py" "$test_repo" "$feature_branch" "$feature_oid"
     worktree-controller branch-retirement-plan \
         --repo "$test_repo" --branch "$feature_branch" --remote origin \
         --integrated-into main --json >"$case_dir/plan.json" 2>"$case_dir/plan.err" || {
@@ -123,7 +123,7 @@ make_env() {
         sed -n '1,60p' "$case_dir/plan.json" >&2
         fail_assertion 'real controller refused to persist a valid plan'
     }
-    plan_id=$(/usr/bin/python3 -B -c '
+    plan_id=$(python3 -B -c '
 import json, re, sys
 def walk(value):
     if isinstance(value, dict):
@@ -289,7 +289,7 @@ test_tampered_plan_and_lock_contention() {
     write_build_store "$case_dir"
     make_env "$case_dir"
     local plan_file=$case_dir/repo/.git/worktree-controller/v1/branch-retirement-plans/$plan_id.json
-    /usr/bin/python3 -B -c '
+    python3 -B -c '
 import json, sys
 path = sys.argv[1]
 plan = json.load(open(path))
@@ -303,7 +303,7 @@ open(path, "w").write(json.dumps(plan, ensure_ascii=False, indent=2, sort_keys=T
     write_build_store "$case_dir"
     make_env "$case_dir"
     local lock=$case_dir/repo/.git/worktree-controller/v1/repo.lock
-    /usr/bin/python3 -B -c '
+    python3 -B -c '
 import fcntl, os, sys, time
 fd = os.open(sys.argv[1], os.O_RDWR)
 fcntl.flock(fd, fcntl.LOCK_EX)
@@ -334,7 +334,7 @@ test_namespace_and_capability_blockers() {
     git -C "$case_dir/repo" add -- f
     git -C "$case_dir/repo" -c user.name=t -c user.email=t@x commit --quiet -m seed
     mkdir -p -- "$case_dir/repo/.git/codex-worktree/v1"
-    expect_failure "$case_dir/companion-legacy.log" /usr/bin/python3 -B \
+    expect_failure "$case_dir/companion-legacy.log" python3 -B \
         "$project_root/git-finalize-retirement-plan.py" \
         --repo "$case_dir/repo" --plan-id "$(printf 'e%.0s' $(seq 64))" \
         --operation local --branch main --remote origin --integrated-into main \
@@ -345,7 +345,7 @@ test_namespace_and_capability_blockers() {
     mkdir -p -- "$case_dir/repo/.git/worktree-controller/v1"
     touch "$case_dir/repo/.git/worktree-controller/v1/repo.lock"
     chmod 600 "$case_dir/repo/.git/worktree-controller/v1/repo.lock"
-    expect_failure "$case_dir/companion-noplan.log" /usr/bin/python3 -B \
+    expect_failure "$case_dir/companion-noplan.log" python3 -B \
         "$project_root/git-finalize-retirement-plan.py" \
         --repo "$case_dir/repo" --plan-id "$(printf 'e%.0s' $(seq 64))" \
         --operation local --branch main --remote origin --integrated-into main \

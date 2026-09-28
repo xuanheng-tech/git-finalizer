@@ -134,7 +134,7 @@ make_generated_snapshot() {
     local repo=$1
     local state=$2
 
-    /usr/bin/python3 -B - "$repo" "$state" <<'PY'
+    python3 -B - "$repo" "$state" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -1208,7 +1208,7 @@ test_initial_snapshot_generated_coverage_success() {
         --initial-publish --remote origin --repo "$test_repo" \
         --message 'snapshot summary' --snapshot "$snapshot" -- \
         README.md generated/manifest.json generated/schema.json
-    /usr/bin/python3 -B - "$output" <<'PY'
+    python3 -B - "$output" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -1958,7 +1958,7 @@ test_release_contract() {
     [[ -f "$project_root/git-finalize-snapshot-verify.py" ]] ||
         fail_assertion 'snapshot verifier companion is missing'
     assert_file_contains "$project_root/git-finalize" \
-        '/usr/bin/python3 -B "$snapshot_verifier"' \
+        '"$PYTHON3_EXECUTABLE" -B "$snapshot_verifier"' \
         'snapshot verifier invocation does not disable bytecode writes'
 }
 

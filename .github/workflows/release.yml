@@ -39,12 +39,20 @@ jobs:
           test "$RELEASE_REF" = "refs/tags/$RELEASE_REF_NAME"
           test "$(git rev-parse 'HEAD^{commit}')" = "$RELEASE_SHA"
           test "$(git rev-parse "${RELEASE_REF}^{commit}")" = "$RELEASE_SHA"
+          test "$(git cat-file -t "$RELEASE_REF")" = "tag"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           version: "0.12.17"
           enable-cache: false
           github-token: ""
-      - run: uv python install 3.12.13
+      - name: Record build environment
+        run: |
+          python3 -V
+          git --version
+          tar --version
+          gzip --version
+          locale
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
         with:
           just-version: "1.21.0"

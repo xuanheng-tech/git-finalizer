@@ -437,6 +437,16 @@ class IntegrationPublishTests(unittest.TestCase):
         self.assertEqual(results, {"published", "already_published_recovered"})
         self.assertEqual(self.fixture.remote_reflog_count(), before_reflog + 1)
 
+    def test_publication_preserves_the_repository_pre_push_hook(self) -> None:
+        hook = self.fixture.common / "hooks/pre-push"
+        hook.write_text("#!/bin/sh\nprintf 'synthetic-private-diagnostic\\n' >&2\nexit 1\n")
+        hook.chmod(0o755)
+        before_reflog = self.fixture.remote_reflog_count()
+        result = subprocess.run(self.fixture.command(), capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(self.fixture.remote_reflog_count(), before_reflog)
+        self.assertNotIn("synthetic-private-diagnostic", result.stdout + result.stderr)
+
     def test_expired_writer_cannot_modify_main(self) -> None:
         self.fixture._write_metadata(datetime.now(timezone.utc) - timedelta(seconds=1))
         before_reflog = self.fixture.remote_reflog_count()

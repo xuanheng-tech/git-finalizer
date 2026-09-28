@@ -326,7 +326,7 @@ test_summary_post_verify_contract() {
     declared_version=$(sed -n 's/^readonly VERSION="\([0-9.]*\)"$/\1/p' \
         "$project_root/git-finalize" | head -1)
     [[ -n $declared_version ]] || fail_assertion 'Finalizer version is unreadable'
-/usr/bin/python3 -B - "$output" "$feature_branch" "$declared_version" <<'PY'
+python3 -B - "$output" "$feature_branch" "$declared_version" <<'PY'
 import json
 from pathlib import Path
 import sys

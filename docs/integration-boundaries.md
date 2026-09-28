@@ -1,6 +1,6 @@
 # GF Integration Boundary
 
-Git Finalizer（GF）核心只依赖 bash、Git 与 `/usr/bin/python3`。所有外部集成都是
+Git Finalizer（GF）核心只依赖 GNU bash、Git、GNU utilities 与 `PATH` 中的 Python 3.11+。所有外部集成都是
 **请求触发**的 adapter；本文件是适配器边界的权威清单，由
 `tests/test_integration_boundaries.sh` 机器核对。每个 adapter 在其**每个**承载文件中以唯一
 `# GF-INTEGRATION-ADAPTER: <name> (single site...)` 标记锚定外部布局知识；同一 adapter 可以
@@ -14,6 +14,7 @@ Git Finalizer（GF）核心只依赖 bash、Git 与 `/usr/bin/python3`。所有�
 | Worktree Controller（retirement） | `--retire-local-branch` / `--retire-remote-branch` + `--retirement-plan-id` | `worktree-controller capabilities --json` 的 `decision.branch_retirement_version` 必须等于 plan `schema_version`；可执行文件缺席时**显式跳过**探测并落到文档化的 legacy 独立核验路径，探测不可读或不匹配一律 fail closed | plan schema v1；capability 版本必须显式匹配 | 无 state → `Controller repo.lock 缺失或不安全`；legacy namespace → `legacy codex-worktree namespace` 迁移 blocker；能力不可读/不匹配 → `capabilities probe failed` / `does not match plan schema`；plan 重放 → `already records a consumed receipt` | 状态根 `<GIT_COMMON_DIR>/worktree-controller/v1`、`repo.lock`、`branch-retirement-plans/<64hex>.json`、`branch-retirement-receipts/<id>-{local\|remote}.json`（receipt 仅存在性检查）、policy term `<canonical>/.agents/worktree-policy.toml`、`worktree-controller` 可执行文件名（唯一 `shutil.which` 位点）；legacy `codex-worktree` 只用于命名迁移 blocker，任何路径都不读遗留状态 |
 | Worktree Controller（integration publication） | 仅 `--publish-integration-candidate` | 只读取 Controller 已签发的 lease 与其锁；不探测其余 authority 目录 | lease 字段按 GF 公开输入合同校验 | lease 缺失/漂移 → blocked，不写 remote | `publication-lease.json`、`repo.lock`、`repo.json`、`bindings/wt_<sha256(git-dir)>.json`、`records/<allocation_id>.json`、`integration-intents/*.json`（前缀枚举）、`prepared-candidate-receipts/<id>.json`。其中 `wt_` 键派生与 intent 语义是 Controller 内部事实，GF 只作镜像消费，已记为债务（见下节） |
 | Worktree Controller（reviewed sensitive source） | 仅 `--reviewed-sensitive-source <file>` | 无状态读取；linkage 四字段作为不透明 identity 消费 | review-file schema 由 GF 自身合同定义 | 缺 linkage → `source review 要求完整 Controller linkage` | 无（不触任何 WC state 布局） |
+| Workflow deployment health | 仅 `tool-skill-sync doctor` | 只读 installed Controller capabilities 与 frozen runtime contract | compatibility 中显式列出的 CLI、capability、storage 版本 | 无安装、字节或合同漂移 → `FAIL`；不激活 runtime | Controller 可执行文件名、active runtime 的 `site-packages/worktree_controller/tool_cli_contract.json`、installed instructions 与 Skills 的路径身份；只在 `tooling/workflow_health.py` 的独立 adapter 内 |
 | Snapshot Runner evidence | 仅 `--initial-publish --snapshot <64hex>` | state 根取 `XDG_STATE_HOME`（否则 `~/.local/state`），可整体重定向到 fixture | `meta.json`/`snapshot.json` 字段按对端**已发布**的证据合同标识校验 | artifact 缺失/损坏 → `snapshot evidence rejected: ...`，永不静默跳过 | `snapshot-runner/snapshots/<id>/` 目录形状、三个 artifact 名、已发布合同标识（`schema_version` 2、`producer_security_epoch` 4）与 GF 侧 fail-closed 字节上限 |
 | Gitea repository bootstrap | 仅 `--repo-plan` / `--repo-ensure` | 无；目标 URL 每次显式传入，无默认主机 | Gitea REST `/api/v1`（credential-free 探测，凭据走 Git authority） | 缺 `--gitea-url`/`--owner`/`--repo-name`/`--visibility` → argparse 用法错误 exit 2；探测或权限失败 → `BLOCK_INVALID_CONFIG`/`BLOCK_PERMISSION`/`BLOCK_INVALID_OWNER`/`BLOCK_REMOTE_MISMATCH` + `status=blocked` + exit 2（其中 `BLOCK_REMOTE_MISMATCH` 可能在 repository 已创建之后产生，是否变更看 `bootstrap.executed`）；决策无法归类 → `status=failed` + exit 3 | 只读 GET 与显式 POST 的端点形状集中于此 companion；POST 只在决策为 `CREATE_ALLOWED` 且调用方显式给出 `--repo-ensure` 时发出（GF 侧不设交互确认门，显式命令本身即授权边界） |
 
@@ -23,25 +24,15 @@ Git Finalizer（GF）核心只依赖 bash、Git 与 `/usr/bin/python3`。所有�
   标注为**遗留兼容独立核验路径**。上游契约已把该 recipe 纳入公开的消费规则，并要求外部消费者
   “只从 `branch-retirement-verify` 取得判定，不得复制 canonicalization、digest recipe 或 blocker
   清单”。因此 GF 的镜像是**被上游点名的过渡性偏差（技术债务）**，不是中立的防御性设计。
-- 收敛目标明确但**当前不可替换**：公开只读接口
+- 公开只读接口
   `worktree-controller branch-retirement-verify --repo <path> --plan-id <sha256> --operation {local|remote} --json`
   （read_only，判定 `VALID/PLAN_ABSENT/STATE_STALE/PLAN_MALFORMED` 一律以 rc 0 返回，只有
-  `ControllerError` 返回 2）目前只存在于上游源码仓库的开发代次。GF 本批次**不**切换，
-  三条可复核的原因：
-  1. 本环境实际可调用的 production controller 入口仍是上一代：`--version` 无该动词，
-     `capabilities` 不宣告 `branch_retirement_verify_version`；切换会立即破坏真实 controller E2E；
-     上游该面仍在演进（存储代次与执行授权类动词都在变动），而宣告给消费者的
-     `branch_retirement_verify_version` 不变，说明判定语义可以在版本号不动的前提下移动。
-  2. 它**不是** digest 镜像的直接替代品：`verify` 在拿锁之前做 TOCTOU 观察，且不复核 plan 的八个
-     identity 字段与调用方 CLI 意图；GF 在 exclusive 锁内仍需那次复核。因此收敛形态是“锁前用
-     `verify` 观察替代 `capabilities` 探测，锁内改用 `branch-retirement-plan --json` 返回的完整 plan
-     做字段复核”，而不是“删除独立核验”——`verify` 的锁外观察无法证明锁内状态未变。
-  3. 上游没有提供无 controller 场景的等价判定：`verify` 需要可执行文件，而 GF 的独立核验路径在
-     controller 缺席时必须继续 fail closed（签发 plan 中 `branch_retirement_trust_mode` 恒为
-     `legacy`）。
-  切换的前置条件因此是：production controller 实际激活带该动词的一代、上游冻结该 blocker 集合、
-  并且明确无 controller 场景的权威判定入口或正式放弃该场景；届时 GF 的收敛形态是“锁前
-  `verify` 观察 + 锁内 plan 字段复核”，而不是“删除独立核验”。
+  `ControllerError` 返回 2）已由发布的 Controller 提供；兼容性以当前 capabilities 与 frozen
+  contract 为准，不能继续假设 production 没有该动词。
+  它取得 shared repository lock，不能在 GF 的 exclusive retirement lock 内调用，否则会阻塞；
+  锁外 verdict 也不能证明 mutation 时 authority 未变。消除镜像需要完整接入 producer 的
+  `branch-retirement-execution/v1`（authorize、CAS delete、complete、interruption recovery），并
+  明确旧 plan-only 和无 Controller 客户端的兼容边界。不能通过去掉锁或跳过 digest 比较完成迁移。
 - 因此 digest 镜像继续承担无 controller 环境的 fail-closed 核验，位点不变、不扩展；它仍是被上游
   点名的过渡性偏差（“不得复制 canonicalization、digest recipe 或 blocker 清单”），而不是中立的
   防御性设计。
@@ -123,8 +114,9 @@ Skill 参考和 `.gitea/workflows` 不在该范围内：前者必须能构造外
 - `publication-lease` 只允许出现在 integration publication 与 retirement 两个 lease adapter。
 - `branch-retirement-plans`/`branch-retirement-receipts` 文件名只允许出现在 retirement plan verifier。
 - `.agents/worktree-policy.toml` policy term 只允许出现在 retirement plan verifier。
-- `worktree-controller` 可执行文件探测（`which("worktree-controller")`）只有一个位点，即 retirement
-  plan verifier 的能力探测；其他代码不得按名字调用 controller。
+- `worktree-controller` 可执行文件探测（`which("worktree-controller")`）只允许在 retirement
+  plan verifier 与 read-only deployment-health adapter；核心生命周期不得按名字调用 controller。
+- active runtime frozen contract 路径只允许在 deployment-health adapter。
 - `snapshot-runner/snapshots` 布局只允许出现在 snapshot adapter。
 - `/api/v1` 只允许出现在 Gitea bootstrap adapter。
 - Context Loader 无运行时耦合（GF 不调用它，也不引用其名称或状态）。

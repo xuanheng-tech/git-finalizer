@@ -81,7 +81,7 @@ assert_json_value() {
     local dotted_key=$2
     local expected_json=$3
 
-    /usr/bin/python3 -B - "$path" "$dotted_key" "$expected_json" <<'PY'
+    python3 -B - "$path" "$dotted_key" "$expected_json" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -98,7 +98,7 @@ PY
 assert_summary_contract() {
     local path=$1
 
-    /usr/bin/python3 -B - "$path" <<'PY'
+    python3 -B - "$path" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -635,7 +635,7 @@ test_deterministic_and_bounded_output() {
 }
 
 report_metrics() {
-    /usr/bin/python3 -B - "${metric_arguments[@]}" <<'PY'
+    python3 -B - "${metric_arguments[@]}" <<'PY'
 from pathlib import Path
 from statistics import median
 import sys

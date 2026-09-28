@@ -1,20 +1,20 @@
 # Maintenance backlog
 
-Deferred work, each item with the condition that unblocks it. None of these is a defect in a released
-version: they are deferred because doing them now would change a sibling project, activate
-production, alter a published artifact's file set, or add a feature. The rules that keep them out of
-ordinary batches are in [release-governance.md](release-governance.md) and
+Remaining integration debt and operational gates, each with its actual prerequisite. Implementation
+fixes completed in this branch are recorded under Unreleased in the Changelog. The boundaries for
+sibling changes, production activation and artifact contracts are in [release-governance.md](release-governance.md) and
 [integration-boundaries.md](integration-boundaries.md).
 
 ## 1. Hand branch-retirement verification back to the Worktree Controller
 
 Today Git Finalizer verifies a retirement plan itself: `git-finalize-retirement-plan.py` recomputes
 the controller's state digest, a path its own module docstring marks as legacy compatibility rather
-than published contract. It exists because no frozen, released controller generation offers a verifier
-Git Finalizer could consume.
+than published contract. A released Controller now advertises verifier and execution contracts.
+The verifier takes a shared repository lock, so calling it from Finalizer's exclusive lock would
+deadlock. An earlier lock-free verdict cannot substitute for the mutation guard either.
 
-- Unblock: a released controller generation whose `capabilities --json` attests a stable
-  `branch_retirement_verify_version`, with the digest recipe published as part of that contract.
+- Next: consume the complete producer `branch-retirement-execution/v1` authorization/completion
+  protocol, with interruption recovery and compatibility for existing plan-only callers.
 - Then: delete the mirrored recipe, keep the fail-closed legacy-namespace migration blocker, and
   re-derive the retirement rows of the boundary matrix in
   [integration-boundaries.md](integration-boundaries.md) plus
@@ -37,8 +37,8 @@ actual Skill payload tree.
 
 ## 3. Production activation of a published release
 
-The maintainer machine runs an older release than the published one; that is the designed state, not
-a defect, because publication and activation are separate authorised actions.
+Publication and production activation are separate authorised actions. A source branch or a published
+artifact does not establish which bytes a maintainer currently runs.
 
 - Requires: explicit authorisation for each activation, then `tool-skill-sync install
   --activate-production` from the canonical source repository — never from a release artifact.
@@ -59,21 +59,15 @@ Small, unscheduled, each one a real gap rather than a polish item.
   attestations. The bridge that does exist is reproducible construction — build from the tag and
   compare digests, as [release-governance.md](release-governance.md) documents. An attestation step
   would need `id-token`/`attestations` permissions, which the governance document currently forbids.
-- Only the GitHub job checks the bytes after publication. The Gitea publisher creates a draft, uploads
-  `dist/` and flips it public, then prints an asset count — it never re-downloads what it published,
-  so a partially uploaded or replaced Gitea release can pass. Give the Gitea job the same
-  re-download-and-compare step the GitHub job runs, against the digest recorded before upload.
+- Both jobs compare downloaded assets with pre-upload digests. Gitea does so while the release is
+  still a draft and checks the asset inventory before making it public. The transport regressions
+  use a disposable local HTTP fixture; a real hosted release remains a separately authorised test.
 - The `docs/...` links in the shipped `README.md` resolve in the repository, not inside the tarball,
   because `docs/` is not part of the package. Either outcome is fine, but choosing it changes the
   artifact file set, so it belongs to a version batch.
-- `.gitea/workflows/release.yml` has not run as shipped since the `v1.5.0` candidate edited it: the
-  Gitea release job last executed on older bytes, so the next Gitea release is its first real test.
-- The release jobs do not record the environment that produced a digest. Both install a pinned Python
-  that nothing then executes (every gate calls `python3`, and the shipped CLI hardcodes
-  `/usr/bin/python3`), the GitHub runner image is pinned while the Gitea runner asks for
-  `ubuntu-latest`, and `tar`/`gzip`/locale are the variables the byte recipe cannot control. Print
-  `python3 -V`, `tar --version` and `gzip --version` into the job log, or drop the unused interpreter
-  install, so a cross-host divergence is attributable instead of arguable.
+- The jobs record the actual Python/Git/tar/gzip/locale and no longer install an unused interpreter.
+  Different runner images can still produce different bytes; the cross-host comparison remains
+  the acceptance gate when moving a release between hosts.
 - `just check` runs the same commands on both hosts but not always the same set of suites: a few
   groups are gated on an optional integration being installed on `PATH` and report themselves as
   skipped rather than failing. That is intended, but it means a green check on one host is not
@@ -83,15 +77,10 @@ Small, unscheduled, each one a real gap rather than a polish item.
 
 ## 5. Dependency automation (Renovate)
 
-`renovate.json` is published and extends `local>xuanheng-tech/renovate-config`. That preset exists
-only on the private Gitea instance and returns "not found" on GitHub, and GitHub shows no Renovate
-activity at all: no bot commit, no bot pull request. On Gitea the same configuration is alive — it
-opened the still-unmerged proposal to move the `astral-sh/setup-uv` pin forward, which is also how
-one learns that the pins in the workflows do drift.
+`renovate.json` uses built-in public presets and carries its conservative schedule, rate limits,
+release age and manual merge policy locally. It no longer requires a private Gitea preset.
 
-- Unblock: an organisation admin installs the Renovate app on the GitHub repository and publishes or
-  relocates the preset so the `extends` target resolves there, then merges the onboarding pull
-  request.
-- Never: repoint `extends` at a public preset just to satisfy the file. That hides the blocker while
-  leaving the automation inactive, and the pinned action SHAs in `.github/workflows` are exactly what
-  the automation exists to keep current.
+- Account prerequisite: a repository administrator must enable the chosen Renovate service and
+  complete its onboarding. A valid configuration is not evidence that a bot is installed or active.
+- Verification: read actual bot runs and proposed updates on each host. Changes to action pins must
+  keep both hosts consistent, as enforced by `tests/test_release_procedure.py`.

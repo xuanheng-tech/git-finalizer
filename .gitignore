@@ -12,3 +12,4 @@ pending-dist/
 .release-stage/
 .qoder/
 .codex/
+.agents/worktree-policy.toml

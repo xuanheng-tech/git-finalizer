@@ -46,6 +46,7 @@ compatibility shim 的独立 SHA-256 由 ToolSkillManifest v2 绑定，并随 bu
 ```bash
 ./tool-skill-sync --source-root /absolute/projects --source-repo git-finalizer=/absolute/worktree check --source-only git-finalizer
 ./tool-skill-sync status
+./tool-skill-sync doctor --repo /absolute/checkout --summary
 ./tool-skill-sync check <context-loader|snapshot-runner|git-finalizer>
 ./tool-skill-sync --install-root <isolated-root> install <tool> --allow-dirty-source
 ./tool-skill-sync --install-root <isolated-root> rollback <tool>

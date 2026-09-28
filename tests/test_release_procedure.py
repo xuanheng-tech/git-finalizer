@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+import io
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import tarfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -360,6 +362,63 @@ class ReleaseProcedureTests(unittest.TestCase):
         result = run_script("verify", repository)
         self.assertEqual(result.returncode, 2, result.stdout)
         self.assertIn("only `build` may author a checksum file", result.stderr)
+
+    def test_build_refuses_an_invalid_tag_before_touching_outputs(self) -> None:
+        repository = self.fixture()
+        output = repository / "dist"
+        output.mkdir()
+        sentinel = output / "user-notes.txt"
+        sentinel.write_text("preserve this data\n")
+        result = run_script("build", repository, tag="not-a-release")
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertEqual(sentinel.read_text(), "preserve this data\n")
+
+    def test_build_preserves_unknown_output_and_staging_content(self) -> None:
+        repository = self.fixture()
+        output = repository / "dist"
+        output.mkdir()
+        sentinel = output / "user-notes.txt"
+        sentinel.write_text("preserve this data\n")
+        stage = repository / ".release-stage"
+        stage.mkdir()
+        (stage / "user-notes.txt").write_text("preserve staging data\n")
+        result = run_script("build", repository)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertEqual(sentinel.read_text(), "preserve this data\n")
+        self.assertEqual((stage / "user-notes.txt").read_text(), "preserve staging data\n")
+
+    def test_verify_rejects_links_and_duplicate_members(self) -> None:
+        repository = self.fixture()
+        self.assertEqual(run_script("build", repository).returncode, 0)
+        artifact = repository / "dist" / f"{PACKAGE}.tar.gz"
+        original = artifact.read_bytes()
+        for kind in ("symlink", "hardlink", "duplicate"):
+            with self.subTest(kind=kind):
+                with tarfile.open(fileobj=io.BytesIO(original), mode="r:gz") as source:
+                    with tarfile.open(artifact, "w:gz") as target:
+                        for member in source.getmembers():
+                            target.addfile(member, source.extractfile(member) if member.isfile() else None)
+                        if kind == "duplicate":
+                            member = source.getmember(f"{PACKAGE}/LICENSE")
+                            target.addfile(member, source.extractfile(member))
+                        else:
+                            member = tarfile.TarInfo(f"{PACKAGE}/extra-link")
+                            member.type = tarfile.SYMTYPE if kind == "symlink" else tarfile.LNKTYPE
+                            member.linkname = "/outside-the-package"
+                            target.addfile(member)
+                # Check the archive contract independently of the checksum gate.
+                namespace = __import__("runpy").run_path(str(repository / "scripts/release.py"))
+                with self.assertRaises(namespace["ReleaseError"]):
+                    namespace["verify_bytes"](artifact, RELEASE_TAG)
+
+    def test_verify_requires_one_exact_checksum_entry(self) -> None:
+        repository = self.fixture()
+        self.assertEqual(run_script("build", repository).returncode, 0)
+        checksum = repository / "dist/SHA256SUMS.txt"
+        original = checksum.read_text()
+        checksum.write_text(original + original)
+        result = run_script("verify", repository)
+        self.assertEqual(result.returncode, 2, result.stdout)
 
     @staticmethod
     def _mkdir(path: Path) -> Path:
