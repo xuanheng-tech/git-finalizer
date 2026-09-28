@@ -80,20 +80,21 @@ class WorkflowHealthTests(unittest.TestCase):
         self.assertEqual(health.file_identity(bridge / "skills/worktree-lifecycle/SKILL.md")["real_path"],
                          health.file_identity(self.skill)["real_path"])
 
-    def controller_fixture(self):
-        caps = {"code": "CAPABILITIES", "contract_version": 37,
-                "capabilities_version": 1, "storage_layout_version": 4,
-                "writer_session_version": 2}
+    def controller_fixture(self, contract_version=37):
+        compatibility = sync.read_json(
+            Path(__file__).resolve().parents[1] / "toolchain_compatibility.json"
+        )
+        requirements = compatibility["runtime_requirements"]["worktree-controller"]
+        caps = {"code": "CAPABILITIES", "contract_version": contract_version,
+                "storage_layout_version": 4, **requirements["capability_versions"]}
         contract = {**caps, "tool_version": "9.0.0"}
-        runtime_root = self.root / "controller"
+        runtime_root = self.root / f"controller-{contract_version}"
         runtime = runtime_root / "versions" / ("a" * 40) / "worktree-controller"
         site = runtime / "lib/python3.12/site-packages/worktree_controller"
         site.mkdir(parents=True)
         frozen = json.dumps(contract)
         (site / "tool_cli_contract.json").write_text(frozen)
         (runtime_root / "active").symlink_to(runtime, target_is_directory=True)
-        requirements = {"cli_contract_versions": [37], "storage_layout_versions": [4],
-                        "capability_versions": {"capabilities_version": 1, "writer_session_version": 2}}
         envelope = {"tool_version": "9.0.0", "decision": caps, "errors": []}
         return runtime_root, requirements, envelope, frozen
 
@@ -123,6 +124,24 @@ class WorkflowHealthTests(unittest.TestCase):
         self.assertEqual(result["source_head"], "b" * 40)
         self.assertTrue(result["source_dirty"])
         self.assertEqual((root / "active").resolve().parent.name, "a" * 40)
+
+    def test_reviewed_controller_cli_contracts(self) -> None:
+        for version in (37, 38):
+            with self.subTest(contract_version=version):
+                root, requirements, envelope, frozen = self.controller_fixture(version)
+                result = self.probe_controller(root, requirements, envelope, frozen)
+                self.assertEqual(result["status"], "PASS", result["errors"])
+                self.assertEqual(result["cli_contract_version"], version)
+
+    def test_unreviewed_controller_cli_contract_is_rejected_without_writing(self) -> None:
+        root, requirements, envelope, frozen = self.controller_fixture(39)
+        active_runtime = (root / "active").resolve()
+        skill_before = self.skill.read_bytes()
+        result = self.probe_controller(root, requirements, envelope, frozen)
+        self.assertEqual(result["status"], "FAIL")
+        self.assertIn("unreviewed contract_version: 39", result["errors"])
+        self.assertEqual((root / "active").resolve(), active_runtime)
+        self.assertEqual(self.skill.read_bytes(), skill_before)
 
     def test_matching_cli_contract_does_not_hide_missing_capability(self) -> None:
         root, requirements, envelope, frozen = self.controller_fixture()

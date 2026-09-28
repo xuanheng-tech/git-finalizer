@@ -17,7 +17,8 @@
         "writer_session_version": 2
       },
       "cli_contract_versions": [
-        37
+        37,
+        38
       ],
       "storage_layout_versions": [
         4
