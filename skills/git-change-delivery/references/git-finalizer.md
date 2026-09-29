@@ -473,14 +473,29 @@ tag、Release、Artifact 和 deployment 是独立 Release 流程，必须按仓�
 
 ## Exact content review
 
-`--fixture-exceptions <absolute-json-file>` 是显式精确复核，默认扫描保持不变。支持 normal、
-configured-upstream `--resume-publish` 以及 existing branch/history publication/resume；不支持
-verify-only、commit-only、root publication，也不能与 `--allow-test-fixture` 混用。
+固定 Controller retirement capability 的公开说明只在匹配 JSON schema 且该 literal 唯一时
+作为非凭据处理，不按文件名、空格、JSON 后缀或整文件白名单放行。其它 raw/decoded 敏感赋值
+继续检查；全转义敏感键仍检查。decoded known-token、private-key、SSH-key 签名在 working/blob
+完整扫描中独立检查，不能由 credential-only fixture review 一并跳过。分类进程失败、空或未知
+结果拒绝候选；普通 non-schema 内容继续原 raw 检查。
+
+`--fixture-exceptions <absolute-json-file>` 是显式精确复核，原有签名匹配规则继续执行。支持 normal、
+configured-upstream `--resume-publish` 以及 existing branch/history publication/resume；
+verify-only、commit-only 只接受下述 backend assignment fixture，不支持 root publication，
+也不能与 `--allow-test-fixture` 混用。
 复核文件 schema 为 1，顶层仅含 `schema_version`、`repository`、`exceptions`。
 `repository` 仅含 Git 唯一 `root_commit` 和唯一 push URL 的 `remote_url_sha256`。
 每个 exception 仅含 `path`、`blob_oid`、原始字节 `sha256`、`detector`、非空 `reason`，最多 16 条；
 receipt 返回绑定全部字段的 exception ID。例外只排除指定 detector，其他内容与路径守卫照常执行。
-测试路径必须精确位于 `tests/`。唯一文档路径为 `CHANGELOG.md`，且只接受 `private-key-header-v1`：
+测试路径必须精确位于 `tests/`，或为单层 `backend/tests/test_[A-Za-z0-9_]+.py`。
+后者只允许 `credential-assignment-v1`；known token、private/SSH key 签名继续拒绝。
+local 模式仅接受后者，从现有本地 `origin` 唯一 push URL 绑定 repository identity，
+不要求 upstream，不执行 fetch、ls-remote 或 push，也不配置 remote。
+local review 目标必须为真实候选，raw blob 和只读 clean-filter blob 必须一致，已有 staged
+变更的 index blob 也必须一致；verify-only 不写 index，receipt 不证明实际暂存或 hooks。
+commit-only 在实际暂存后再次绑定 exact index blob 与 commit tree。legacy `--allow-test-fixture`
+仍只接受原来的 `tests/`，范围不扩展。
+唯一文档路径为 `CHANGELOG.md`，且只接受 `private-key-header-v1`：
 marker 必须是 upstream 已有的行内反引号示例，从最早示例起的历史后缀必须逐字节保留；
 新增 marker、闭合 key marker、其他文件或规则均拒绝。normal 必须与 upstream 对齐，先校验 working
 raw blob，再复核 index 的相同 OID；filter 或并发变更导致 staged blob 漂移时停止 commit/push。
@@ -492,3 +507,4 @@ Python prose 复核仅接受 `.py` 和 `credential-assignment-v1`，且必须存
 完整原始 key/value 对只能来自 upstream 的同类声明，新增/改变字面量、其他位置的赋值、配置字段、解析失败
 均拒绝。私钥、known-token、SSH 和路径守卫照常执行；首次发布没有可证明的 baseline 时拒绝。
 这仍是逐 blob 的显式人工复核，不改变默认扫描，也不是任意 Python 源码豁免。
+Python prose 复核仍不支持 verify-only、commit-only；local 只接受上述 backend assignment fixture。

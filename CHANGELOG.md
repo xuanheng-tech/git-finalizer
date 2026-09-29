@@ -31,6 +31,19 @@ section is invented for it.
 - Correct the deployment-health adapter ledger, track custom Claude homes and project instruction
   files, register the independently attested released Skill payload, and ignore only host worktree policy.
 
+## 1.6.3
+
+- Classify the unique fixed public Controller capability description only in its matching schema.
+  Keep other raw and decoded assignments, including plural credentials and fully escaped keys, checked.
+- Check decoded known-token, private-key and SSH-key signatures independently of credential-only
+  fixture reviews in worktrees and blobs; refuse classifier errors and unknown verdicts.
+- Allow exact credential-assignment fixture reviews for single-level `backend/tests/test_*.py`
+  paths. Keep known-token, private-key and SSH-key scans mandatory for those paths.
+- Accept those exact reviews in local verify-only and commit-only modes without remote operations.
+  Bind the existing local origin identity, raw/clean-filter blob and any changed index blob; refuse
+  unchanged, out-of-scope, converted or drifted candidates before staging.
+- Preserve existing publication review behavior and the original `tests/`-only blanket fixture flag.
+
 ## 1.6.2
 
 - Accept reviewed Controller CLI contract version 40 alongside 37, 38 and 39.

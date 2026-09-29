@@ -177,6 +177,36 @@ else:
         self.assert_blocked()
         self.assertFalse(marker.exists(), 'absolute review path was read before rejection')
 
+    def test_published_prose_review_remains_unavailable_in_local_modes(self):
+        f = self.fixture
+
+        def state():
+            return (
+                f.git('rev-parse', 'HEAD'), f.git('ls-files', '--stage'),
+                f.git('status', '--porcelain=v1', '--untracked-files=all'),
+                f.git('--git-dir=' + str(f.remote), 'rev-parse', 'refs/heads/main'),
+                hashlib.sha256((f.repo / f.path).read_bytes()).hexdigest(),
+            )
+
+        for mode in ('verify-only', 'commit-only'):
+            with self.subTest(mode=mode):
+                before = state()
+                command = [str(fixtures.FINALIZER), '--summary', '--repo', str(f.repo),
+                           '--mode', mode]
+                if mode == 'commit-only':
+                    command += ['--message', 'Preserve published prose locally']
+                command += ['--fixture-exceptions', str(f.file), '--', f.path]
+                result = subprocess.run(command, env=f.env, capture_output=True,
+                                        text=True, timeout=30)
+                data = json.loads(result.stdout)
+                self.assertNotEqual(result.returncode, 0, data)
+                self.assertEqual(data['status'], 'blocked')
+                self.assertFalse(data['commit']['created'])
+                self.assertFalse(data['push']['executed'])
+                self.assertEqual(data['final_phase'], 'preflight')
+                self.assertEqual(data['reason'], 'fixture exception 文件无效；未执行 push')
+                self.assertEqual(before, state())
+
     def test_repository_blob_hash_and_file_size_still_bind_review(self):
         f = self.fixture
         original = copy.deepcopy(f.approval)

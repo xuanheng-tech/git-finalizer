@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.6.2"
+readonly VERSION="1.6.3"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -675,7 +675,7 @@ Options:
   --ci-verified-at <timestamp>   Optional caller-supplied CI evidence timestamp.
   --snapshot <id>                Bind initial publish to a complete snapshot.
   --allow-test-fixture <path>    Ignore content secret signatures for this exact tests/ file.
-  --fixture-exceptions <file>   Exact repository/path/blob/hash/rule reviews for normal or existing publication.
+  --fixture-exceptions <file>   Exact content reviews; local modes accept backend test assignments only.
   --reviewed-sensitive-source <file>
                                External exact Python source review; secret scans remain mandatory.
   --allow-large-binary <path>    Allow this exact binary file above 5 MiB, up to 25 MiB.
@@ -985,6 +985,7 @@ working_content_reason() {
     local path=$1
     local excepted_detectors=${2:-}
     local only_detector=${3:-}
+    local schema_verdict
 
     if [[ -z "$only_detector" || "$only_detector" == 'private-key-header-v1' ]] &&
         [[ "$excepted_detectors" != *'|private-key-header-v1|'* ]] &&
@@ -1003,10 +1004,19 @@ working_content_reason() {
         printf 'SSH key 内容签名'
         return 0
     fi
+    schema_verdict=$(public_schema_content_verdict file "$path" "$excepted_detectors" "$only_detector")
+    case "$schema_verdict" in
+        PRIVATE) printf 'private key 内容签名'; return 0 ;;
+        KNOWN) printf '高置信度 token/credential 内容签名'; return 0 ;;
+        SSH) printf 'SSH key 内容签名'; return 0 ;;
+        ASSIGNMENT) printf '疑似硬编码 credential/secret/token'; return 0 ;;
+        CLEAR) return 1 ;;
+        NON_SCHEMA) ;;
+        *) printf 'public schema 内容分类失败'; return 0 ;;
+    esac
     if [[ -z "$only_detector" || "$only_detector" == 'credential-assignment-v1' ]] &&
         [[ "$excepted_detectors" != *'|credential-assignment-v1|'* ]] &&
-        LC_ALL=C grep -aEiq -- "$assignment_re" "$path" &&
-        credential_assignment_found file "$path" "$excepted_detectors"; then
+        LC_ALL=C grep -aEiq -- "$assignment_re" "$path"; then
         printf '疑似硬编码 credential/secret/token'
         return 0
     fi
@@ -1017,6 +1027,7 @@ staged_content_reason() {
     local oid=$1
     local excepted_detectors=${2:-}
     local only_detector=${3:-}
+    local schema_verdict
     if [[ -z "$only_detector" || "$only_detector" == 'private-key-header-v1' ]] &&
         [[ "$excepted_detectors" != *'|private-key-header-v1|'* ]] &&
         LC_ALL=C grep -aEiq -- "$private_key_re" < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null); then
@@ -1034,10 +1045,19 @@ staged_content_reason() {
         printf 'SSH key 内容签名'
         return 0
     fi
+    schema_verdict=$(public_schema_content_verdict blob "$oid" "$excepted_detectors" "$only_detector")
+    case "$schema_verdict" in
+        PRIVATE) printf 'private key 内容签名'; return 0 ;;
+        KNOWN) printf '高置信度 token/credential 内容签名'; return 0 ;;
+        SSH) printf 'SSH key 内容签名'; return 0 ;;
+        ASSIGNMENT) printf '疑似硬编码 credential/secret/token'; return 0 ;;
+        CLEAR) return 1 ;;
+        NON_SCHEMA) ;;
+        *) printf 'public schema 内容分类失败'; return 0 ;;
+    esac
     if [[ -z "$only_detector" || "$only_detector" == 'credential-assignment-v1' ]] &&
         [[ "$excepted_detectors" != *'|credential-assignment-v1|'* ]] &&
-        LC_ALL=C grep -aEiq -- "$assignment_re" < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null) &&
-        credential_assignment_found blob "$oid" "$excepted_detectors"; then
+        LC_ALL=C grep -aEiq -- "$assignment_re" < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null); then
         printf '疑似硬编码 credential/secret/token'
         return 0
     fi
@@ -1406,6 +1426,38 @@ verify_local_candidate() {
         [[ -n ${candidate_paths[$path]+present} ]] ||
             fail "大二进制例外目标未进入候选范围: $(printf '%q' "$path")"
     done
+    if ((fixture_exceptions_seen == 1 && (verify_only == 1 || commit_only == 1))); then
+        declare -A changed_index_paths=()
+        local raw_oid filtered_oid fixture_key
+        for path in "${staged_paths[@]}"; do
+            changed_index_paths["$path"]=1
+        done
+        for path in "${!history_fixture_paths[@]}"; do
+            [[ -n ${candidate_paths[$path]+present} ]] ||
+                fail 'local fixture review 未进入候选范围；未执行 add、commit 或 push'
+            raw_oid=$(git -C "$repo" hash-object --no-filters -- "$path") ||
+                fail '无法只读复核 local fixture raw blob'
+            fixture_key=$path:$raw_oid:credential-assignment-v1
+            [[ -n ${history_fixture_exceptions[$fixture_key]+present} ]] ||
+                fail 'local fixture review raw blob 已漂移；未执行 add、commit 或 push'
+            filtered_oid=$(git -C "$repo" hash-object --path="$path" -- "$path") ||
+                fail '无法只读复核 local fixture clean-filter blob'
+            [[ "$filtered_oid" == "$raw_oid" ]] ||
+                fail 'local fixture review clean-filter blob 已漂移；未执行 add、commit 或 push'
+            if [[ -n ${changed_index_paths[$path]+present} ]]; then
+                get_index_entry "$path" ||
+                    fail 'local fixture review staged entry 无效；未执行 add、commit 或 push'
+                [[ "$index_oid" == "$raw_oid" &&
+                   ("$index_mode" == '100644' || "$index_mode" == '100755') ]] ||
+                    fail 'local fixture review staged blob 已漂移；未执行 add、commit 或 push'
+                staged_content_reason "$index_oid" '' credential-assignment-v1 >/dev/null ||
+                    fail 'local fixture review detector 未命中 staged blob'
+            fi
+            if ((verify_only == 1)); then
+                summary_fixture_exceptions+=("${history_fixture_exceptions[$fixture_key]}")
+            fi
+        done
+    fi
 }
 
 resolve_normal_target() {
@@ -2293,14 +2345,154 @@ is_committed_large_binary() {
     return 0
 }
 
+public_schema_content_verdict() {
+    python3_available || {
+        printf 'ERROR\n'
+        return 0
+    }
+    local verdict
+    verdict=$("$PYTHON3_EXECUTABLE" -B - "$1" "$2" "$repo" "$assignment_re" \
+        "$private_key_re" "$known_token_re" "$ssh_key_re" "$3" "$4" <<'PY'
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+
+def expression(value):
+    return re.compile(value.replace("[[:space:]]", r"[\x09-\x0d ]").encode(), re.I)
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def invalid_constant(value):
+    raise ValueError("non-JSON constant")
+
+
+def strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield key
+            yield from strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from strings(item)
+
+
+def decoded_assignment(value, detector):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if isinstance(item, str) and len(item.encode()) >= 12 and detector.search(
+                key.encode() + b'="AAAAAAAAAAAA"'
+            ):
+                return True
+            if decoded_assignment(item, detector):
+                return True
+    elif isinstance(value, list):
+        return any(decoded_assignment(item, detector) for item in value)
+    elif isinstance(value, str):
+        return detector.search(value.encode()) is not None
+    return False
+
+
+try:
+    kind, source, repo, assignment, private_key, known, ssh_key, excepted, only = sys.argv[1:]
+    raw = (
+        Path(source).read_bytes() if kind == "file"
+        else subprocess.check_output(
+            ["git", "-C", repo, "cat-file", "blob", source], stderr=subprocess.DEVNULL
+        )
+    )
+    try:
+        document = json.loads(
+            raw, object_pairs_hook=unique_object, parse_constant=invalid_constant
+        )
+    except ValueError:
+        print("NON_SCHEMA")
+        sys.exit(0)
+    if not (
+        isinstance(document, dict)
+        and type(document.get("schema_version")) is int
+        and document["schema_version"] == 1
+        and document.get("tool_name") == "worktree-controller"
+        and type(document.get("contract_version")) is int
+        and document["contract_version"] > 0
+        and type(document.get("branch_retirement_execution_version")) is int
+        and document["branch_retirement_execution_version"] == 1
+    ):
+        print("NON_SCHEMA")
+        sys.exit(0)
+    retirement = document.get("branch_retirement_contract")
+    if not isinstance(retirement, dict) or retirement.get("contract") != "branch-retirement/v3":
+        print("NON_SCHEMA")
+        sys.exit(0)
+    declaration = retirement.get("execution_authorization")
+    if not (
+        isinstance(declaration, dict)
+        and declaration.get("contract") == "branch-retirement-execution/v1"
+        and declaration.get("capability") == "branch_retirement_execution_version"
+    ):
+        print("NON_SCHEMA")
+        sys.exit(0)
+    # Typed signature checks are independent of credential-only fixture reviews.
+    # Detector hit reviews select one rule; complete scans retain every other rule.
+    for name, pattern, verdict in (
+        ("private-key-header-v1", private_key, "PRIVATE"),
+        ("known-token-v1", known, "KNOWN"),
+        ("ssh-key", ssh_key, "SSH"),
+    ):
+        if (not only or only == name) and "|" + name + "|" not in excepted and any(
+            expression(pattern).search(value.encode()) for value in strings(document)
+        ):
+            print(verdict)
+            sys.exit(0)
+    if only and only != "credential-assignment-v1" or "|credential-assignment-v1|" in excepted:
+        print("CLEAR")
+        sys.exit(0)
+    description = (
+        "a 256-bit Controller-generated capability returned only by authorize and "
+        "compared constant-time at complete or abandon; it is excluded from the "
+        "identity so it cannot change the authorization address"
+    )
+    masked = raw
+    if declaration.get("token") == description:
+        literals = re.finditer(rb'"(?:[^"\\]|\\.)*"', raw)
+        descriptions = [match for match in literals if json.loads(match.group()) == description]
+        if len(descriptions) == 1:
+            match = descriptions[0]
+            masked = raw[:match.start()] + b'""' + raw[match.end():]
+            declaration["token"] = ""
+    detector = expression(assignment)
+    print("ASSIGNMENT" if detector.search(masked) or decoded_assignment(document, detector) else "CLEAR")
+except (OSError, ValueError, TypeError, RecursionError, subprocess.CalledProcessError):
+    print("ERROR")
+PY
+    ) || verdict=ERROR
+    printf '%s\n' "$verdict"
+}
+
 load_fixture_exceptions() {
     local phase=${1:-history}
-    local records path oid detector record key
+    local records path oid detector record key review_remote
 
     [[ -n "$fixture_exceptions_file" ]] || return 0
+    review_remote=${branch_publish_remote:-${upstream_remote:-}}
+    if ((commit_only == 1 || verify_only == 1)); then
+        review_remote=origin
+    fi
     if ! records=$("$PYTHON3_EXECUTABLE" -B - \
         "$fixture_exceptions_file" "$repo" "${resume_expected_oid:-HEAD}" \
-        "${branch_publish_remote:-$upstream_remote}" "$phase" "${normal_upstream_hash:-}" "$assignment_re" <<'PY'
+        "$review_remote" "$phase" "${normal_upstream_hash:-}" "$assignment_re" "$mode_arg" <<'PY'
 import ast
 from collections import Counter
 import hashlib
@@ -2329,7 +2521,7 @@ def git(*args):
 
 
 try:
-    filename, repo, head, remote, phase, example_base, assignment = sys.argv[1:]
+    filename, repo, head, remote, phase, example_base, assignment, mode = sys.argv[1:]
     require(phase in {"worktree", "history"}, "unknown content review phase")
     source = Path(filename)
     require(source.is_absolute() and str(source.resolve(strict=True)) == filename
@@ -2358,10 +2550,16 @@ try:
                 "unknown or missing exception fields")
         require(all(type(value) is str for value in entry.values()), "exception fields must be strings")
         path, oid, detector = entry["path"], entry["blob_oid"], entry["detector"]
-        require((path.startswith("tests/") or path == "CHANGELOG.md" or path.endswith(".py")) and len(path) <= 1024
+        backend_fixture = re.fullmatch(r"backend/tests/test_[A-Za-z0-9_]+\.py", path) is not None
+        require((backend_fixture or path.startswith("tests/") or path == "CHANGELOG.md" or path.endswith(".py")) and len(path) <= 1024
                 and not PurePosixPath(path).is_absolute()
                 and str(PurePosixPath(path)) == path and ".." not in PurePosixPath(path).parts
-                and not any(c in path for c in "\x00\n\r\t*?[]"), "expected exact canonical tests/, CHANGELOG.md or Python prose path")
+                and not any(c in path for c in "\x00\n\r\t*?[]"), "expected exact canonical test or CHANGELOG.md path")
+        if mode in {"verify-only", "commit-only"}:
+            require(backend_fixture, "local content review requires a single-level backend/tests/test_*.py path")
+        if backend_fixture:
+            require(detector == "credential-assignment-v1",
+                    "backend test review allows only credential assignment fixtures")
         require(len(oid) == len(roots[0]) and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", oid) is not None
                 and re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]) is not None, "invalid content identity")
         require(detector in {"private-key-header-v1", "known-token-v1", "credential-assignment-v1"},
@@ -2410,7 +2608,7 @@ try:
                     "published changelog example and following history must remain unchanged")
             require(re.search(rb"-----END (?:[A-Z0-9]+[ \t\v\f\r]+)*PRIVATE KEY-----", content, re.I) is None,
                     "changelog review does not allow a private key closing marker")
-        if not path.startswith("tests/") and path != "CHANGELOG.md":
+        if not backend_fixture and not path.startswith("tests/") and path != "CHANGELOG.md":
             require(detector == "credential-assignment-v1",
                     "Python prose review accepts only the assignment detector")
             baseline = head if phase == "worktree" else example_base
@@ -3765,141 +3963,6 @@ validate_retirement_oid() {
 }
 
 # GF-INTEGRATION-ADAPTER: worktree-controller-retirement (single site)
-credential_assignment_found() {
-    # Python absence preserves the original strict assignment decision.
-    python3_available || return 0
-    local assignment_verdict
-    assignment_verdict=$("$PYTHON3_EXECUTABLE" -B - "$1" "$2" "$repo" "$assignment_re" \
-        "$private_key_re" "$known_token_re" "$ssh_key_re" "$3" <<'PY'
-import json
-from pathlib import Path
-import re
-import subprocess
-import sys
-
-
-def expression(value):
-    return re.compile(value.replace("[[:space:]]", r"[\x09-\x0d ]").encode(), re.I)
-
-
-def unique_object(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("duplicate JSON key")
-        result[key] = value
-    return result
-
-
-def invalid_constant(value):
-    raise ValueError("non-JSON constant")
-
-
-def strings(value):
-    if isinstance(value, str):
-        yield value
-    elif isinstance(value, dict):
-        for key, item in value.items():
-            yield key
-            yield from strings(item)
-    elif isinstance(value, list):
-        for item in value:
-            yield from strings(item)
-
-
-def decoded_assignment(value, detector):
-    if isinstance(value, dict):
-        for key, item in value.items():
-            # Reuse the original sensitive-name matcher with a fixed sentinel.
-            # Inspect the actual value separately: quotes cannot shorten it.
-            if isinstance(item, str) and len(item.encode()) >= 12 and detector.search(
-                key.encode() + b'="AAAAAAAAAAAA"'
-            ):
-                return True
-            if decoded_assignment(item, detector):
-                return True
-    elif isinstance(value, list):
-        return any(decoded_assignment(item, detector) for item in value)
-    elif isinstance(value, str):
-        return detector.search(value.encode()) is not None
-    return False
-
-
-try:
-    kind, source, repo, assignment, private_key, known, ssh_key, excepted = sys.argv[1:]
-    raw = (
-        Path(source).read_bytes() if kind == "file"
-        else subprocess.check_output(
-            ["git", "-C", repo, "cat-file", "blob", source], stderr=subprocess.DEVNULL
-        )
-    )
-    detector = expression(assignment)
-    if detector.search(raw) is None:
-        sys.exit(0)
-    document = json.loads(
-        raw, object_pairs_hook=unique_object, parse_constant=invalid_constant
-    )
-    if not (
-        isinstance(document, dict)
-        and type(document.get("schema_version")) is int
-        and document["schema_version"] == 1
-        and document.get("tool_name") == "worktree-controller"
-        and type(document.get("contract_version")) is int
-        and document["contract_version"] > 0
-        and type(document.get("branch_retirement_execution_version")) is int
-        and document["branch_retirement_execution_version"] == 1
-    ):
-        sys.exit(0)
-    retirement = document.get("branch_retirement_contract")
-    if not isinstance(retirement, dict) or retirement.get("contract") != "branch-retirement/v3":
-        sys.exit(0)
-    declaration = retirement.get("execution_authorization")
-    description = (
-        "a 256-bit Controller-generated capability returned only by authorize and "
-        "compared constant-time at complete or abandon; it is excluded from the "
-        "identity so it cannot change the authorization address"
-    )
-    if not (
-        isinstance(declaration, dict)
-        and declaration.get("contract") == "branch-retirement-execution/v1"
-        and declaration.get("capability") == "branch_retirement_execution_version"
-        and declaration.get("token") == description
-    ):
-        sys.exit(0)
-    # Even escaped signatures in decoded schema strings take priority. Existing
-    # exact fixture exceptions keep their detector scope; no new flag is exposed.
-    for name, pattern in (
-        ("private-key-header-v1", private_key),
-        ("known-token-v1", known),
-        ("ssh-key", ssh_key),
-    ):
-        if "|" + name + "|" not in excepted and any(
-            expression(pattern).search(value.encode()) for value in strings(document)
-        ):
-            sys.exit(0)
-    # Mask only the unique literal for this exact public declaration. Preserve
-    # all other raw bytes: JSON normalization must not shorten other assignments.
-    literals = re.finditer(rb'"(?:[^"\\]|\\.)*"', raw)
-    descriptions = [match for match in literals if json.loads(match.group()) == description]
-    if len(descriptions) != 1:
-        sys.exit(0)
-    match = descriptions[0]
-    masked = raw[:match.start()] + b'""' + raw[match.end():]
-    # Decoded keys and values supplement the raw scan; quoted characters in a
-    # sensitive value must not turn it into a shorter apparent assignment.
-    declaration["token"] = ""
-    if not (detector.search(masked) or decoded_assignment(document, detector)):
-        print("public-schema-assignment-clear-v1")
-    sys.exit(0)
-except (OSError, ValueError, TypeError, RecursionError, subprocess.CalledProcessError):
-    # An unreadable or non-schema candidate keeps the original strict result.
-    sys.exit(0)
-PY
-    ) || return 0
-    # Only a successful explicit verdict is safe; process failure is strict.
-    [[ "$assignment_verdict" != "public-schema-assignment-clear-v1" ]]
-}
-
 verify_retirement_plan() {
     local operation=$1
     local common_dir
@@ -5299,11 +5362,11 @@ if ((source_review_seen == 1)); then
 fi
 if ((fixture_exceptions_seen == 1)); then
     ((publish_existing_branch == 1 || publish_existing_history == 1 ||
-        resume_existing_history == 1 || resume_existing == 1 ||
+        resume_existing_history == 1 || resume_existing == 1 || commit_only == 1 || verify_only == 1 ||
         (commit_only == 0 && verify_only == 0 && initial_commit_only == 0 &&
          initial_publish == 0 && initial_branch_publish == 0 && resume_initial == 0 &&
          retire_remote_branch == 0 && retire_local_branch == 0))) ||
-        fail '--fixture-exceptions 只接受 normal 或 existing branch/history publication/resume'
+        fail '--fixture-exceptions 只接受 local、normal 或 existing branch/history publication/resume'
     ((${#allow_test_fixture_args[@]} == 0)) ||
         fail '--fixture-exceptions 不接受 --allow-test-fixture'
 fi
@@ -6016,6 +6079,10 @@ if ((verify_only == 1)); then
     summary_next_action='none'
     printf '\nGit Finalizer 完成：本地验证通过；未执行 add、commit、push 或远端验证。\n'
     exit 0
+fi
+
+if ((commit_only == 1 && fixture_exceptions_seen == 1)); then
+    verify_local_candidate
 fi
 
 if ((initial_commit_only == 1)); then

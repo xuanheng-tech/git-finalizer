@@ -74,6 +74,7 @@
       "flags": [
         "--mode verify-only",
         "--repo",
+        "--fixture-exceptions",
         "--allow-test-fixture",
         "--allow-large-binary",
         "--reviewed-sensitive-source",
@@ -89,7 +90,10 @@
       "preconditions": [
         "attached_existing_branch",
         "explicit_file_scope",
-        "controller_linkage_required_with_reviewed_sensitive_source"
+        "controller_linkage_required_with_reviewed_sensitive_source",
+        "exact_backend_test_assignment_review_when_requested",
+        "existing_unique_local_origin_identity_with_fixture_review",
+        "raw_clean_filter_and_changed_index_blob_match_with_fixture_review"
       ],
       "result_statuses": [
         "success",
@@ -102,6 +106,7 @@
         "--mode commit-only",
         "--repo",
         "--message",
+        "--fixture-exceptions",
         "--allow-test-fixture",
         "--allow-large-binary",
         "--dry-run",
@@ -118,7 +123,10 @@
       "preconditions": [
         "attached_existing_branch",
         "explicit_file_scope",
-        "controller_linkage_required_with_reviewed_sensitive_source"
+        "controller_linkage_required_with_reviewed_sensitive_source",
+        "exact_backend_test_assignment_review_when_requested",
+        "existing_unique_local_origin_identity_with_fixture_review",
+        "raw_clean_filter_and_changed_index_blob_match_with_fixture_review"
       ],
       "result_statuses": [
         "success",
@@ -478,5 +486,5 @@
   ],
   "schema_version": 1,
   "tool_name": "git-finalizer",
-  "tool_version": "1.6.2"
+  "tool_version": "1.6.3"
 }

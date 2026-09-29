@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.6.2**.
+Current source version: **1.6.3**.
 
-当前版本：`1.6.2`
+当前版本：`1.6.3`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
@@ -39,16 +39,28 @@ terminal and an automation layer can rely on "it stopped, and here is why".
 
 Exact content review is optional: `--fixture-exceptions /absolute/review.json` is accepted by normal
 publication and configured-upstream `--resume-publish`, as well as existing branch/history modes.
-The default scanners remain unchanged. Every review binds the repository root commit, push URL hash,
+Local `verify-only` and `commit-only` also accept exact `credential-assignment-v1` reviews for
+single-level `backend/tests/test_*.py` files; they read the existing local `origin` push URL only to
+bind repository identity and perform no remote operation. These local reviews require unchanged
+raw/clean-filter blob identity and, for an already-staged change, the same index blob. They cannot
+review `CHANGELOG.md`, other test paths, known tokens, private keys or SSH keys.
+The original signature matchers remain in force. Every review binds the repository root commit, push URL hash,
 exact path, raw blob OID, SHA-256 and detector; other detectors still apply. Normal publication requires
-HEAD to match upstream and checks the same raw blob again after staging. Tests remain limited to
-`tests/`. The sole documentation exception is `CHANGELOG.md` with `private-key-header-v1`: only an
+HEAD to match upstream and checks the same raw blob again after staging. Test reviews are limited to
+`tests/` and the backend assignment fixtures described above. The sole documentation exception is `CHANGELOG.md` with `private-key-header-v1`: only an
 already-published, inline-backtick header example may be preserved, and its following historical text
 must remain byte-for-byte unchanged. New headers, closing markers and other document paths are refused.
+
+The exact public Controller retirement capability description is classified from its matching JSON
+schema, independent of filename or whitespace. Only its unique fixed description can be masked;
+other raw and decoded assignments remain checked. Decoded known-token, private-key and SSH-key
+signatures are checked separately from credential-assignment reviews in both worktree and blob
+scans. Fully escaped sensitive keys remain checked, and classifier failure refuses the candidate.
 
 Python prose reviews are limited to already-published literal refusal-reason pairs in module-level
 `*_REASONS` dictionaries. The full raw key/value pair must be preserved, with only whitespace and a
 colon between the literals; other assignments and all other detectors remain mandatory.
+Local verify-only and commit-only modes do not accept these Python prose reviews.
 
 ## Requirements
 

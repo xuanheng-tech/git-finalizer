@@ -122,7 +122,7 @@ $HOME/bin/git-finalize --summary --retire-local-branch <branch> --remote <name> 
   做 unconditional force push 或 semantic-equivalence retirement。remote retirement 仍是
   lease-bound compare-and-delete，且不删除 local branch/worktree；local retirement 只能通过
   独立的 plan-bound 接口删除一个精确 OID 的已释放 local branch ref。
-- 内容签名误报仅使用 reference 定义的 exact `--fixture-exceptions` 复核；默认扫描不变，复核绑定 repository/path/blob/hash/detector，仅额外接受 upstream 已有的 Python 拒绝原因字面量；禁止宽泛文档或源码豁免。
+- 内容签名误报仅使用 reference 定义的 exact `--fixture-exceptions` 复核；默认扫描不变，复核绑定 repository/path/blob/hash/detector，额外仅接受 reference 定义的 backend assignment fixture，以及 upstream 已有的 Python 拒绝原因字面量；禁止宽泛文档或源码豁免。
 - 不得重跑会创建提交的模式或重复制造 commit。
 - tag、Release、Artifact 和 deployment 继续属于独立 Release 流程，不并入任何 Git Finalizer 模式。
 

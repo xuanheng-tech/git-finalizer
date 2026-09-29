@@ -172,7 +172,7 @@ class AssignmentContentTests(unittest.TestCase):
                 self.assert_blocked(document)
 
     def test_other_sensitive_assignments_remain_blocked(self) -> None:
-        for key in ("token", "password", "passwd", "secret", "credentials", "api_key", "client_secret"):
+        for key in ("token", "password", "passwd", "secret", "credential", "credentials", "api_key", "client_secret"):
             with self.subTest(key=key):
                 document = schema()
                 document["extra"] = {key: OPAQUE_VALUE}
@@ -230,6 +230,57 @@ class AssignmentContentTests(unittest.TestCase):
         document["description"] = "github" + "_pat_" + OPAQUE_VALUE
         raw = json.dumps(document).encode().replace(b"github_pat_", b"github\\u005fpat_")
         self.assert_blocked(raw)
+
+    def test_fully_escaped_public_and_sensitive_keys_remain_blocked(self) -> None:
+        document = schema()
+        document["extra"] = {"password": OPAQUE_VALUE}
+        raw = json.dumps(document).encode().replace(b'"token"', b'"to\\u006ben"')
+        raw = raw.replace(b'"password"', b'"pass\\u0077ord"')
+        self.assert_blocked(raw)
+        document = schema()
+        document["branch_retirement_contract"]["execution_authorization"]["token"] = OPAQUE_VALUE
+        raw = json.dumps(document).encode().replace(b'"token"', b'"to\\u006ben"')
+        self.assert_blocked(raw)
+
+    def test_escaped_assignments_and_signatures_are_blocked_in_staged_filter(self) -> None:
+        target = self.base / "filtered.json"
+        script = self.base / "filter.py"
+        script.write_text(
+            "import pathlib, sys\n"
+            "sys.stdin.buffer.read()\n"
+            "sys.stdout.buffer.write(pathlib.Path(sys.argv[1]).read_bytes())\n"
+        )
+        (self.repo / ".gitattributes").write_text("metadata.json filter=synthetic\n")
+        self.git("add", "--", ".gitattributes")
+        self.git("commit", "-qm", "Synthetic filter configuration")
+        self.git("config", "filter.synthetic.clean", shlex.join([sys.executable, str(script), str(target)]))
+        self.git("config", "filter.synthetic.required", "true")
+        variants = []
+        document = schema()
+        document["extra"] = {"password": OPAQUE_VALUE}
+        variants.append(json.dumps(document).encode().replace(b'"token"', b'"to\\u006ben"')
+                        .replace(b'"password"', b'"pass\\u0077ord"'))
+        for value, literal, escaped in (
+            ("github" + "_pat_" + OPAQUE_VALUE, b"github_pat_", b"github\\u005fpat_"),
+            ("-----BEGIN " + "PRIVATE KEY-----", b"PRIVATE", b"PRIV\\u0041TE"),
+            (" ssh-" + "ed25519 " + "A" * 48, b"ssh-", b"ss\\u0068-"),
+        ):
+            document = schema()
+            document["description"] = value
+            variants.append(json.dumps(document).encode().replace(literal, escaped))
+        for raw in variants:
+            with self.subTest(kind=variants.index(raw)):
+                target.write_bytes(raw)
+                self.write(schema())
+                head = self.git("rev-parse", "HEAD")
+                status, summary = self.finalize("commit-only")
+                self.assertEqual(status, 1, summary)
+                self.assertEqual(summary["status"], "failed", summary)
+                self.assertFalse(summary["commit"]["created"])
+                self.assertFalse(summary["push"]["executed"])
+                self.assertEqual(self.git("rev-parse", "HEAD"), head)
+                self.assertIn("staged", summary["reason"])
+                self.git("reset", "-q", "HEAD", "--", self.path)
 
     def test_invalid_duplicate_or_non_utf8_json_remains_strict(self) -> None:
         raw = json.dumps(schema()).encode()

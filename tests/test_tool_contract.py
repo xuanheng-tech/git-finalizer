@@ -146,6 +146,10 @@ class ToolContractTests(unittest.TestCase):
         )
         self.assertEqual(commands["repo_plan"]["operation_class"], "read_only")
         self.assertEqual(commands["repo_ensure"]["operation_class"], "remote_mutation")
+        for name in ("verify_only", "commit_only"):
+            self.assertIn("--fixture-exceptions", commands[name]["flags"])
+            self.assertIn("exact_backend_test_assignment_review_when_requested",
+                          commands[name]["preconditions"])
         self.assertIn(
             "REMOTE_DELETE_UNVERIFIED",
             commands["retire_remote_branch"]["result_statuses"],

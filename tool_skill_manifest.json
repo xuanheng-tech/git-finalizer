@@ -3,7 +3,7 @@
     "owner": "git-finalizer",
     "path": "skills/git-change-delivery/SKILL.md"
   },
-  "canonical_skill_sha256": "f53c5a7ed88199e47f6230d887992dfb66e7e8f2f0ec73213ec7f667101f04d3",
+  "canonical_skill_sha256": "fe588dd4372e422ab247a46ac9d028ce108ca7a87187d8695687c7923e9d4ea9",
   "compatibility_skill": {
     "name": "three-tool-git-workflow",
     "path": "skills/three-tool-git-workflow/SKILL.md",
@@ -46,10 +46,10 @@
       "git-finalize"
     ]
   },
-  "public_cli_contract_sha256": "ea6c1de985e28badf276d77945870a3b6643dbe8705f9e7a7b8c45c22b4319d5",
+  "public_cli_contract_sha256": "42c42d0aeca5fc0477eb5787aca0620cbe49854a7588e23c391a3f7340dafaf8",
   "schema_version": 2,
   "skill_contract_version": 2,
   "tool_commit": "@release",
   "tool_name": "git-finalizer",
-  "tool_version": "1.6.2"
+  "tool_version": "1.6.3"
 }
