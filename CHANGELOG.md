@@ -13,6 +13,9 @@ section is invented for it.
 
 ## Unreleased
 
+- Allow explicit cleanup of owned FIFOs inside pytest subtrees of registered task
+  directories, even when the task prefix is not a fixture name. Keep other FIFO
+  locations and special files blocked before deletion.
 - `tool-skill-sync doctor` accepts a Claude skills directory that links each shared personal Skill
   and warns when Claude-synced skills live inside the shared root, instead of requiring one
   whole-root link.

@@ -17,6 +17,7 @@ from unittest import mock
 
 
 TOOL_PATH = Path(__file__).resolve().parents[1] / "tooling/tool_temp_dir.py"
+OWNED_TEST_PREFIX = "tool-task-unittest-"
 
 
 def load_script(name: str, path: Path) -> Any:
@@ -35,7 +36,7 @@ temp_tool = load_script("tool_temp_dir_test_target", TOOL_PATH)
 def remove_owned_test_path(path: Path) -> None:
     """Best-effort cleanup restricted to this test suite's explicit /tmp names."""
     if path.parent != Path("/tmp") or not (
-        path.name.startswith("tool-task-unittest-")
+        path.name.startswith(OWNED_TEST_PREFIX)
         or path.name.startswith("archive-task-unittest-")
         or path.name.startswith("tool-task-integration-")
         or path.name.startswith("tool-temp-dir-unittest-")
@@ -156,7 +157,7 @@ class TempDirToolTest(unittest.TestCase):
         self.assert_error("outside_tmp", temp_tool.validate_cleanup, str(Path.home()))
 
         unregistered = Path(
-            f"/tmp/tool-task-unittest-unregistered-{secrets.token_hex(8)}"
+            f"/tmp/{OWNED_TEST_PREFIX}unregistered-{secrets.token_hex(8)}"
         )
         unregistered.mkdir(mode=0o700)
         self.addCleanup(remove_owned_test_path, unregistered)
@@ -185,7 +186,7 @@ class TempDirToolTest(unittest.TestCase):
         result, path = self.create("inode")
         record = Path(result["record"])
         original = Path(
-            f"/tmp/tool-task-unittest-inode-original-{secrets.token_hex(8)}"
+            f"/tmp/{OWNED_TEST_PREFIX}inode-original-{secrets.token_hex(8)}"
         )
         path.rename(original)
         self.addCleanup(remove_owned_test_path, original)
@@ -201,7 +202,7 @@ class TempDirToolTest(unittest.TestCase):
         result, path = self.create("target-symlink")
         record = Path(result["record"])
         referent = Path(
-            f"/tmp/tool-task-unittest-symlink-referent-{secrets.token_hex(8)}"
+            f"/tmp/{OWNED_TEST_PREFIX}symlink-referent-{secrets.token_hex(8)}"
         )
         referent.mkdir(mode=0o700)
         self.addCleanup(remove_owned_test_path, referent)
@@ -310,6 +311,33 @@ class TempDirToolTest(unittest.TestCase):
         _result, ordinary = self.create("ordinary")
         self.assert_error("fifo_scope_rejected", temp_tool.cleanup_directory, str(ordinary),
                           allow_owned_fixture_fifo=True)
+
+    def test_pytest_subtree_fifo_in_ordinary_root_requires_exact_scope(self) -> None:
+        _result, path = self.create("ordinary")
+        marker = path / "keep.txt"
+        marker.write_text("keep", encoding="utf-8")
+        pytest_root = path / "pytest-candidate"
+        pytest_root.mkdir()
+        os.mkfifo(pytest_root / "pipe", mode=0o600)
+        outside = path / "ordinary"
+        outside.mkdir()
+        os.mkfifo(outside / "pipe", mode=0o600)
+
+        self.assert_error("unsafe_entry", temp_tool.cleanup_directory, str(path))
+        self.assert_error("fifo_scope_rejected", temp_tool.cleanup_directory, str(path),
+                          allow_owned_fixture_fifo=True)
+        self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
+
+        (outside / "pipe").unlink()
+        preview = temp_tool.dry_run_cleanup(
+            str(path), allow_owned_fixture_fifo=True
+        )
+        self.assertEqual(
+            [entry["path"] for entry in preview["entries"] if entry["kind"] == "FIFO"],
+            ["pytest-candidate/pipe"],
+        )
+        temp_tool.cleanup_directory(str(path), allow_owned_fixture_fifo=True)
+        self.assertFalse(path.exists())
 
     def test_cli_uses_only_neutral_state_in_an_empty_home(self) -> None:
         home = Path(self.temporary_state.name) / "empty-home"

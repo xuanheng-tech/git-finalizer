@@ -19,7 +19,7 @@ from typing import Any
 TMP_ROOT = Path("/tmp")
 STATE_ROOT = Path.home() / ".local/state/tool-temp-dir"
 RECORD_VERSION = 2
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "1.0.1"
 PREFIX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 NAME_RE = re.compile(
     r"^tool-task-(?P<prefix>[A-Za-z0-9][A-Za-z0-9_-]{0,63})-"
@@ -332,8 +332,16 @@ def _allowed_entry_kind(
     relative_path: str,
     *,
     allow_owned_fixture_fifo: bool,
+    fifo_requires_pytest_subtree: bool = False,
 ) -> str:
     kind = _entry_kind(mode)
+    if kind == "FIFO" and allow_owned_fixture_fifo and fifo_requires_pytest_subtree:
+        first, separator, _rest = relative_path.partition("/")
+        if not separator or not first.startswith("pytest-") or first == "pytest-":
+            raise TempDirError(
+                "fifo_scope_rejected",
+                f"FIFO 不在 pytest 临时子目录中：{relative_path}",
+            )
     allowed = {"regular file", "directory", "symlink"}
     if allow_owned_fixture_fifo:
         allowed.add("FIFO")
@@ -359,6 +367,7 @@ def _scan_tree(
     expected_uid: int,
     expected_device: int,
     allow_owned_fixture_fifo: bool,
+    fifo_requires_pytest_subtree: bool = False,
     relative_root: str = "",
     entries: list[CleanupEntry] | None = None,
 ) -> list[CleanupEntry]:
@@ -384,6 +393,7 @@ def _scan_tree(
             metadata.st_mode,
             relative,
             allow_owned_fixture_fifo=allow_owned_fixture_fifo,
+            fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
         )
         entries.append(
             CleanupEntry(
@@ -408,6 +418,7 @@ def _scan_tree(
                 expected_uid=expected_uid,
                 expected_device=expected_device,
                 allow_owned_fixture_fifo=allow_owned_fixture_fifo,
+                fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
                 relative_root=relative,
                 entries=entries,
             )
@@ -495,11 +506,9 @@ def validate_cleanup(
     record = _read_record(record_path)
     _validate_record(record, path=path, metadata=metadata)
     prefix = record["prefix"]
-    if allow_owned_fixture_fifo and not _prefix_allows_fixture_fifo(prefix):
-        raise TempDirError(
-            "fifo_scope_rejected",
-            "仅明确登记为 test/fixture/profiling 的临时根可启用 FIFO cleanup",
-        )
+    fifo_requires_pytest_subtree = (
+        allow_owned_fixture_fifo and not _prefix_allows_fixture_fifo(prefix)
+    )
     mount_points = _read_mount_points()
     _reject_mounts(path, mount_points)
 
@@ -517,7 +526,15 @@ def validate_cleanup(
             expected_uid=metadata.st_uid,
             expected_device=metadata.st_dev,
             allow_owned_fixture_fifo=allow_owned_fixture_fifo,
+            fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
         )
+        if fifo_requires_pytest_subtree and not any(
+            entry.kind == "FIFO" for entry in entries
+        ):
+            raise TempDirError(
+                "fifo_scope_rejected",
+                "普通临时根仅可显式清理 pytest 子目录中的 FIFO",
+            )
     finally:
         os.close(descriptor)
 
@@ -538,6 +555,7 @@ def _delete_contents(
     expected_uid: int,
     expected_device: int,
     allow_owned_fixture_fifo: bool,
+    fifo_requires_pytest_subtree: bool = False,
     relative_root: str = "",
 ) -> None:
     try:
@@ -560,6 +578,7 @@ def _delete_contents(
             metadata.st_mode,
             relative,
             allow_owned_fixture_fifo=allow_owned_fixture_fifo,
+            fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
         )
         try:
             if kind == "directory":
@@ -579,6 +598,7 @@ def _delete_contents(
                         expected_uid=expected_uid,
                         expected_device=expected_device,
                         allow_owned_fixture_fifo=allow_owned_fixture_fifo,
+                        fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
                         relative_root=relative,
                     )
                 finally:
@@ -601,6 +621,10 @@ def cleanup_directory(
         raw_path,
         allow_owned_fixture_fifo=allow_owned_fixture_fifo,
     )
+    fifo_requires_pytest_subtree = (
+        allow_owned_fixture_fifo
+        and not _prefix_allows_fixture_fifo(validation.prefix)
+    )
     _reject_mounts(validation.path, _read_mount_points())
     descriptor = _open_directory(str(validation.path))
     try:
@@ -616,12 +640,14 @@ def cleanup_directory(
             expected_uid=validation.uid,
             expected_device=validation.device,
             allow_owned_fixture_fifo=allow_owned_fixture_fifo,
+            fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
         )
         _delete_contents(
             descriptor,
             expected_uid=validation.uid,
             expected_device=validation.device,
             allow_owned_fixture_fifo=allow_owned_fixture_fifo,
+            fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
         )
     finally:
         os.close(descriptor)
@@ -702,15 +728,22 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     create_parser = subparsers.add_parser("create")
     create_parser.add_argument("task_prefix")
+    fifo_help = "allow owned FIFOs in fixture task roots or pytest-* subtrees"
     cleanup_parser = subparsers.add_parser("cleanup")
     cleanup_parser.add_argument("absolute_path")
-    cleanup_parser.add_argument("--allow-owned-fixture-fifo", action="store_true")
+    cleanup_parser.add_argument(
+        "--allow-owned-fixture-fifo", action="store_true", help=fifo_help
+    )
     dry_run_parser = subparsers.add_parser("dry-run-cleanup")
     dry_run_parser.add_argument("absolute_path")
-    dry_run_parser.add_argument("--allow-owned-fixture-fifo", action="store_true")
+    dry_run_parser.add_argument(
+        "--allow-owned-fixture-fifo", action="store_true", help=fifo_help
+    )
     validate_parser = subparsers.add_parser("validate-cleanup")
     validate_parser.add_argument("absolute_path")
-    validate_parser.add_argument("--allow-owned-fixture-fifo", action="store_true")
+    validate_parser.add_argument(
+        "--allow-owned-fixture-fifo", action="store_true", help=fifo_help
+    )
     return parser
 
 
