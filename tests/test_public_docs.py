@@ -221,7 +221,9 @@ class PublicDocumentationTests(unittest.TestCase):
         ):
             self.assertIn(required, contributing, f"CONTRIBUTING lost {required!r}")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn("Current stable release", readme)
+        self.assertIn("Current source version", readme)
+        self.assertIn("Source delivery and local installation do not imply a GitHub tag", readme)
+        self.assertIn("GF_RELEASE_VERSION", readme)
         self.assertIn("当前版本", readme)
 
 
