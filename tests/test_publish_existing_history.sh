@@ -164,7 +164,7 @@ test_multi_commit_to_empty_remote() {
     declared_version=$(sed -n 's/^readonly VERSION="\([0-9.]*\)"$/\1/p' \
         "$project_root/git-finalize" | head -1)
     [[ -n $declared_version ]] || fail_assertion 'Finalizer version is unreadable'
-/usr/bin/python3 -B - "$output" "$expected_head" "$declared_version" <<'PY'
+python3 -B - "$output" "$expected_head" "$declared_version" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -297,7 +297,7 @@ test_interrupted_push_resumes_exact_history() {
     expect_success "$resume_output" "$finalizer" --summary \
         --resume-existing-history-publish "$expected_head" \
         --remote origin --remote-branch main --repo "$test_repo"
-    /usr/bin/python3 -B - "$resume_output" <<'PY'
+    python3 -B - "$resume_output" <<'PY'
 import json
 from pathlib import Path
 import sys

@@ -147,7 +147,7 @@ summary_field() {
     local path=$1
     local expression=$2
 
-    /usr/bin/python3 -B - "$path" "$expression" <<'PY'
+    python3 -B - "$path" "$expression" <<'PY'
 import json
 import sys
 

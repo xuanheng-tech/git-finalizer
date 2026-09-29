@@ -59,6 +59,8 @@ RELEASED_CANONICAL_SKILL_SHA256 = frozenset(
         # the first publicly released line after it; both tags shipped it
         # unchanged, so a production tree holding it is released lineage.
         "0c82bceb12edde749aa6deddab25acb4ec083aeea92a37970ec64179ef92726b",
+        # Payload independently attested by the next published tag.
+        "943ebf4e56ae344cf88ab3dc579d5e497663b052c8ccbade5c42f1f52b5efa93",
     }
 )
 
@@ -2167,6 +2169,8 @@ def parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--previous-fingerprint")
     doctor_parser.add_argument("--codex-home", type=Path,
                                default=Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")))
+    doctor_parser.add_argument("--claude-home", type=Path,
+                               default=Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")))
     doctor_parser.add_argument("--controller", type=Path)
     doctor_parser.add_argument("--controller-source", type=Path)
     doctor_parser.add_argument("--controller-runtime-root", type=Path,
@@ -2227,6 +2231,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 sources, agents_root=args.agents_root.resolve(), bin_dir=args.bin_dir,
                 hooks_dir=args.hooks_dir.resolve(), repo=args.repo,
                 codex_home=args.codex_home.resolve(), controller=args.controller,
+                claude_home=args.claude_home.resolve(),
                 controller_runtime_root=args.controller_runtime_root,
                 controller_source=args.controller_source or args.source_root / "worktree-controller",
                 previous_fingerprint=args.previous_fingerprint,

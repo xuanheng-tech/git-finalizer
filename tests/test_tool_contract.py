@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from contextlib import redirect_stderr
 import hashlib
+import io
 import json
 from pathlib import Path
 import re
+import runpy
 import subprocess
 import unittest
+from unittest import mock
 
 from tooling import tool_skill_sync as sync
 
@@ -25,10 +29,29 @@ RELEASED_CANONICAL_LINEAGE = (
     # same canonical payload, so both refs attest one digest.
     ("v1.4.0", "0c82bceb12edde749aa6deddab25acb4ec083aeea92a37970ec64179ef92726b"),
     ("v1.5.0", "0c82bceb12edde749aa6deddab25acb4ec083aeea92a37970ec64179ef92726b"),
+    ("v1.6.0", "943ebf4e56ae344cf88ab3dc579d5e497663b052c8ccbade5c42f1f52b5efa93"),
 )
 
 
 class ToolContractTests(unittest.TestCase):
+    def test_retirement_probe_fails_closed_on_malformed_or_timed_out_capabilities(self) -> None:
+        verifier = runpy.run_path(str(ROOT / "git-finalize-retirement-plan.py"))
+        cases = (
+            subprocess.CompletedProcess([], 0, json.dumps({"decision": []}), ""),
+            subprocess.CompletedProcess([], 0, json.dumps({"decision": {"branch_retirement_version": True}}), ""),
+            subprocess.TimeoutExpired("synthetic-controller", 30),
+        )
+        for result in cases:
+            with self.subTest(result=type(result).__name__):
+                diagnostics = io.StringIO()
+                outcome = {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
+                with mock.patch("shutil.which", return_value="synthetic-controller"), \
+                     mock.patch("subprocess.run", **outcome), redirect_stderr(diagnostics):
+                    with self.assertRaises(SystemExit) as blocked:
+                        verifier["attest_controller_capability"](ROOT, 1)
+                self.assertEqual(blocked.exception.code, 1)
+                self.assertIn("retirement plan validation blocked", diagnostics.getvalue())
+
     def test_finalizer_contract_manifest_and_source_agree(self) -> None:
         contract_path = ROOT / "tool_cli_contract.json"
         manifest_path = ROOT / "tool_skill_manifest.json"

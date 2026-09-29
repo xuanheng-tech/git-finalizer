@@ -317,7 +317,7 @@ push delete；成功结果必须是 `RETIREMENT_PREFLIGHT_PASSED`。两类 dry-r
 
 正常 lifecycle 先由 Controller 在 release 后生成计划。`CHERRY_EQUIVALENT`、`MERGE_ONLY`、
 `UNIQUE`、`MIXED` 和历史未登记 refs 只报告，不生成可执行计划。local 与 remote 是两个独立、
-可重试的 operation；每个 `--summary` 交回 Controller 分别登记，不能假设原子完成。
+可重试的 operation；Finalizer 使用公开协议分别完成 Controller 登记，不能假设原子完成。
 
 ```bash
 $HOME/bin/git-finalize \
@@ -330,31 +330,38 @@ $HOME/bin/git-finalize \
   --repo <absolute-repo> --dry-run
 ```
 
-local retirement 必须绑定 eligible Controller plan。Finalizer 持有现有 Controller repository
-lock，复核 allocation/intent/runtime authority digest、live integration OID、ancestry、checkout、
-upstream 和 exact local OID；实际删除只用 `git update-ref -d <ref> <expected-oid>`，然后验证目标
-缺失、其他 local refs、remote refs、HEAD/index/worktree/tags 均未漂移。
+local retirement 必须绑定 eligible Controller plan。Controller 的公开 verify/authorize 接口在
+repository lock 下核验 authority 并签发一次性 CAS 授权；Finalizer 复核 live integration OID、
+ancestry、checkout、upstream 和 exact local OID，删除只用
+`git update-ref -d <ref> <expected-oid>`，然后通过 complete 交回 Controller 核验、保存凭据。
+Finalizer 独立确认目标缺失、其他 local refs、remote refs、HEAD/index/worktree/tags 均未漂移。
 
 正式 handoff 使用 Worktree Controller 的公开 retirement 动词：`worktree-controller
 branch-retirement-plan --repo <path> (--branch <b>|--allocation-id <id>) --remote <r>
 --integrated-into <t> --json` 产出持久化 plan 与 `plan_id`（`--dry-run` 严格只读，仅用于
-资格预检）；Finalizer 成功后，把 `--summary` JSON 原样写入文件并以
-`worktree-controller branch-retirement-record --repo <path> --plan-id <id> --operation
-{local|remote} --summary-file <file>` 登记；`branch-retirement-status --plan-id <id>` 是唯一
-只读核对面。plan 只授予创建它的那一个 operation：同一 plan 的 local 与 remote 须分别规划；
-Finalizer 在 validation 时也会拒绝该 operation 已有消费 receipt 的 plan。
+资格预检）。原有 plan-only CLI 输入保持不变，Finalizer 内部调用
+`branch-retirement-verify`、`branch-retirement-authorize` 与 `branch-retirement-complete`，完成后
+不需要调用方再登记。`branch-retirement-status` 与 `branch-retirement-executions --action list`
+提供公开核对入口；能力版本以 installed `capabilities --json` 为准。
+完成后目标仍不存在时，重复调用返回 `ALREADY_ABSENT_VERIFIED`，不签发新 CAS；已有 receipt
+但 ref 再现时拒绝。中断恢复绑定 plan/operation 的同一 request：旧 executor 仍存活时阻断，
+已结束且 ref 仍为 expected OID 时通过公开 abandon 重新授权；ref 已缺失时只完成原授权。
+任何 complete 拒绝都报告失败，不因 Git ref 已删除而改报成功。未知执行结果先查询 live ref，
+不盲目重放。旧消费者已删除且没有未完成授权的 ref，通过公开 `branch-retirement-record`
+登记 `ATTEST_ABSENT` 观察，凭据保持 `CONTROLLER_OBSERVED` 来源。
 
 `--integrated-into` 接受与 plan 目标同一身份的任一跳法（裸分支名、`<remote>/<branch>` 或
 `refs/heads/...`）；Controller plan 原样保存操作者输入的字面值，登记与核对以解析后的 ref
 为准。plan 的 authority digest 只覆盖 Controller authority 文件而不含 refs：plan 创建后任何
-相关的 authority 写入（新 intent、lease、receipt 等）都会使 Finalizer 以 state-drift fail
+相关的 authority 写入（新 intent、lease、receipt 等）都会使 Controller 以 state-drift fail
 closed，而 branch 自身移动则由 expected-OID CAS 与最后时刻 live 复核拦截；remote 上 integration
 分支的新 push 同样导致拒绝。因此一次 plan 必须在安静的短窗口内创建并消费，过期就重新规划。
 Finalizer 在 validation 前还会通过公开的 `capabilities --json` 证明 Controller 的
-branch-retirement 能力版本与 plan schema 一致（不识别或缺配即 fail closed）。仓内仍残留 legacy
-`codex-worktree` namespace 时，plan 校验与 lock 预检都会给出精确 blocker 并拒绝读取旧状态；
-namespace 激活属 Controller 治理职责，不由 Finalizer 代办。plan 状态摘要的 authority digest
-重算是隔离的 legacy compatibility 独立核验路径，不承载新增 governance 逻辑。
+`branch_retirement_version`、`branch_retirement_verify_version`、`branch_retirement_execution_version`
+均为 1；缺失、不可读、不匹配或 Controller 未安装时 fail closed，不回退到私有文件核验。
+仓内仅有 legacy `codex-worktree` namespace 时保留精确迁移 blocker；namespace 激活属
+Controller 治理职责，不由 Finalizer 代办。authority digest 始终作为 producer 的不透明结果，
+Finalizer 不读取 authority JSON、不重算 recipe，也不在外部持锁后嵌套调用 Controller。
 
 ```bash
 $HOME/bin/git-finalize \

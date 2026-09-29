@@ -10,6 +10,7 @@ import subprocess
 import tomllib
 from typing import Any
 
+# GF-INTEGRATION-ADAPTER: workflow-deployment-health (single site; read-only installed runtime probes)
 try:
     from . import tool_skill_sync as sync
 except ImportError:
@@ -164,7 +165,9 @@ def chosen_instruction(directory: Path, fallbacks: list[str]) -> Path | None:
     return None
 
 
-def instruction_state(repo: Path | None, agents_root: Path, codex_home: Path) -> dict[str, Any]:
+def instruction_state(
+    repo: Path | None, agents_root: Path, codex_home: Path, claude_home: Path | None = None,
+) -> dict[str, Any]:
     result: dict[str, Any] = {
         "files": [], "warnings": [], "errors": [], "pending_checkouts": [],
         "session_reload": "reread changed files; the checker cannot verify model context",
@@ -198,8 +201,9 @@ def instruction_state(repo: Path | None, agents_root: Path, codex_home: Path) ->
             checkouts = [Path(line[9:]) for line in raw.splitlines() if line.startswith("worktree ")]
             if checkouts:
                 result["canonical"] = str(checkouts[0])
-            instruction_names = ["AGENTS.override.md", "AGENTS.md", *fallbacks,
-                                 "CLAUDE.md", "docs/engineering/development-workflow.md"]
+            reference_names = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md",
+                               "docs/engineering/development-workflow.md")
+            instruction_names = ["AGENTS.override.md", "AGENTS.md", *fallbacks, *reference_names]
             for checkout in checkouts[:64]:
                 if not checkout.is_dir():
                     continue
@@ -213,8 +217,7 @@ def instruction_state(repo: Path | None, agents_root: Path, codex_home: Path) ->
                 result["warnings"].append("uncommitted instruction changes are not integrated main")
             if checkouts and top != checkouts[0]:
                 # Live governance must invalidate the fingerprint even when the branch copy stays old.
-                canonical_paths = [checkouts[0] / name for name in
-                                   ("CLAUDE.md", "docs/engineering/development-workflow.md")]
+                canonical_paths = [checkouts[0] / name for name in reference_names]
                 canonical_agent = chosen_instruction(checkouts[0], fallbacks)
                 if canonical_agent is not None:
                     canonical_paths.insert(0, canonical_agent)
@@ -224,7 +227,7 @@ def instruction_state(repo: Path | None, agents_root: Path, codex_home: Path) ->
                 local_agent = chosen_instruction(top, fallbacks)
                 if canonical_agent and local_agent and sync.sha256_file(canonical_agent) != sync.sha256_file(local_agent):
                     result["warnings"].append("checkout AGENTS differs from canonical; review live governance without overwriting branch rules")
-            for name in ("CLAUDE.md", "docs/engineering/development-workflow.md"):
+            for name in reference_names:
                 candidate = top / name
                 if candidate.is_file():
                     result.setdefault("references", []).append(file_identity(candidate))
@@ -236,10 +239,13 @@ def instruction_state(repo: Path | None, agents_root: Path, codex_home: Path) ->
             file_identity(path) for path in sorted((agents_root / "skills").glob("*/SKILL.md"))
             if path.is_file()
         ]
-        claude_skills = agents_root.parent / ".claude/skills"
-        if claude_skills.exists() and claude_skills.resolve() != (agents_root / "skills").resolve():
+        claude_home = claude_home if claude_home is not None else codex_home.parent / ".claude"
+        claude_skills = claude_home / "skills"
+        if claude_skills.is_symlink() and not claude_skills.exists():
+            result["warnings"].append("Claude personal skills link is broken")
+        elif claude_skills.exists() and claude_skills.resolve() != (agents_root / "skills").resolve():
             result["warnings"].append("Claude and shared personal skills have different real paths")
-        bridge = agents_root.parent / ".claude/CLAUDE.md"
+        bridge = claude_home / "CLAUDE.md"
         if bridge.is_file():
             result.setdefault("references", []).append(file_identity(bridge))
     except (OSError, ValueError, TypeError, sync.SyncError, subprocess.SubprocessError) as exc:
@@ -252,7 +258,7 @@ def doctor(
     sources: sync.Sources, *, agents_root: Path, bin_dir: Path | None,
     hooks_dir: Path, repo: Path | None, codex_home: Path,
     controller: Path | None, controller_runtime_root: Path, controller_source: Path,
-    previous_fingerprint: str | None = None,
+    previous_fingerprint: str | None = None, claude_home: Path | None = None,
 ) -> dict[str, Any]:
     results = []
     for name in sources.names():
@@ -264,7 +270,7 @@ def doctor(
     requirements = (runtime_requirements.get("worktree-controller")
                     if isinstance(runtime_requirements, dict) else None)
     results.append(controller_state(requirements, controller, controller_runtime_root, controller_source, agents_root))
-    instructions = instruction_state(repo, agents_root, codex_home)
+    instructions = instruction_state(repo, agents_root, codex_home, claude_home)
     compatibility_sha = fingerprint(sources.compatibility)
     identity = {
         "compatibility_sha256": compatibility_sha,

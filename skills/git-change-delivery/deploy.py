@@ -54,6 +54,8 @@ RELEASED_CANONICAL_SKILL_SHA256 = frozenset(
         # 1.4.0 and 1.5.0 shipped this canonical payload unchanged (tag v1.4.0,
         # tag v1.5.0), so a live tree holding it is released lineage.
         "0c82bceb12edde749aa6deddab25acb4ec083aeea92a37970ec64179ef92726b",
+        # 1.6.0 released canonical payload (tag v1.6.0).
+        "943ebf4e56ae344cf88ab3dc579d5e497663b052c8ccbade5c42f1f52b5efa93",
     }
 )
 

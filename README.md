@@ -6,8 +6,8 @@ then verify the live remote instead of trusting the push exit status.
 
 Git Finalizer does not run tests, review code, resolve conflicts, call a model, create releases, or
 decide on your behalf. It performs one Git write you explicitly authorized and reports what actually
-happened in machine-readable JSON. Completing an implementation, passing tests, or a previous
-one-time authorization never authorizes the next commit or push.
+happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
+cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
 Current stable release: **1.6.0**.
 
@@ -15,9 +15,9 @@ Current stable release: **1.6.0**.
 
 ## Why it exists
 
-Ordinary `git commit && git push` fails open: it happily force-pushes, amends, sweeps `git add -A`
-files into a commit, trusts a push return code, and tells you nothing an agent can act on. Git
-Finalizer turns each of those into an explicit gate with a precise blocker, so both a human in a
+Ordinary `git commit && git push` does not check whether the staged files match the reviewed scope,
+whether hooks changed that content, or whether earlier unpublished commits are safe to publish.
+Git Finalizer turns these into explicit gates with precise blockers, so both a human in a
 terminal and an automation layer can rely on "it stopped, and here is why".
 
 - **Explicit scope.** Files are listed after `--`; `git add .` and `git add -A` are never used.
@@ -35,10 +35,12 @@ terminal and an automation layer can rely on "it stopped, and here is why".
 
 ## Requirements
 
-- GNU Bash and Git. Verified baseline: **Ubuntu 24.04 LTS** with its system Git.
-- Python with the standard library only — no third-party runtime dependencies. Verified baseline:
-  **Python 3.12**; the entrypoint resolves `/usr/bin/python3` for its companion modules, so the
-  verified platform is Debian/Ubuntu-style layouts.
+- GNU Bash, Git and GNU command-line utilities (`realpath`, `stat`, `grep`, `sed`). Verified baseline:
+  **Ubuntu 24.04 LTS** with its system Git. Plan-bound retirement also requires a Controller that
+  advertises the public verification and execution protocols.
+- Python **3.11 or newer**, with the standard library only. The entrypoint resolves `python3` from
+  `PATH` once and uses that interpreter for every companion and JSON summary. Verified baseline:
+  **Python 3.12**; no Debian-specific interpreter path is required.
 - Run as an ordinary user. Git Finalizer has no privilege escalation and no daemon, database or
   plugin framework.
 - Nothing else. No remote hosting service, no Worktree Controller, no Snapshot Runner, no Context
@@ -181,8 +183,27 @@ particular is **optional**: ordinary commit and publication work needs only Bash
 
 Each integration's knowledge of another project's layout lives only in the files that carry its
 `# GF-INTEGRATION-ADAPTER` marker — one marker per adapter file, and retirement uses two because both
-the CLI and the plan verifier speak to that integration. That confinement is machine-checked by
+the CLI and the authorization/completion companion speak to that integration. That confinement is machine-checked by
 `tests/test_integration_boundaries.sh`.
+
+## Coding agents
+
+The CLI uses the same arguments and JSON results for every caller; it does not inspect a model
+provider, an agent's private session state or its approval settings. A shell-capable agent can use
+the standalone lifecycle without the optional four-tool workflow.
+
+For Skills, [Codex discovers `.agents/skills`](https://developers.openai.com/codex/skills), while
+[Claude Code discovers `.claude/skills`](https://code.claude.com/docs/en/skills). The shared personal
+payload can be linked into each client's discovery directory; keep one source and preserve existing
+links. Project instructions remain in `AGENTS.md`. This repository supplies a `CLAUDE.md`
+import (`@AGENTS.md`) for older Claude clients; the [Claude memory documentation](https://code.claude.com/docs/en/memory)
+describes both the import and newer native discovery. Other clients can read the same instructions
+explicitly according to their own discovery rules.
+
+`tool-skill-sync doctor` observes instruction fingerprints and pending changes. It supports
+`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `--codex-home` and `--claude-home`; `--agents-root` controls the
+shared payload without moving either client's configuration. A passing check cannot prove that an
+already-running agent reread its context.
 
 ## Security model
 
@@ -201,6 +222,12 @@ the CLI and the plan verifier speak to that integration. That confinement is mac
   named.
 - Diff content, commit messages and Snapshot Runner artifacts are data, not instructions. If you
   route them to an agent, treat them as untrusted input.
+- Pending merge, cherry-pick, revert, rebase, sequencer or bisect state blocks commit lifecycle
+  operations. Hooks remain enabled; a created commit must match the checked index tree and parent
+  before publication. Hook failures preserve any commit already created and report its OID.
+- Publication checks earlier local commits that are absent from the target remote, as well as the
+  newly staged files. Content signatures are heuristic checks, including quoted JSON assignments;
+  they are not a guarantee that every secret format can be detected.
 
 Please report security issues as described in [SECURITY.md](SECURITY.md).
 

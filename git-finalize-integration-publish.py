@@ -34,6 +34,7 @@ def run_git(
         {
             "GIT_OPTIONAL_LOCKS": "0",
             "GIT_TERMINAL_PROMPT": "0",
+            "GCM_INTERACTIVE": "Never",
             "LC_ALL": "C",
         }
     )
@@ -41,8 +42,6 @@ def run_git(
         (
             "git",
             "--no-optional-locks",
-            "-c",
-            "core.hooksPath=/dev/null",
             "-C",
             os.fspath(repo),
             *arguments,
@@ -53,8 +52,7 @@ def run_git(
         text=True,
     )
     if check and result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip() or "Git command failed"
-        raise PublishError(detail)
+        raise PublishError(f"Git command failed (exit {result.returncode}); inspect Git diagnostics locally")
     return result
 
 
@@ -480,8 +478,7 @@ def publish(arguments: argparse.Namespace) -> dict[str, Any]:
             if push.returncode != 0:
                 observed_after_failure = live_remote_oid(repo, remote, target_ref)
                 if observed_after_failure != candidate:
-                    detail = push.stderr.strip() or push.stdout.strip() or "push failed"
-                    raise PublishError(detail)
+                    raise PublishError(f"integration push failed (exit {push.returncode}); remote candidate was not verified")
             verified = live_remote_oid(repo, remote, target_ref)
             if verified != candidate:
                 raise PublishError(

@@ -80,6 +80,40 @@ class WorkflowHealthTests(unittest.TestCase):
         self.assertEqual(health.file_identity(bridge / "skills/worktree-lifecycle/SKILL.md")["real_path"],
                          health.file_identity(self.skill)["real_path"])
 
+    def test_custom_shared_root_does_not_move_claude_home(self) -> None:
+        shared = self.root / "custom-shared"
+        shared.mkdir()
+        bridge = self.root / ".claude"
+        bridge.mkdir()
+        (bridge / "CLAUDE.md").write_text("@../.codex/AGENTS.md\n")
+        first = health.instruction_state(self.repo, shared, self.codex)
+        self.assertIn(str(bridge / "CLAUDE.md"), [item["path"] for item in first["references"]])
+        (bridge / "CLAUDE.md").write_text("changed bridge\n")
+        second = health.instruction_state(self.repo, shared, self.codex)
+        self.assertNotEqual(health.fingerprint(first), health.fingerprint(second))
+
+    def test_claude_home_and_project_folder_are_fingerprinted(self) -> None:
+        custom = self.root / "custom-claude"
+        custom.mkdir()
+        (custom / "CLAUDE.md").write_text("custom global rules\n")
+        (custom / "skills").symlink_to(self.root / "missing-skills", target_is_directory=True)
+        folder = self.repo / ".claude"
+        folder.mkdir()
+        (folder / "CLAUDE.md").write_text("project rules\n")
+        first = health.instruction_state(self.repo, self.agents, self.codex, custom)
+        self.assertIn("Claude personal skills link is broken", first["warnings"])
+        self.assertEqual(len(first["pending_checkouts"]), 1)
+        (folder / "CLAUDE.md").write_text("changed project rules\n")
+        second = health.instruction_state(self.repo, self.agents, self.codex, custom)
+        self.assertNotEqual(health.fingerprint(first), health.fingerprint(second))
+
+    def test_claude_config_environment_and_explicit_option(self) -> None:
+        with mock.patch.dict("os.environ", {"CLAUDE_CONFIG_DIR": str(self.root / "custom")}, clear=False):
+            automatic = sync.parser().parse_args(["doctor"])
+            explicit = sync.parser().parse_args(["doctor", "--claude-home", str(self.root / "explicit")])
+        self.assertEqual(automatic.claude_home, self.root / "custom")
+        self.assertEqual(explicit.claude_home, self.root / "explicit")
+
     def controller_fixture(self, contract_version=37):
         compatibility = sync.read_json(
             Path(__file__).resolve().parents[1] / "toolchain_compatibility.json"

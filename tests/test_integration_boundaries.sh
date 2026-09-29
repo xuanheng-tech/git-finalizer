@@ -71,18 +71,19 @@ production_surface() {
 
 adapter_files() {
     case "$1" in
-        legacy-namespace) printf 'git-finalize git-finalize-retirement-plan.py ' ;;
+        legacy-namespace) printf 'git-finalize ' ;;
         controller-state-root)
-            printf 'git-finalize git-finalize-integration-publish.py git-finalize-retirement-plan.py ' ;;
+            printf 'git-finalize git-finalize-integration-publish.py ' ;;
         controller-lock)
-            printf 'git-finalize git-finalize-integration-publish.py git-finalize-retirement-plan.py ' ;;
+            printf 'git-finalize-integration-publish.py ' ;;
         controller-lease)
-            printf 'git-finalize-integration-publish.py git-finalize-retirement-plan.py ' ;;
+            printf 'git-finalize-integration-publish.py ' ;;
         snapshot-state-root) printf 'git-finalize-snapshot-verify.py ' ;;
         gitea-api) printf 'git-finalize-repo-bootstrap.py ' ;;
-        retirement-plan-files) printf 'git-finalize-retirement-plan.py ' ;;
-        controller-policy-term) printf 'git-finalize-retirement-plan.py ' ;;
-        controller-executable-probe) printf 'git-finalize-retirement-plan.py ' ;;
+        retirement-plan-files) printf '' ;;
+        controller-policy-term) printf '' ;;
+        controller-executable-probe) printf 'git-finalize-retirement-plan.py tooling/workflow_health.py ' ;;
+        controller-runtime-contract) printf 'tooling/workflow_health.py ' ;;
         *) printf 'unknown ledger: %s\n' "$1" >&2; return 1 ;;
     esac
 }
@@ -113,7 +114,8 @@ test_adapter_markers_are_single_sites() {
         'git-finalize-retirement-plan.py:worktree-controller-retirement' \
         'git-finalize-integration-publish.py:worktree-controller-integration-publication' \
         'git-finalize-snapshot-verify.py:snapshot-runner-evidence' \
-        'git-finalize-repo-bootstrap.py:gitea-repository-bootstrap'; do
+        'git-finalize-repo-bootstrap.py:gitea-repository-bootstrap' \
+        'tooling/workflow_health.py:workflow-deployment-health'; do
         file=${entry%%:*}
         marker=${entry#*:}
         # Counted by match, not by line, so two markers on one line cannot hide.
@@ -145,6 +147,7 @@ test_layout_literals_do_not_spread() {
         'branch-retirement-plans' 'branch-retirement-receipts'
     assert_ledger controller-policy-term 'worktree-policy.toml'
     assert_ledger controller-executable-probe 'which("worktree-controller")'
+    assert_ledger controller-runtime-contract 'site-packages/worktree_controller/tool_cli_contract.json'
     assert_ledger snapshot-state-root \
         'snapshot-runner/snapshots' '"snapshot-runner" / "snapshots"'
     assert_ledger gitea-api '/api/v1'
@@ -163,11 +166,11 @@ test_documented_matrix_matches_code() {
         git -C "$project_root" grep -q -F -- "$needle" -- "$needle_file" ||
             fail_assertion "documented blocker missing from ${needle_file}: $needle"
     done <<'NEEDLES'
-capabilities probe failed	git-finalize-retirement-plan.py
-does not match plan schema	git-finalize-retirement-plan.py
+refused or failed	git-finalize-retirement-plan.py
+required public retirement protocols	git-finalize-retirement-plan.py
 already records a consumed receipt	git-finalize-retirement-plan.py
-repo.lock 缺失或不安全	git-finalize
-legacy codex-worktree namespace	git-finalize-retirement-plan.py
+Worktree Controller is required	git-finalize-retirement-plan.py
+legacy codex-worktree namespace	git-finalize
 source review 要求完整 Controller linkage	git-finalize
 snapshot evidence rejected	git-finalize-snapshot-verify.py
 BLOCK_INVALID_CONFIG	git-finalize-repo-bootstrap.py
@@ -255,14 +258,14 @@ test_companions_emit_their_own_receipts() {
     git -C "$repo" commit --quiet -m seed
 
     rc=0
-    HOME=$case_dir/fakehome /usr/bin/python3 -B \
+    HOME=$case_dir/fakehome python3 -B \
         "$project_root/git-finalize-repo-bootstrap.py" --repo-plan \
         --repo "$repo" --gitea-url http://127.0.0.1:9 --owner boundary \
         --repo-name boundary-probe --visibility private --timeout 3 --summary \
         >"$case_dir/bootstrap.json" 2>&1 || rc=$?
     [[ $rc -ge 2 && $rc -le 3 ]] ||
         fail_assertion "bootstrap receipt exit escaped its documented range: $rc"
-    /usr/bin/python3 -B -c '
+    python3 -B -c '
 import json, sys
 document = json.load(open(sys.argv[1]))
 assert "decision" in document, sorted(document)
@@ -272,13 +275,13 @@ assert document["status"] in {"blocked", "failed"}, document["status"]
         fail_assertion 'bootstrap companion drifted away from its own receipt shape'
 
     rc=0
-    /usr/bin/python3 -B "$project_root/git-finalize-integration-publish.py" \
+    python3 -B "$project_root/git-finalize-integration-publish.py" \
         --publish-integration-candidate "$(git -C "$repo" rev-parse HEAD)" \
         --repo "$repo" --lease-id 00000000-0000-0000-0000-000000000000 \
         --run-id boundary-probe --summary \
         >"$case_dir/candidate.json" 2>&1 || rc=$?
     [[ $rc -ge 1 ]] || fail_assertion 'lease-less candidate publication should not succeed'
-    /usr/bin/python3 -B -c '
+    python3 -B -c '
 import json, sys
 document = json.load(open(sys.argv[1]))
 assert sorted(document) == sorted(
@@ -302,7 +305,7 @@ test_summary_machine_contract_is_frozen() {
         sed -n '1,40p' "$case_dir/ok.json" "$case_dir/ok.err" >&2
         fail_assertion 'healthy verify-only run failed'
     }
-    /usr/bin/python3 -B -c '
+    python3 -B -c '
 import json, sys
 document = json.load(open(sys.argv[1]))
 assert document["status"] == "success", document["status"]
@@ -321,7 +324,7 @@ print(",".join(sorted(document)))
     "$finalizer" --summary --mode verify-only --reviewed-sensitive-source \
         "$case_dir/missing-review.json" --repo "$repo" -- f.txt \
         >"$case_dir/blocked.json" 2>&1 || rc=$?
-    /usr/bin/python3 -B -c '
+    python3 -B -c '
 import json, sys
 document = json.load(open(sys.argv[1]))
 assert document["status"] == "blocked", document["status"]
@@ -339,7 +342,7 @@ assert set(document) == set(json.load(open(sys.argv[2]))), "error path changed t
         sed -n '1,40p' "$case_dir/committed.json" >&2
         fail_assertion 'commit-only contract probe failed'
     }
-    /usr/bin/python3 -B -c '
+    python3 -B -c '
 import json, sys
 document = json.load(open(sys.argv[1]))
 assert document["status"] == "success", document["status"]
@@ -380,7 +383,7 @@ test_snapshot_adapter_is_state_relocatable() {
 
     # A materialized artifact directory is reached only under the redirected
     # state root, proving the adapter never falls back to production state.
-    if HOME=$scratch_home XDG_STATE_HOME=$case_dir/state-present /usr/bin/python3 -B \
+    if HOME=$scratch_home XDG_STATE_HOME=$case_dir/state-present python3 -B \
         "$project_root/git-finalize-snapshot-verify.py" \
         "$snapshot_id" "$repo" head f >"$case_dir/present.log" 2>&1; then
         fail_assertion 'snapshot adapter accepted an empty artifact directory'
@@ -389,7 +392,7 @@ test_snapshot_adapter_is_state_relocatable() {
         sed -n '1,20p' "$case_dir/present.log" >&2
         fail_assertion 'snapshot adapter did not resolve the redirected state root'
     }
-    if HOME=$scratch_home XDG_STATE_HOME=$case_dir/state-absent /usr/bin/python3 -B \
+    if HOME=$scratch_home XDG_STATE_HOME=$case_dir/state-absent python3 -B \
         "$project_root/git-finalize-snapshot-verify.py" \
         "$snapshot_id" "$repo" head f >"$case_dir/absent.log" 2>&1; then
         fail_assertion 'snapshot adapter accepted a missing artifact directory'
@@ -400,7 +403,7 @@ test_snapshot_adapter_is_state_relocatable() {
     }
     # Documented fallback: with no XDG_STATE_HOME the adapter uses HOME, and a
     # private empty HOME must therefore fail as an unavailable state home.
-    if env -u XDG_STATE_HOME HOME="$scratch_home" /usr/bin/python3 -B \
+    if env -u XDG_STATE_HOME HOME="$scratch_home" python3 -B \
         "$project_root/git-finalize-snapshot-verify.py" \
         "$snapshot_id" "$repo" head f >"$case_dir/fallback.log" 2>&1; then
         fail_assertion 'snapshot adapter accepted an empty HOME fallback state'

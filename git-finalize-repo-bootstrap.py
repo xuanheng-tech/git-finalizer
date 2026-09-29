@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import os
 import re
 import subprocess
@@ -108,7 +109,13 @@ def _repository_root(path: Path) -> Path:
 
 
 def _normalize_base_url(value: str) -> tuple[str, str]:
-    parsed = urllib.parse.urlsplit(value)
+    try:
+        if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value):
+            raise ValueError("URL contains whitespace or control characters")
+        parsed = urllib.parse.urlsplit(value)
+        parsed.port  # Validate a supplied port before constructing any request.
+    except ValueError as exc:
+        raise BootstrapError("BLOCK_INVALID_CONFIG", "Gitea URL is malformed") from exc
     if (
         parsed.scheme not in {"http", "https"}
         or not parsed.hostname
@@ -132,7 +139,7 @@ def _target(arguments: argparse.Namespace) -> Target:
         character.isspace() for character in arguments.remote
     ):
         raise BootstrapError("BLOCK_INVALID_CONFIG", "remote name is invalid")
-    if arguments.timeout <= 0 or arguments.timeout > 60:
+    if not math.isfinite(arguments.timeout) or arguments.timeout <= 0 or arguments.timeout > 60:
         raise BootstrapError("BLOCK_INVALID_CONFIG", "timeout must be within (0, 60] seconds")
     base_url, api_url = _normalize_base_url(arguments.gitea_url)
     owner = urllib.parse.quote(arguments.owner, safe="")
@@ -249,8 +256,9 @@ def _remote_state(target: Target) -> tuple[str, str | None]:
         raise BootstrapError("BLOCK_INVALID_CONFIG", "cannot inspect remote push URL")
     push_urls = [line for line in push.stdout.splitlines() if line]
     if fetch_urls != [target.expected_remote_url] or push_urls != [target.expected_remote_url]:
-        observed = fetch_urls[0] if len(fetch_urls) == 1 else None
-        return "conflicting", observed
+        # Untrusted configured URLs can contain credentials. Only report the
+        # credential-free expected target, never the conflicting observed URL.
+        return "conflicting", None
     return "correct", target.expected_remote_url
 
 
@@ -281,16 +289,22 @@ def _owner_kind(client: GiteaClient, target: Target) -> str:
     if status == 404:
         raise BootstrapError("BLOCK_INVALID_OWNER", "owner is neither the current user nor an organization")
     _object(org_raw, "organization")
-    _, organizations_raw = client.request("GET", "/user/orgs")
-    organizations = _list(organizations_raw, "organization membership")
-    memberships = {
-        str(item.get("username") or item.get("name") or "").casefold()
-        for item in organizations
-        if isinstance(item, dict)
-    }
-    if target.owner.casefold() not in memberships:
-        raise BootstrapError("BLOCK_PERMISSION", "credential lacks organization repository capability")
-    return "organization"
+    seen_pages: set[tuple[str, ...]] = set()
+    for page in range(1, 101):
+        _, organizations_raw = client.request("GET", f"/user/orgs?page={page}&limit=50")
+        organizations = _list(organizations_raw, "organization membership")
+        if not organizations:
+            raise BootstrapError("BLOCK_PERMISSION", "credential lacks organization repository capability")
+        memberships = tuple(
+            str(item.get("username") or item.get("name") or "").casefold()
+            for item in organizations if isinstance(item, dict)
+        )
+        if target.owner.casefold() in memberships:
+            return "organization"
+        if memberships in seen_pages:
+            raise BootstrapError("UNKNOWN", "Gitea organization pagination did not advance")
+        seen_pages.add(memberships)
+    raise BootstrapError("UNKNOWN", "Gitea organization pagination exceeded the bounded lookup")
 
 
 def _repository_matches(repository: dict[str, Any], target: Target) -> bool:

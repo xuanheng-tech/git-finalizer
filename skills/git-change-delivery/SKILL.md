@@ -116,8 +116,9 @@ $HOME/bin/git-finalize --summary --retire-local-branch <branch> --remote <name> 
   receipt，不重复 mutation。Finalizer 不更新 Controller lifecycle，receipt 必须交回上层完成
   lease-complete 和 guarded release。
 - branch retirement 与 publish mode 分离。Controller plan-bound local retirement 和可选
-  plan-bound remote retirement 都在现有 repository lock 下复核 authority state；二者分别使用
-  exact OID CAS/lease 并独立 post-verify。只有 direct ancestry 可执行，绝不删除 worktree，也不
+  plan-bound remote retirement 使用公开 verify/authorize/complete 协议：Controller 在 repository
+  lock 下核验 authority 并签发一次性授权，Finalizer 执行 exact OID CAS/lease，随后由 Controller
+  核验并保存完成凭据。中断恢复绑定同一 request，不重复删除。只有 direct ancestry 可执行，绝不删除 worktree，也不
   做 unconditional force push 或 semantic-equivalence retirement。remote retirement 仍是
   lease-bound compare-and-delete，且不删除 local branch/worktree；local retirement 只能通过
   独立的 plan-bound 接口删除一个精确 OID 的已释放 local branch ref。

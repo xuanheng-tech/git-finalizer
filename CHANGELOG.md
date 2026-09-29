@@ -13,9 +13,23 @@ section is invented for it.
 
 ## Unreleased
 
-No pending unreleased changes are recorded. The prepared `1.6.0` batch is documented in its own
-section below, because release notes are extracted per version tag and a release must not depend on
-the Unreleased heading.
+- Replace the mirrored Controller retirement digest with public verification, single-use CAS
+  authorization and completion. Recover interrupted requests without duplicate deletion, preserve
+  completion failures, and attest legacy already-absent refs through the producer.
+- Bind a created commit to the reviewed index tree, original branch and parent. Preserve hooks and
+  report commits created by a failing hook instead of retrying or publishing unreviewed content.
+- Refuse pending Git operations and scan earlier unpublished commits in normal and initial-branch
+  delivery. Share content signatures between worktree and blob checks and recognize JSON keys.
+- Resolve Python from `PATH`, validate its minimum version, and disable interactive Git credential
+  prompts. Redact conflicting bootstrap remotes and keep integration hook diagnostics out of JSON.
+- Handle Gitea organization pagination and malformed URLs/timeouts without misclassifying membership
+  or leaking credentials.
+- Validate release tags before writes, preserve unknown output/staging files, reject archive links,
+  duplicate members and duplicate checksum entries, and verify uploaded Gitea bytes before publication.
+- Remove unused CI interpreter installs and record the actual build environment; require annotated
+  release tags and a clean checkout. Make Renovate configuration independent of private presets.
+- Correct the deployment-health adapter ledger, track custom Claude homes and project instruction
+  files, register the independently attested released Skill payload, and ignore only host worktree policy.
 
 ## 1.6.0
 

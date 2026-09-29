@@ -1,6 +1,20 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "local>xuanheng-tech/renovate-config"
-  ]
+    "config:recommended",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "timezone": "Asia/Shanghai",
+  "schedule": ["* 3-6 * * *"],
+  "minimumReleaseAge": "3 days",
+  "updateNotScheduled": false,
+  "prConcurrentLimit": 2,
+  "prHourlyLimit": 1,
+  "dependencyDashboard": true,
+  "rebaseWhen": "behind-base-branch",
+  "automerge": false,
+  "ignoreScripts": true,
+  "major": {
+    "dependencyDashboardApproval": true
+  }
 }

@@ -42,6 +42,8 @@ jobs:
           test "$RELEASE_REF" = "refs/tags/$RELEASE_REF_NAME"
           test "$(git rev-parse 'HEAD^{commit}')" = "$RELEASE_SHA"
           test "$(git rev-parse "${RELEASE_REF}^{commit}")" = "$RELEASE_SHA"
+          test "$(git cat-file -t "$RELEASE_REF")" = "tag"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
       - name: Install uv
         uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
@@ -50,8 +52,13 @@ jobs:
           enable-cache: false
           github-token: ""
 
-      - name: Install Python
-        run: uv python install 3.12.13
+      - name: Record build environment
+        run: |
+          python3 -V
+          git --version
+          tar --version
+          gzip --version
+          locale
 
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
@@ -124,6 +131,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           python3 -B - <<'PY'
+          import hashlib
           import json
           import os
           from pathlib import Path
@@ -150,18 +158,48 @@ jobs:
               raise SystemExit("release notes are empty")
           release_url = f"{api_url}/repos/{urllib.parse.quote(repository, safe='/')}/releases"
 
+          def origin(url: str):
+              parsed = urllib.parse.urlsplit(url)
+              if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+                  raise SystemExit("release URL must be a credential-free HTTP(S) URL")
+              return parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
+
+          api_origin = origin(api_url)
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  raise SystemExit("Gitea API redirect refused; configure the canonical API URL")
+
+          class DownloadRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+                  if redirected is not None and origin(newurl) != api_origin:
+                      redirected.remove_header("Authorization")
+                  return redirected
+
+          api_opener = urllib.request.build_opener(NoRedirect())
+          download_opener = urllib.request.build_opener(DownloadRedirect())
+
           def request(method: str, url: str, data: bytes | None = None, content_type: str | None = None):
+              if origin(url) != api_origin:
+                  raise SystemExit("Gitea API target differs from its configured origin")
               headers = {"Accept": "application/json", "Authorization": f"token {token}"}
               if content_type is not None:
                   headers["Content-Type"] = content_type
               operation = urllib.request.Request(url, data=data, headers=headers, method=method)
               try:
-                  with urllib.request.urlopen(operation, timeout=30) as response:
+                  with api_opener.open(operation, timeout=30) as response:
                       return response.status, response.read()
               except urllib.error.HTTPError as exc:
                   return exc.code, exc.read(4096)
               except urllib.error.URLError as exc:
-                  raise SystemExit(f"Gitea API request failed: {exc.reason}") from exc
+                  raise SystemExit("Gitea API request failed; inspect the server locally before retrying") from None
+
+          assets = sorted(path for path in Path("dist").iterdir() if path.is_file() and not path.is_symlink())
+          expected_names = {"SHA256SUMS.txt", f"git-finalizer-{tag.removeprefix('v')}.tar.gz"}
+          if {asset.name for asset in assets} != expected_names:
+              raise SystemExit("release assets differ from the verified package and checksum pair")
+          expected_digests = {asset.name: hashlib.sha256(asset.read_bytes()).hexdigest() for asset in assets}
 
           tag_url = f"{release_url}/tags/{urllib.parse.quote(tag, safe='')}"
           status, _ = request("GET", tag_url)
@@ -189,19 +227,38 @@ jobs:
           except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
               raise SystemExit("Gitea returned an invalid release response") from exc
 
-          assets = sorted(path for path in Path("dist").iterdir() if path.is_file())
-          if not assets:
-              raise SystemExit("no release assets were produced")
           for asset in assets:
               upload_url = (
                   f"{release_url}/{release_id}/assets?"
                   + urllib.parse.urlencode({"name": asset.name})
               )
-              status, _ = request("POST", upload_url, asset.read_bytes(), "application/octet-stream")
+              status, body = request("POST", upload_url, asset.read_bytes(), "application/octet-stream")
               if status != 201:
                   raise SystemExit(
                       f"asset upload failed for {asset.name}: HTTP {status}; draft release retained"
                   )
+              try:
+                  uploaded = json.loads(body)
+                  download_url = uploaded["browser_download_url"]
+                  if uploaded["name"] != asset.name or origin(download_url) != api_origin:
+                      raise ValueError("asset identity or download origin differs")
+                  operation = urllib.request.Request(download_url, headers={"Authorization": f"token {token}"})
+                  with download_opener.open(operation, timeout=30) as response:
+                      downloaded = response.read(asset.stat().st_size + 1)
+                  if hashlib.sha256(downloaded).hexdigest() != expected_digests[asset.name]:
+                      raise ValueError("downloaded bytes differ")
+              except (KeyError, TypeError, ValueError, urllib.error.URLError):
+                  raise SystemExit(f"asset verification failed for {asset.name}; draft release retained") from None
+
+          status, body = request("GET", f"{release_url}/{release_id}/assets")
+          try:
+              listing = json.loads(body)
+              if status != 200 or not isinstance(listing, list) or len(listing) != len(assets):
+                  raise ValueError("asset count differs")
+              if {item["name"] for item in listing} != expected_names:
+                  raise ValueError("asset names differ")
+          except (KeyError, TypeError, ValueError):
+              raise SystemExit("release asset inventory differs; draft release retained") from None
 
           status, _ = request(
               "PATCH",

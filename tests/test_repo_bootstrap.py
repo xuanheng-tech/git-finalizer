@@ -53,6 +53,7 @@ class GiteaState:
     def __init__(self) -> None:
         self.username = "alice"
         self.organizations = {"team"}
+        self.page_size = 50
         self.repositories: dict[str, dict[str, object]] = {}
         self.posts: list[dict[str, object]] = []
         self.deny = False
@@ -104,7 +105,11 @@ class FakeGitea:
                     self._send(200, {"login": state.username})
                     return
                 if path == "/user/orgs":
-                    self._send(200, [{"username": name} for name in sorted(state.organizations)])
+                    query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                    page = int(query.get("page", ["1"])[0])
+                    names = sorted(state.organizations)
+                    start = (page - 1) * state.page_size
+                    self._send(200, [{"username": name} for name in names[start:start + state.page_size]])
                     return
                 if path.startswith("/orgs/"):
                     owner = urllib.parse.unquote(path.removeprefix("/orgs/"))
@@ -240,6 +245,14 @@ class RepositoryBootstrapTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(existing["decision"], "ALREADY_EXISTS_MATCH")
 
+    def test_organization_membership_checks_later_pages_with_a_server_limit(self) -> None:
+        with FakeGitea() as server:
+            server.state.organizations = {"a-team", "b-team", "z-target"}
+            server.state.page_size = 1
+            code, result = self.execute(self.arguments(server, owner="z-target"))
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["decision"], "CREATE_ALLOWED")
+
     def test_existing_visibility_mismatch_is_blocked(self) -> None:
         with FakeGitea() as server:
             server.state.repository("alice", "example", private=False)
@@ -273,6 +286,28 @@ class RepositoryBootstrapTests(unittest.TestCase):
             code, conflict = self.execute(self.arguments(server))
             self.assertEqual(code, 2)
             self.assertEqual(conflict["decision"], "BLOCK_REMOTE_MISMATCH")
+
+    def test_conflicting_remote_never_exposes_embedded_credentials(self) -> None:
+        marker = "SYNTHETIC-MUST-NOT-APPEAR"
+        with FakeGitea() as server:
+            git(self.repo, "remote", "add", "origin", f"https://alice:{marker}@example.invalid/repo.git")
+            code, receipt = self.execute(self.arguments(server))
+            self.assertEqual(code, 2)
+            self.assertNotIn(marker, json.dumps(receipt))
+            self.assertNotIn(marker, bootstrap.render_human(receipt))
+
+    def test_malformed_urls_and_nonfinite_timeout_are_controlled_refusals(self) -> None:
+        with FakeGitea() as server:
+            for value in ("https://[invalid", "https://example.invalid:not-a-port", "https://example.invalid/\npath"):
+                with self.subTest(url=value):
+                    arguments = self.arguments(server)
+                    arguments.gitea_url = value
+                    code, receipt = self.execute(arguments)
+                    self.assertEqual(code, 2)
+                    self.assertEqual(receipt["decision"], "BLOCK_INVALID_CONFIG")
+            code, receipt = self.execute(self.arguments(server, timeout=float("nan")))
+            self.assertEqual(code, 2)
+            self.assertEqual(receipt["decision"], "BLOCK_INVALID_CONFIG")
 
     def test_create_is_idempotent_empty_and_does_not_publish(self) -> None:
         with FakeGitea() as server:

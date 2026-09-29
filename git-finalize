@@ -2,6 +2,17 @@
 
 set -Eeuo pipefail
 
+export GIT_TERMINAL_PROMPT=0
+export GCM_INTERACTIVE=Never
+
+PYTHON3_EXECUTABLE=$(command -v python3 || true)
+readonly PYTHON3_EXECUTABLE
+
+python3_available() {
+    [[ -n "$PYTHON3_EXECUTABLE" ]] &&
+        "$PYTHON3_EXECUTABLE" -B -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1
+}
+
 if ((EUID == 0)); then
     printf 'ERROR: Git Finalizer must run as the current non-root user\n' >&2
     exit 1
@@ -21,11 +32,11 @@ for integration_publish_argument in "$@"; do
     fi
 done
 if ((integration_publish_requested == 1)); then
-    [[ -x /usr/bin/python3 ]] || {
-        printf 'ERROR: integration publication requires /usr/bin/python3\n' >&2
+    python3_available || {
+        printf 'ERROR: integration publication requires Python 3.11+ on PATH\n' >&2
         exit 1
     }
-    finalizer_executable=$(/usr/bin/realpath -e -- "${BASH_SOURCE[0]}") || {
+    finalizer_executable=$(realpath -e -- "${BASH_SOURCE[0]}") || {
         printf 'ERROR: cannot resolve Git Finalizer entrypoint\n' >&2
         exit 1
     }
@@ -34,7 +45,7 @@ if ((integration_publish_requested == 1)); then
         printf 'ERROR: integration publication companion is missing\n' >&2
         exit 1
     }
-    exec /usr/bin/python3 -B "$integration_publish_companion" "$@"
+    exec "$PYTHON3_EXECUTABLE" -B "$integration_publish_companion" "$@"
 fi
 
 repository_bootstrap_requested=0
@@ -46,11 +57,11 @@ for bootstrap_argument in "$@"; do
     fi
 done
 if ((repository_bootstrap_requested == 1)); then
-    [[ -x /usr/bin/python3 ]] || {
-        printf 'ERROR: repository bootstrap requires /usr/bin/python3\n' >&2
+    python3_available || {
+        printf 'ERROR: repository bootstrap requires Python 3.11+ on PATH\n' >&2
         exit 1
     }
-    finalizer_executable=$(/usr/bin/realpath -e -- "${BASH_SOURCE[0]}") || {
+    finalizer_executable=$(realpath -e -- "${BASH_SOURCE[0]}") || {
         printf 'ERROR: cannot resolve Git Finalizer entrypoint\n' >&2
         exit 1
     }
@@ -60,7 +71,7 @@ if ((repository_bootstrap_requested == 1)); then
         printf 'ERROR: repository bootstrap companion is missing\n' >&2
         exit 1
     }
-    exec /usr/bin/python3 -B "$repository_bootstrap_companion" "$@"
+    exec "$PYTHON3_EXECUTABLE" -B "$repository_bootstrap_companion" "$@"
 fi
 
 summary_requested=0
@@ -167,7 +178,7 @@ record_summary_failure() {
 }
 
 render_summary() {
-    /usr/bin/python3 -B - \
+    "$PYTHON3_EXECUTABLE" -B - \
         "$SUMMARY_SCHEMA_VERSION" "$VERSION" "$summary_mode" "$summary_status" "$summary_phase" \
         "$summary_exit_code" "$summary_repo" "$summary_repository_id" \
         "$summary_allocation_id" "$summary_task_key" "$summary_authority_key" \
@@ -690,6 +701,18 @@ fail_after_commit() {
     exit 1
 }
 
+fail_created_commit() {
+    if ((initial_publish == 1)); then
+        fail_initial_after_commit "$@"
+    elif ((initial_commit_only == 1)); then
+        fail_initial_commit_only_after_commit "$@"
+    elif ((initial_branch_publish == 1)); then
+        fail_initial_branch_after_commit "$@"
+    else
+        fail_after_commit "$@"
+    fi
+}
+
 fail_initial_after_commit() {
     summary_status='failed'
     summary_reason=$*
@@ -824,7 +847,7 @@ require_command() {
 verify_initial_snapshot() {
     local source=$1
 
-    /usr/bin/python3 -B "$snapshot_verifier" "$snapshot_id" "$repo" "$source" "${paths[@]}"
+    "$PYTHON3_EXECUTABLE" -B "$snapshot_verifier" "$snapshot_id" "$repo" "$source" "${paths[@]}"
 }
 
 print_value_or() {
@@ -933,7 +956,7 @@ load_source_reviews() {
     executable=$(realpath -e -- "${BASH_SOURCE[0]}") || fail '无法解析 Finalizer 入口'
     helper=${executable%/*}/git-finalize-source-review.py
     [[ -f "$helper" && ! -L "$helper" ]] || fail '缺少 source review companion'
-    output=$(/usr/bin/python3 -B "$helper" --review "$source_review_file" \
+    output=$("$PYTHON3_EXECUTABLE" -B "$helper" --review "$source_review_file" \
         --repo "$repo" --phase "$phase" --repository-id "$repository_id_arg" \
         --allocation-id "$allocation_id_arg" --task-key "$task_key_arg" \
         --authority-key "$authority_key_arg" -- "${paths[@]}") ||
@@ -953,12 +976,13 @@ load_source_reviews() {
     done <<<"$output"
 }
 
+readonly private_key_re='-----BEGIN ([A-Z0-9]+[[:space:]]+)*PRIVATE KEY-----'
+readonly known_token_re='(AKIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,})'
+readonly ssh_key_re='(^|[[:space:]])ssh-(rsa|dss|ecdsa|ed25519)[[:space:]]+[A-Za-z0-9+/]{40,}'
+readonly assignment_re="(credential|password|passwd|secret|token|api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token)['\"]?[[:space:]]*[:=][[:space:]]*['\"][^'\"]{12,}['\"]"
+
 working_content_reason() {
     local path=$1
-    local private_key_re='-----BEGIN ([A-Z0-9]+[[:space:]]+)*PRIVATE KEY-----'
-    local known_token_re='(AKIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,})'
-    local ssh_key_re='(^|[[:space:]])ssh-(rsa|dss|ecdsa|ed25519)[[:space:]]+[A-Za-z0-9+/]{40,}'
-    local assignment_re="(credential|password|passwd|secret|token|api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token)[[:space:]]*[:=][[:space:]]*['\"][^'\"]{12,}['\"]"
 
     if LC_ALL=C grep -aEiq -- "$private_key_re" "$path"; then
         printf 'private key 内容签名'
@@ -983,11 +1007,6 @@ staged_content_reason() {
     local oid=$1
     local excepted_detectors=${2:-}
     local only_detector=${3:-}
-    local private_key_re='-----BEGIN ([A-Z0-9]+[[:space:]]+)*PRIVATE KEY-----'
-    local known_token_re='(AKIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,})'
-    local ssh_key_re='(^|[[:space:]])ssh-(rsa|dss|ecdsa|ed25519)[[:space:]]+[A-Za-z0-9+/]{40,}'
-    local assignment_re="(credential|password|passwd|secret|token|api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token)[[:space:]]*[:=][[:space:]]*['\"][^'\"]{12,}['\"]"
-
     if [[ -z "$only_detector" || "$only_detector" == 'private-key-header-v1' ]] &&
         [[ "$excepted_detectors" != *'|private-key-header-v1|'* ]] &&
         LC_ALL=C grep -aEiq -- "$private_key_re" < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null); then
@@ -2215,10 +2234,26 @@ validate_resume_expected_head() {
     resume_head=$resolved_head
 }
 
-check_resume_clean_state() {
-    local resume_status
+check_git_operation_state() {
     local git_dir
     local marker
+
+    git_operation_error=''
+    if ! git_dir=$(git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null); then
+        git_operation_error='无法解析 Git metadata 目录'
+        return 1
+    fi
+    for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD REBASE_HEAD \
+        rebase-apply rebase-merge sequencer BISECT_START; do
+        if [[ -e "$git_dir/$marker" || -L "$git_dir/$marker" ]]; then
+            git_operation_error='拒绝未完成的 Git 操作'
+            return 1
+        fi
+    done
+}
+
+check_resume_clean_state() {
+    local resume_status
 
     resume_target_error=''
     if ! git -C "$repo" diff --cached --quiet; then
@@ -2232,17 +2267,7 @@ check_resume_clean_state() {
         resume_target_error='resume 要求 worktree 完全干净（包括 untracked 文件）'
         return 1
     fi
-    if ! git_dir=$(git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null); then
-        resume_target_error='无法解析 Git metadata 目录'
-        return 1
-    fi
-    for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD REBASE_HEAD \
-        rebase-apply rebase-merge sequencer BISECT_START; do
-        if [[ -e "$git_dir/$marker" ]]; then
-            resume_target_error='resume 拒绝未完成的 Git 操作'
-            return 1
-        fi
-    done
+    check_git_operation_state || { resume_target_error="resume $git_operation_error"; return 1; }
 }
 
 is_committed_large_binary() {
@@ -2261,7 +2286,7 @@ load_fixture_exceptions() {
     local records path oid detector record key
 
     [[ -n "$fixture_exceptions_file" ]] || return 0
-    if ! records=$(/usr/bin/python3 -B - \
+    if ! records=$("$PYTHON3_EXECUTABLE" -B - \
         "$fixture_exceptions_file" "$repo" "$resume_expected_oid" "$branch_publish_remote" <<'PY'
 import hashlib
 import json
@@ -3601,59 +3626,101 @@ validate_retirement_oid() {
 }
 
 # GF-INTEGRATION-ADAPTER: worktree-controller-retirement (single site)
-acquire_retirement_plan_lock() {
+verify_retirement_plan() {
     local operation=$1
     local common_dir
-    local controller_root
-    local lock_file
     local executable
-    local verifier
+    local verifier_output
+    local -a recovery=()
 
     ((retirement_plan_id_seen == 1)) || return 0
     common_dir=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir) || {
         retirement_validation_error='无法定位 Git common dir'
         return 1
     }
-    controller_root=$common_dir/worktree-controller/v1
-    if [[ ! -d "$controller_root" && -d "$common_dir/codex-worktree/v1" ]]; then
-        retirement_validation_error='检测到 legacy codex-worktree namespace；retirement 需先经 WC 治理激活 worktree-controller/v1，本工具拒绝读取非权威旧状态'
+    if [[ ! -d "$common_dir/worktree-controller/v1" &&
+        -d "$common_dir/codex-worktree/v1" ]]; then
+        retirement_validation_error='检测到 legacy codex-worktree namespace；retirement 需先经 WC 治理激活 worktree-controller/v1'
         return 1
     fi
-    lock_file=$controller_root/repo.lock
-    [[ -f "$lock_file" && ! -L "$lock_file" ]] || {
-        retirement_validation_error='Controller repo.lock 缺失或不安全'
-        return 1
-    }
-    exec {retirement_plan_lock_fd}<>"$lock_file" || {
-        retirement_validation_error='无法打开 Controller repo.lock'
-        return 1
-    }
-    flock -x "$retirement_plan_lock_fd" || {
-        retirement_validation_error='无法取得 Controller retirement 执行锁'
-        return 1
-    }
     executable=$(realpath -e -- "${BASH_SOURCE[0]}") || {
         retirement_validation_error='无法解析 Finalizer 入口'
         return 1
     }
-    local verifier_output
-    verifier=${executable%/*}/git-finalize-retirement-plan.py
-    [[ -f "$verifier" && ! -L "$verifier" ]] || {
-        retirement_validation_error='缺少 retirement plan verifier companion'
+    retirement_verifier=${executable%/*}/git-finalize-retirement-plan.py
+    [[ -f "$retirement_verifier" && ! -L "$retirement_verifier" ]] || {
+        retirement_validation_error='缺少 retirement protocol companion'
         return 1
     }
-    if ! verifier_output=$(/usr/bin/python3 -B "$verifier" \
+    ((dry_run == 1)) || recovery=(--recover)
+    if ! verifier_output=$("$PYTHON3_EXECUTABLE" -B "$retirement_verifier" \
         --repo "$repo" --plan-id "$retirement_plan_id_arg" --operation "$operation" \
         --branch "$retirement_feature_branch" --remote "$retirement_remote" \
         --integrated-into "$integrated_into_arg" \
         --expected-oid "$retirement_expected_oid" \
-        --expected-integrated-oid "$expected_integrated_oid_arg" 2>&1); then
+        --expected-integrated-oid "$expected_integrated_oid_arg" "${recovery[@]}" 2>&1); then
         retirement_validation_error="Controller retirement plan 校验失败: $(
             printf '%s\n' "$verifier_output" | tail -n 1
         )"
         return 1
     fi
     summary_retirement_plan_id=$retirement_plan_id_arg
+}
+
+run_retirement_plan_delete() {
+    local operation=$1
+    local output
+    local attempted
+    local completed=1
+
+    retirement_controller_error=''
+    if ! output=$(run_git_mutation "Controller-authorized $operation retirement CAS" \
+        "$PYTHON3_EXECUTABLE" -B "$retirement_verifier" \
+        --repo "$repo" --plan-id "$retirement_plan_id_arg" --operation "$operation" \
+        --branch "$retirement_feature_branch" --remote "$retirement_remote" \
+        --integrated-into "$integrated_into_arg" \
+        --expected-oid "$retirement_expected_oid" \
+        --expected-integrated-oid "$retirement_integration_oid_before" \
+        --recover --execute 2>&1); then
+        completed=0
+    fi
+    if ! attempted=$(printf '%s\n' "$output" | tail -n 1 |
+        "$PYTHON3_EXECUTABLE" -B -c '
+import json, sys
+value = json.load(sys.stdin)
+if not isinstance(value, dict) or type(value.get("controller_complete")) is not bool:
+    raise ValueError("invalid completion result")
+if sys.argv[1] == "1" and value["controller_complete"] is not True:
+    raise ValueError("completion not verified")
+attempted = value.get("mutation_attempted")
+if type(attempted) is not bool:
+    raise ValueError("invalid mutation result")
+print(str(attempted).lower())
+' "$completed" 2>/dev/null); then
+        if ((completed == 1)); then
+            retirement_controller_error='Controller retirement completion 结果无法验证'
+            return 1
+        fi
+    else
+        summary_retirement_lease_bound=$attempted
+        if [[ "$operation" == remote ]]; then
+            summary_push_executed=$attempted
+        fi
+    fi
+    if ((completed == 0)); then
+        retirement_controller_error="Controller retirement 未完成: $(printf '%s\n' "$output" |
+            sed -n '/^ERROR: retirement plan validation blocked:/p' | tail -n 1)"
+        return 1
+    fi
+}
+
+settle_absent_retirement_plan() {
+    local operation=$1
+    ((retirement_plan_id_seen == 1 && dry_run == 0)) || return 0
+    if ! run_retirement_plan_delete "$operation"; then
+        fail_retirement "$([[ "$operation" == local ]] && printf LOCAL_DELETE_UNVERIFIED || printf REMOTE_DELETE_UNVERIFIED)" \
+            "$retirement_controller_error"
+    fi
 }
 
 resolve_retirement_remote() {
@@ -4016,6 +4083,12 @@ fail_retirement() {
 }
 
 run_retirement_delete() {
+    if ((retirement_plan_id_seen == 1)); then
+        summary_push_branch_refspec_only=true
+        summary_push_follow_tags_disabled=true
+        run_retirement_plan_delete remote
+        return
+    fi
     local display='git push --no-follow-tags --force-with-lease=<ref>:<expected> <remote> :<ref>'
     local -a command=(
         git -C "$repo" push --no-follow-tags
@@ -4073,7 +4146,7 @@ retire_remote_branch_ref() {
         ! validate_retirement_oid "$expected_integrated_oid_arg" 'expected_integrated_oid'; then
         fail_retirement RETIREMENT_BLOCKED "$retirement_validation_error"
     fi
-    if ! acquire_retirement_plan_lock remote; then
+    if ! verify_retirement_plan remote; then
         fail_retirement RETIREMENT_BLOCKED "$retirement_validation_error"
     fi
     if ! capture_retirement_local_state; then
@@ -4133,6 +4206,7 @@ retire_remote_branch_ref() {
         if ! verify_retirement_remote_absent; then
             fail_retirement REMOTE_DELETE_UNVERIFIED "$retirement_verify_error"
         fi
+        settle_absent_retirement_plan remote
         summary_post_verify='passed'
         summary_remote_conclusion='already_absent_verified'
         summary_retirement_result='ALREADY_ABSENT_VERIFIED'
@@ -4187,6 +4261,7 @@ retire_remote_branch_ref() {
         if ! verify_retirement_remote_absent; then
             fail_retirement REMOTE_DELETE_UNVERIFIED "$retirement_verify_error"
         fi
+        settle_absent_retirement_plan remote
         summary_post_verify='passed'
         summary_remote_conclusion='already_absent_verified'
         summary_retirement_result='ALREADY_ABSENT_VERIFIED'
@@ -4202,9 +4277,12 @@ retire_remote_branch_ref() {
     fi
 
     summary_phase='remote_mutation'
-    summary_push_executed=true
+    ((retirement_plan_id_seen == 1)) || summary_push_executed=true
     if ! run_retirement_delete; then
         summary_push_result='uncertain'
+        if [[ -n "${retirement_controller_error:-}" ]]; then
+            fail_retirement REMOTE_DELETE_UNVERIFIED "$retirement_controller_error"
+        fi
         if query_retirement_refs && ((retirement_feature_present == 0)) &&
             [[ "$retirement_integration_oid" == "$retirement_integration_oid_before" ]]; then
             summary_push_result='confirmed_after_uncertain'
@@ -4319,9 +4397,7 @@ verify_retirement_local_absent() {
 }
 
 run_retirement_local_delete() {
-    summary_retirement_lease_bound=true
-    run_git_mutation 'git update-ref -d <local-ref> <expected-oid>' \
-        git -C "$repo" update-ref -d "$retirement_feature_ref" "$retirement_expected_oid"
+    run_retirement_plan_delete local
 }
 
 retire_local_branch_ref() {
@@ -4361,7 +4437,7 @@ retire_local_branch_ref() {
         ! validate_retirement_oid "$expected_integrated_oid_arg" 'expected_integrated_oid'; then
         fail_retirement RETIREMENT_BLOCKED "$retirement_validation_error"
     fi
-    if ! acquire_retirement_plan_lock local; then
+    if ! verify_retirement_plan local; then
         fail_retirement RETIREMENT_BLOCKED "$retirement_validation_error"
     fi
     if ! capture_retirement_local_state; then
@@ -4418,6 +4494,7 @@ retire_local_branch_ref() {
         if ! verify_retirement_local_absent; then
             fail_retirement LOCAL_DELETE_UNVERIFIED "$retirement_verify_error"
         fi
+        settle_absent_retirement_plan local
         summary_post_verify='passed'
         summary_remote_conclusion='local_branch_already_absent_verified'
         summary_retirement_result='ALREADY_ABSENT_VERIFIED'
@@ -4468,6 +4545,7 @@ retire_local_branch_ref() {
         if ! verify_retirement_local_absent; then
             fail_retirement LOCAL_DELETE_UNVERIFIED "$retirement_verify_error"
         fi
+        settle_absent_retirement_plan local
         summary_post_verify='passed'
         summary_remote_conclusion='local_branch_already_absent_verified'
         summary_retirement_result='ALREADY_ABSENT_VERIFIED'
@@ -4487,6 +4565,12 @@ retire_local_branch_ref() {
 
     summary_phase='local_mutation'
     if ! run_retirement_local_delete; then
+        if [[ -n "${retirement_controller_error:-}" ]]; then
+            if git -C "$repo" show-ref --verify --quiet "$retirement_feature_ref"; then
+                fail_retirement RETIREMENT_BLOCKED "$retirement_controller_error"
+            fi
+            fail_retirement LOCAL_DELETE_UNVERIFIED "$retirement_controller_error"
+        fi
         if git -C "$repo" show-ref --verify --quiet "$retirement_feature_ref"; then
             fail_retirement RETIREMENT_BLOCKED 'lease-bound local update-ref 删除被拒绝'
         fi
@@ -4506,8 +4590,8 @@ retire_local_branch_ref() {
 }
 
 if ((summary_requested == 1)); then
-    if [[ ! -x /usr/bin/python3 ]]; then
-        printf 'ERROR: --summary requires /usr/bin/python3\n' >&2
+    if ! python3_available; then
+        printf 'ERROR: --summary requires Python 3.11+ on PATH\n' >&2
         exit 1
     fi
     exec 3>&1 4>&2
@@ -5156,12 +5240,12 @@ fi
 for command_name in git realpath stat grep sed; do
     require_command "$command_name"
 done
+python3_available || fail 'Git Finalizer 要求 Python 3.11+ on PATH'
 if ((retirement_plan_id_seen == 1)); then
-    require_command flock
-    [[ -x /usr/bin/python3 ]] || fail 'Controller retirement plan 验证要求 /usr/bin/python3'
+    python3_available || fail 'Controller retirement plan 验证要求 Python 3.11+ on PATH'
 fi
 if ((snapshot_seen == 1)); then
-    [[ -x /usr/bin/python3 ]] || fail 'snapshot 验证要求 /usr/bin/python3'
+    python3_available || fail 'snapshot 验证要求 Python 3.11+ on PATH'
     finalizer_executable=$(realpath -e -- "${BASH_SOURCE[0]}") ||
         fail '无法解析 Finalizer 入口'
     snapshot_verifier=${finalizer_executable%/*}/git-finalize-snapshot-verify.py
@@ -5227,6 +5311,10 @@ if ((publish_existing_branch == 1)); then
 fi
 
 summary_phase='preflight'
+
+if ((dry_run == 0)) && ! check_git_operation_state; then
+    fail "$git_operation_error；未执行 add、commit 或 push"
+fi
 
 declare -a paths=()
 declare -a absolute_paths=()
@@ -5416,6 +5504,9 @@ else
 fi
 if ((dry_run == 1)); then
     printf '\n== DRY-RUN 风险 ==\n'
+    if ! check_git_operation_state; then
+        add_risk "$git_operation_error；真实运行会在 git add 和 commit 前停止"
+    fi
     if ((initial_commit_only == 1)); then
         if ! resolve_initial_target 0; then
             add_risk "$initial_target_error；真实运行会在 git add 和 commit 前停止"
@@ -5653,6 +5744,21 @@ elif ((initial_branch_publish == 1)); then
     if ! capture_initial_branch_remote_baseline; then
         fail "$branch_publish_remote_error；未执行新增 git add、commit 或 push"
     fi
+    if ! run_git_remote_command 'git fetch <selected remote>' \
+        git -C "$repo" fetch --no-tags --no-recurse-submodules "$branch_publish_remote"; then
+        fail 'initial-branch publish 前 git fetch 失败；未执行新增 git add、commit 或 push'
+    fi
+    if ! check_initial_branch_remote_unchanged_absent; then
+        fail "$branch_publish_remote_error；未执行新增 git add、commit 或 push"
+    fi
+    resume_expected_oid=$(git -C "$repo" rev-parse --verify 'HEAD^{commit}') ||
+        fail '无法解析 initial-branch publish 前 HEAD'
+    if ! prepare_existing_branch_publish_range; then
+        fail "$existing_range_error；未执行新增 git add、commit 或 push"
+    fi
+    if ((resume_publish_commit_count > 0)) && ! validate_existing_publish_range; then
+        fail "$existing_range_error；未执行新增 git add、commit 或 push"
+    fi
     summary_remote_conclusion='target_absent_verified'
 elif ((commit_only == 1)); then
     summary_remote_conclusion='skipped_by_commit_only'
@@ -5661,6 +5767,13 @@ else
     printf '\n== Commit 前 fetch 与 fast-forward 检查 ==\n'
     if ! check_normal_remote_state 'commit 前'; then
         fail "$normal_remote_error；未执行新增 git add、commit 或 push"
+    fi
+    if ((normal_ahead > 0)); then
+        resume_publish_range="$normal_upstream_hash..$normal_local_hash"
+        resume_publish_commit_count=$normal_ahead
+        if ! validate_existing_publish_range; then
+            fail "$existing_range_error；未执行新增 git add、commit 或 push"
+        fi
     fi
 fi
 
@@ -5730,38 +5843,58 @@ if ((initial_publish == 1 && snapshot_seen == 1)); then
 fi
 
 summary_phase='commit'
+commit_branch_before=$(git -C "$repo" symbolic-ref --quiet HEAD) ||
+    fail 'commit 前无法记录 attached branch'
+commit_head_before=''
+if ((initial_publish == 0 && initial_commit_only == 0)); then
+    commit_head_before=$(git -C "$repo" rev-parse --verify 'HEAD^{commit}') ||
+        fail 'commit 前无法记录 HEAD'
+fi
+expected_commit_tree=$(git -C "$repo" write-tree) || fail '无法记录已验证 index tree'
+if ! check_git_operation_state; then
+    fail "$git_operation_error；未执行 commit 或 push"
+fi
 printf '\n== Commit ==\n'
+commit_command_failed=0
 if ! run_git_mutation 'git commit -m <message>' git -C "$repo" commit -m "$message"; then
-    fail 'git commit 失败；未执行 fetch 或 push'
+    commit_command_failed=1
 fi
 
-commit_hash=$(git -C "$repo" rev-parse HEAD)
+commit_hash=$(git -C "$repo" rev-parse --verify 'HEAD^{commit}' 2>/dev/null) ||
+    fail 'git commit 失败，HEAD 无法解析；未执行 fetch 或 push'
+[[ "$commit_hash" != "$commit_head_before" ]] || fail 'git commit 未创建 commit；未执行 fetch 或 push'
 summary_commit_created=true
 summary_commit_sha=$commit_hash
 summary_completed_through='commit'
 if ((initial_publish == 1 || initial_commit_only == 1)); then
     summary_mode_state='commit_created'
 fi
+if ((commit_command_failed == 1)); then
+    fail_created_commit 'git commit 返回失败但 HEAD 已改变；保留本地 commit，未执行 push'
+fi
+summary_phase='post_commit_verify'
+committed_branch=$(git -C "$repo" symbolic-ref --quiet HEAD) ||
+    fail_created_commit 'commit 后 HEAD 不再 attached'
+[[ "$committed_branch" == "$commit_branch_before" ]] ||
+    fail_created_commit 'commit 后 attached branch 发生变化'
+committed_parents=$(git -C "$repo" rev-list --parents -n 1 "$commit_hash") ||
+    fail_created_commit '无法读取 commit parents'
+[[ "$committed_parents" == "$commit_hash${commit_head_before:+ $commit_head_before}" ]] ||
+    fail_created_commit 'commit parents 与已验证 HEAD 不一致；未执行 push'
 commit_message=$(git -C "$repo" log -1 --format=%B)
 mapfile -d '' -t committed_paths < <(
     git -C "$repo" diff-tree --root --no-commit-id --name-only -r --no-renames -z "$commit_hash"
 )
 for path in "${committed_paths[@]}"; do
     if [[ -z ${allowed_paths[$path]+present} ]]; then
-        if ((initial_publish == 1)); then
-            fail_initial_after_commit \
-                "root commit 包含超出显式范围的文件: $(printf '%q' "$path")"
-        elif ((initial_commit_only == 1)); then
-            fail_initial_commit_only_after_commit \
-                "root commit 包含超出显式范围的文件: $(printf '%q' "$path")"
-        elif ((initial_branch_publish == 1)); then
-            fail_initial_branch_after_commit \
-                "commit 包含超出显式范围的文件: $(printf '%q' "$path")"
-        else
-            fail_after_commit "commit 包含超出显式范围的文件: $(printf '%q' "$path")"
-        fi
+        fail_created_commit "commit 包含超出显式范围的文件: $(printf '%q' "$path")"
     fi
 done
+
+committed_tree=$(git -C "$repo" rev-parse "$commit_hash^{tree}") ||
+    fail_created_commit '无法读取 commit tree'
+[[ "$committed_tree" == "$expected_commit_tree" ]] ||
+    fail_created_commit 'commit tree 与已验证 index tree 不一致；检查 commit hooks，未执行 push'
 
 load_source_reviews head
 for path in "${!reviewed_source_paths[@]}"; do

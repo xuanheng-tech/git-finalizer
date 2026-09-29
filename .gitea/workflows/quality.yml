@@ -29,8 +29,13 @@ jobs:
           enable-cache: false
           github-token: ""
 
-      - name: Install Python
-        run: uv python install 3.12.13
+      - name: Record build environment
+        run: |
+          python3 -V
+          git --version
+          tar --version
+          gzip --version
+          locale
 
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4

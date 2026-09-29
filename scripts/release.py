@@ -57,7 +57,15 @@ class ReleaseError(Exception):
 
 
 def package_name(version: str) -> str:
+    if re.fullmatch(VERSION_PATTERN, version) is None:
+        raise ReleaseError(f"invalid release version: {version}")
     return f"git-finalizer-{version}"
+
+
+def tag_version(version_tag: str) -> str:
+    if re.fullmatch(rf"v({VERSION_PATTERN})", version_tag) is None:
+        raise ReleaseError(f"invalid release tag: {version_tag}")
+    return version_tag[1:]
 
 
 def package_paths() -> set[str]:
@@ -81,9 +89,7 @@ def read_version_literal(path: Path, pattern: str) -> str:
 
 
 def preflight(version_tag: str) -> str:
-    if re.fullmatch(rf"v({VERSION_PATTERN})", version_tag) is None:
-        raise ReleaseError(f"invalid release tag: {version_tag}")
-    version = version_tag[1:]
+    version = tag_version(version_tag)
     script_version = read_version_literal(
         ROOT / "git-finalize", r'^readonly VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$'
     )
@@ -129,8 +135,11 @@ def preflight(version_tag: str) -> str:
 def stage(stage_root: Path) -> None:
     stage_root.mkdir(parents=True, exist_ok=True)
     for relative in sorted(package_paths()):
+        path = PurePosixPath(relative)
+        if path.is_absolute() or ".." in path.parts or path.as_posix() != relative:
+            raise ReleaseError(f"packaged file has an unsafe path: {relative}")
         source = ROOT / relative
-        if not source.is_file():
+        if source.is_symlink() or not source.is_file() or not source.resolve().is_relative_to(ROOT):
             raise ReleaseError(f"packaged file is missing: {relative}")
         target = stage_root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -179,30 +188,42 @@ def tar_bytes(stage_root: Path, package: str, timestamp: str) -> bytes:
 
 
 def build(version_tag: str, dist: Path | None = None, staging: Path | None = None) -> Path:
-    version = version_tag[1:]
+    version = preflight(version_tag)
     package = package_name(version)
     dist_root = dist or ROOT / "dist"
-    stage_root = staging or ROOT / ".release-stage"
-    for path in (dist_root, stage_root):
-        if path.exists():
-            shutil.rmtree(path)
+    expected_outputs = {f"{package}.tar.gz", "SHA256SUMS.txt"}
+    if dist_root.is_symlink() or (dist_root.exists() and not dist_root.is_dir()):
+        raise ReleaseError(f"release output directory is unsafe: {dist_root}")
+    if dist_root.exists():
+        outputs = list(dist_root.iterdir())
+        if any(path.name not in expected_outputs or path.is_symlink() or not path.is_file()
+               for path in outputs):
+            raise ReleaseError("release output contains unknown files; preserve them before building")
+        if outputs:
+            # Establish that an overwritten artifact is a verified generated result.
+            verify(version_tag, dist_root)
+    if staging is not None and (staging.exists() or staging.is_symlink()):
+        raise ReleaseError("release staging directory already exists; refusing to discard it")
     dist_root.mkdir(parents=True, exist_ok=True)
-    stage(stage_root / package)
-    timestamp = commit_timestamp()
     artifact = dist_root / f"{package}.tar.gz"
-    artifact.write_bytes(tar_bytes(stage_root, package, timestamp))
-    rebuild = stage_root / f"{package}.rebuild.tar.gz"
-    rebuild.write_bytes(tar_bytes(stage_root, package, timestamp))
-    if artifact.read_bytes() != rebuild.read_bytes():
-        raise ReleaseError("release build is not deterministic for one commit")
-    verify_bytes(artifact, version_tag)
-    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
-    (dist_root / "SHA256SUMS.txt").write_text(f"{digest}  {artifact.name}\n", encoding="utf-8")
+    with tempfile.TemporaryDirectory(prefix="git-finalizer-build-") as temporary:
+        stage_root = staging or Path(temporary) / "stage"
+        stage(stage_root / package)
+        timestamp = commit_timestamp()
+        built_bytes = tar_bytes(stage_root, package, timestamp)
+        if built_bytes != tar_bytes(stage_root, package, timestamp):
+            raise ReleaseError("release build is not deterministic for one commit")
+        candidate = Path(temporary) / artifact.name
+        candidate.write_bytes(built_bytes)
+        verify_bytes(candidate, version_tag)
+        digest = hashlib.sha256(built_bytes).hexdigest()
+        artifact.write_bytes(built_bytes)
+        (dist_root / "SHA256SUMS.txt").write_text(f"{digest}  {artifact.name}\n", encoding="utf-8")
     return artifact
 
 
 def verify_bytes(artifact: Path, version_tag: str) -> None:
-    version = version_tag[1:]
+    version = tag_version(version_tag)
     package = package_name(version)
     expected = {f"{package}/{p}" for p in package_paths()}
     try:
@@ -211,6 +232,9 @@ def verify_bytes(artifact: Path, version_tag: str) -> None:
         raise ReleaseError(f"release artifact is not a readable gzip tarball: {error}") from error
     with archive:
         members = archive.getmembers()
+        names = [member.name.rstrip("/") for member in members]
+        if len(names) != len(set(names)):
+            raise ReleaseError("release package contains duplicate members")
         files = {member.name for member in members if member.isfile()}
         if files != expected:
             missing = sorted(expected - files)
@@ -221,8 +245,17 @@ def verify_bytes(artifact: Path, version_tag: str) -> None:
             )
         for member in members:
             path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts:
+            if path.is_absolute() or ".." in path.parts or path.as_posix() != member.name.rstrip("/"):
                 raise ReleaseError(f"release package contains an unsafe path: {member.name}")
+            if not member.isfile() and not member.isdir():
+                raise ReleaseError(f"release package contains a link or special member: {member.name}")
+        expected_directories = {
+            str(parent) for name in expected for parent in PurePosixPath(name).parents
+            if str(parent) != "."
+        }
+        directories = {member.name.rstrip("/") for member in members if member.isdir()}
+        if directories != expected_directories:
+            raise ReleaseError("release package directory file set does not match the installation contract")
         entry = archive.getmember(f"{package}/git-finalize")
         if stat.S_IMODE(entry.mode) != 0o755:
             raise ReleaseError("Finalizer entry point is not executable in the release package")
@@ -243,34 +276,23 @@ def verify_bytes(artifact: Path, version_tag: str) -> None:
 
 
 def verify(version_tag: str, dist: Path | None = None) -> str:
-    version = version_tag[1:]
+    version = tag_version(version_tag)
     package = package_name(version)
     dist_root = dist or ROOT / "dist"
     artifact = dist_root / f"{package}.tar.gz"
-    if not artifact.is_file():
+    if artifact.is_symlink() or not artifact.is_file():
         raise ReleaseError(f"release artifact is missing: {artifact}")
     verify_bytes(artifact, version_tag)
     digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
     checksums = dist_root / "SHA256SUMS.txt"
-    if not checksums.is_file():
+    if checksums.is_symlink() or not checksums.is_file():
         raise ReleaseError(
             f"{checksums.name} is missing next to the artifact; only `build` may author a "
             "checksum file, otherwise verification would grade its own homework"
         )
-    recorded = checksums.read_text(encoding="utf-8").split()
-    if not recorded:
-        raise ReleaseError(f"{checksums.name} records no digest")
-    if recorded[0] != digest:
+    recorded = checksums.read_text(encoding="utf-8")
+    if recorded != f"{digest}  {artifact.name}\n":
         raise ReleaseError("SHA256SUMS.txt does not match the built artifact bytes")
-    check = subprocess.run(
-        ["sha256sum", "--check", "SHA256SUMS.txt"],
-        cwd=dist_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if check.returncode != 0:
-        raise ReleaseError(f"checksum verification failed: {check.stdout}{check.stderr}")
     return digest
 
 

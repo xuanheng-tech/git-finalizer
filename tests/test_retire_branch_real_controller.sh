@@ -78,7 +78,7 @@ expect_failure() {
 
 summary_field() {
     local file=$1 field=$2
-    /usr/bin/python3 -B -c '
+    python3 -B -c '
 import json, sys
 document = json.load(open(sys.argv[1]))
 value = document
@@ -115,7 +115,7 @@ make_env() {
     git -C "$test_repo" merge --quiet --no-ff -m "merge $feature_branch" "$feature_branch"
     git -C "$test_repo" push --quiet origin main
     integration_oid=$(git -C "$test_repo" rev-parse HEAD)
-    /usr/bin/python3 -B "$case_dir/build_store.py" "$test_repo" "$feature_branch" "$feature_oid"
+    python3 -B "$case_dir/build_store.py" "$test_repo" "$feature_branch" "$feature_oid"
     worktree-controller branch-retirement-plan \
         --repo "$test_repo" --branch "$feature_branch" --remote origin \
         --integrated-into main --json >"$case_dir/plan.json" 2>"$case_dir/plan.err" || {
@@ -123,7 +123,7 @@ make_env() {
         sed -n '1,60p' "$case_dir/plan.json" >&2
         fail_assertion 'real controller refused to persist a valid plan'
     }
-    plan_id=$(/usr/bin/python3 -B -c '
+    plan_id=$(python3 -B -c '
 import json, re, sys
 def walk(value):
     if isinstance(value, dict):
@@ -226,7 +226,7 @@ test_plan_status_and_finalizer_accept() {
     expect_success "$case_dir/dryrun.json" retire_local --dry-run
 }
 
-test_retirement_record_and_replay_guards() {
+test_retirement_completion_and_idempotent_recovery() {
     local case_dir=$tmp_root/record
     local out=$case_dir/retire.json
     write_build_store "$case_dir"
@@ -237,20 +237,78 @@ test_retirement_record_and_replay_guards() {
     fi
     assert_equal 'LOCAL_BRANCH_RETIRED_VERIFIED' \
         "$(summary_field "$out" mode_result.result)" 'unexpected retirement result'
+    assert_equal 'True' "$(summary_field "$out" mode_result.expected_oid_lease_bound)" \
+        'actual deletion lost its expected-OID authorization'
     expect_success "$case_dir/record.json" worktree-controller branch-retirement-record \
         --repo "$test_repo" --plan-id "$plan_id" --operation local \
         --summary-file "$out" --json
     local receipt_file
     receipt_file=$(git -C "$test_repo" rev-parse --path-format=absolute --git-common-dir)/worktree-controller/v1/branch-retirement-receipts/$plan_id-local.json
     [[ -f $receipt_file ]] || fail_assertion 'controller record did not persist the receipt'
+    assert_equal 'AUTHORIZED_EXECUTION' \
+        "$(summary_field "$receipt_file" provenance)" 'completion lost authorized provenance'
+    expect_success "$case_dir/executions.json" worktree-controller branch-retirement-executions \
+        --repo "$test_repo" --action list --json
+    assert_equal '[]' "$(summary_field "$case_dir/executions.json" decision.authorizations)" \
+        'completed operation left an outstanding authorization'
     expect_success "$case_dir/status-after.json" worktree-controller branch-retirement-record \
         --repo "$test_repo" --plan-id "$plan_id" --operation local \
         --summary-file "$out" --json
     assert_equal 1 "$(find "$(dirname "$receipt_file")" -maxdepth 1 -name "$plan_id-local.json" | wc -l)" \
         'duplicate record created a second receipt'
-    expect_failure "$case_dir/replay.json" retire_local
-    assert_file_contains "$case_dir/replay.json" 'already records a consumed receipt' \
-        'plan operation replay after controller record was accepted'
+    expect_success "$case_dir/replay.json" retire_local
+    assert_equal 'ALREADY_ABSENT_VERIFIED' \
+        "$(summary_field "$case_dir/replay.json" mode_result.result)" 'completed recovery was not idempotent'
+    assert_equal 'False' "$(summary_field "$case_dir/replay.json" mode_result.expected_oid_lease_bound)" \
+        'completed recovery claimed another CAS'
+}
+
+test_remote_authorization_and_local_continuation() {
+    local case_dir=$tmp_root/remote-authorization
+    local out=$case_dir/remote.json
+    write_build_store "$case_dir"
+    make_env "$case_dir"
+    expect_success "$out" "$finalizer" --summary --retire-remote-branch "$feature_branch" \
+        --remote origin --integrated-into main --expected-remote-oid "$feature_oid" \
+        --expected-integrated-oid "$integration_oid" --retirement-plan-id "$plan_id" \
+        --repo "$test_repo"
+    assert_equal 'REMOTE_BRANCH_RETIRED_VERIFIED' \
+        "$(summary_field "$out" mode_result.result)" 'real remote completion failed'
+    assert_equal 'True' "$(summary_field "$out" push.executed)" 'actual remote CAS was not reported'
+    if git --git-dir="$test_remote" show-ref --verify --quiet "refs/heads/$feature_branch"; then
+        fail_assertion 'remote authorization left the live ref'
+    fi
+    if git -C "$test_repo" show-ref --verify --quiet "refs/remotes/origin/$feature_branch"; then
+        fail_assertion 'remote completion left the tracking ref'
+    fi
+    git -C "$test_repo" show-ref --verify --quiet "refs/heads/$feature_branch" ||
+        fail_assertion 'remote CAS changed the local branch'
+    expect_success "$case_dir/local.json" retire_local
+    expect_success "$case_dir/status.json" worktree-controller branch-retirement-status \
+        --repo "$test_repo" --plan-id "$plan_id" --json
+    assert_equal "['local', 'remote']" \
+        "$(summary_field "$case_dir/status.json" decision.completed_operations)" \
+        'independent operations did not both complete'
+    expect_success "$case_dir/executions.json" worktree-controller branch-retirement-executions \
+        --repo "$test_repo" --action list --json
+    assert_equal '[]' "$(summary_field "$case_dir/executions.json" decision.authorizations)" \
+        'remote/local continuation leaked an authorization'
+}
+
+test_legacy_absence_has_observed_provenance() {
+    local case_dir=$tmp_root/legacy-observation
+    write_build_store "$case_dir"
+    make_env "$case_dir"
+    git -C "$test_repo" update-ref -d "refs/heads/$feature_branch" "$feature_oid"
+    expect_success "$case_dir/out.json" retire_local
+    assert_equal 'ALREADY_ABSENT_VERIFIED' \
+        "$(summary_field "$case_dir/out.json" mode_result.result)" 'legacy absence was not observed'
+    assert_equal 'False' "$(summary_field "$case_dir/out.json" mode_result.expected_oid_lease_bound)" \
+        'legacy absence claimed an authorized CAS'
+    local receipt_file
+    receipt_file=$(git -C "$test_repo" rev-parse --path-format=absolute --git-common-dir)/worktree-controller/v1/branch-retirement-receipts/$plan_id-local.json
+    assert_equal 'CONTROLLER_OBSERVED' \
+        "$(summary_field "$receipt_file" provenance)" 'legacy observation lost its distinct provenance'
 }
 
 test_authority_and_oid_drift_fail_closed() {
@@ -259,7 +317,7 @@ test_authority_and_oid_drift_fail_closed() {
     make_env "$case_dir"
     printf ' \n' >>"$case_dir/repo/.git/worktree-controller/v1/release-receipts/33333333-3333-4333-8333-333333333333.json"
     expect_failure "$case_dir/out.log" retire_local
-    assert_file_contains "$case_dir/out.log" 'drifted' 'authority drift was accepted'
+    assert_file_contains "$case_dir/out.log" 'Controller retirement identity differs' 'authority drift was accepted'
     git -C "$test_repo" show-ref --verify --quiet "refs/heads/$feature_branch" ||
         fail_assertion 'authority drift deleted the local ref'
 
@@ -267,9 +325,28 @@ test_authority_and_oid_drift_fail_closed() {
     write_build_store "$case_dir"
     make_env "$case_dir"
     mkdir -p "$case_dir/repo/.agents"
-    printf '[budget]\nmax_total = 1\n' >"$case_dir/repo/.agents/worktree-policy.toml"
+    cat >"$case_dir/repo/.agents/worktree-policy.toml" <<'POLICY'
+schema_version = 1
+[limits]
+normal_limit = 5
+hard_limit = 6
+[canonical]
+protected = true
+allowed_roles = ["canonical", "control-plane"]
+[slots]
+integration = 1
+feature_or_audit = 3
+emergency = 1
+[review]
+stale_warning_days = 8
+[authority]
+require_adoption = true
+require_task_key = true
+require_authority_key = true
+unique_active_feature_authority = true
+POLICY
     expect_failure "$case_dir/out.log" retire_local
-    assert_file_contains "$case_dir/out.log" 'drifted' 'policy drift was accepted'
+    assert_file_contains "$case_dir/out.log" 'Controller retirement identity differs' 'policy drift was accepted'
     rm -f -- "$case_dir/repo/.agents/worktree-policy.toml"
 
     case_dir=$tmp_root/oid-change
@@ -289,21 +366,22 @@ test_tampered_plan_and_lock_contention() {
     write_build_store "$case_dir"
     make_env "$case_dir"
     local plan_file=$case_dir/repo/.git/worktree-controller/v1/branch-retirement-plans/$plan_id.json
-    /usr/bin/python3 -B -c '
+    python3 -B -c '
 import json, sys
 path = sys.argv[1]
 plan = json.load(open(path))
-plan["controller_state_digest"] = "f" * 64
+plan["plan_id"] = "f" * 64
 open(path, "w").write(json.dumps(plan, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 ' "$plan_file"
     expect_failure "$case_dir/out.log" retire_local
-    assert_file_contains "$case_dir/out.log" 'content hash differs' 'tampered plan was accepted'
+    assert_file_contains "$case_dir/out.log" 'Controller branch-retirement-status refused or failed' \
+        'tampered plan was accepted'
 
     case_dir=$tmp_root/lock
     write_build_store "$case_dir"
     make_env "$case_dir"
     local lock=$case_dir/repo/.git/worktree-controller/v1/repo.lock
-    /usr/bin/python3 -B -c '
+    python3 -B -c '
 import fcntl, os, sys, time
 fd = os.open(sys.argv[1], os.O_RDWR)
 fcntl.flock(fd, fcntl.LOCK_EX)
@@ -334,24 +412,23 @@ test_namespace_and_capability_blockers() {
     git -C "$case_dir/repo" add -- f
     git -C "$case_dir/repo" -c user.name=t -c user.email=t@x commit --quiet -m seed
     mkdir -p -- "$case_dir/repo/.git/codex-worktree/v1"
-    expect_failure "$case_dir/companion-legacy.log" /usr/bin/python3 -B \
-        "$project_root/git-finalize-retirement-plan.py" \
-        --repo "$case_dir/repo" --plan-id "$(printf 'e%.0s' $(seq 64))" \
-        --operation local --branch main --remote origin --integrated-into main \
-        --expected-oid "$(printf '0%.0s' $(seq 40))" \
+    expect_failure "$case_dir/companion-legacy.log" "$finalizer" --summary \
+        --repo "$case_dir/repo" --retirement-plan-id "$(printf 'e%.0s' $(seq 64))" \
+        --retire-local-branch "$feature_branch" --remote origin --integrated-into main \
+        --expected-local-oid "$(printf '0%.0s' $(seq 40))" \
         --expected-integrated-oid "$(printf '0%.0s' $(seq 40))"
     assert_file_contains "$case_dir/companion-legacy.log" 'legacy codex-worktree' \
         'companion accepted a legacy-namespace repository'
     mkdir -p -- "$case_dir/repo/.git/worktree-controller/v1"
     touch "$case_dir/repo/.git/worktree-controller/v1/repo.lock"
     chmod 600 "$case_dir/repo/.git/worktree-controller/v1/repo.lock"
-    expect_failure "$case_dir/companion-noplan.log" /usr/bin/python3 -B \
+    expect_failure "$case_dir/companion-noplan.log" python3 -B \
         "$project_root/git-finalize-retirement-plan.py" \
         --repo "$case_dir/repo" --plan-id "$(printf 'e%.0s' $(seq 64))" \
         --operation local --branch main --remote origin --integrated-into main \
         --expected-oid "$(printf '0%.0s' $(seq 40))" \
         --expected-integrated-oid "$(printf '0%.0s' $(seq 40))"
-    assert_file_contains "$case_dir/companion-noplan.log" 'cannot read exact Controller plan' \
+    assert_file_contains "$case_dir/companion-noplan.log" 'Controller branch-retirement-status refused or failed' \
         'missing plan was accepted'
 
     case_dir=$tmp_root/capability
@@ -367,7 +444,7 @@ test_namespace_and_capability_blockers() {
         --integrated-into main --expected-local-oid "$feature_oid" \
         --expected-integrated-oid "$integration_oid" --retirement-plan-id "$plan_id" \
         --repo "$test_repo"
-    assert_file_contains "$case_dir/mismatch.log" 'does not match plan schema' \
+    assert_file_contains "$case_dir/mismatch.log" 'required public retirement protocols' \
         'capability mismatch was accepted'
     git -C "$test_repo" show-ref --verify --quiet "refs/heads/$feature_branch" ||
         fail_assertion 'capability mismatch deleted the branch anyway'
@@ -377,7 +454,7 @@ test_namespace_and_capability_blockers() {
         --integrated-into main --expected-local-oid "$feature_oid" \
         --expected-integrated-oid "$integration_oid" --retirement-plan-id "$plan_id" \
         --repo "$test_repo"
-    assert_file_contains "$case_dir/probe.log" 'capabilities probe failed' \
+    assert_file_contains "$case_dir/probe.log" 'Controller capabilities refused or failed' \
         'failing capability probe was accepted'
     git -C "$test_repo" show-ref --verify --quiet "refs/heads/$feature_branch" ||
         fail_assertion 'failed probe deleted the branch anyway'
@@ -385,8 +462,12 @@ test_namespace_and_capability_blockers() {
 
 run_case 'real controller plan validates and finalizer dry-run accepts' \
     test_plan_status_and_finalizer_accept
-run_case 'real retirement records receipt and blocks replay' \
-    test_retirement_record_and_replay_guards
+run_case 'real retirement completes authorization and recovers idempotently' \
+    test_retirement_completion_and_idempotent_recovery
+run_case 'real remote CAS completes before independent local continuation' \
+    test_remote_authorization_and_local_continuation
+run_case 'legacy absent ref is recorded as an observation without a CAS' \
+    test_legacy_absence_has_observed_provenance
 run_case 'authority, policy, and OID drift fail closed' \
     test_authority_and_oid_drift_fail_closed
 run_case 'tampered plan and lock contention never mutate' \
