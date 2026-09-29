@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.6.3**.
+Current source version: **1.7.0**.
 
-当前版本：`1.6.3`
+当前版本：`1.7.0`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
@@ -66,7 +66,8 @@ Local verify-only and commit-only modes do not accept these Python prose reviews
 
 - GNU Bash, Git and GNU command-line utilities (`realpath`, `stat`, `grep`, `sed`). Verified baseline:
   **Ubuntu 24.04 LTS** with its system Git. Plan-bound retirement also requires a Controller that
-  advertises the public verification and execution protocols.
+  advertises the public verification and execution protocols. Integration publication requires
+  `integration_publication_execution_version` 1 and the public locked stdio session.
 - Python **3.11 or newer**, with the standard library only. The entrypoint resolves `python3` from
   `PATH` once and uses that interpreter for every companion and JSON summary. Verified baseline:
   **Python 3.12**; no Debian-specific interpreter path is required.

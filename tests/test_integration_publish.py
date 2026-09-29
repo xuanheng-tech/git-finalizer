@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import uuid
-
 
 ROOT = Path(__file__).resolve().parents[1]
 FINALIZER = ROOT / "git-finalize"
@@ -17,259 +19,101 @@ FINALIZER = ROOT / "git-finalize"
 
 def git(repo: Path, *arguments: str) -> str:
     result = subprocess.run(
-        ("git", "-C", str(repo), *arguments),
-        check=False,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "LC_ALL": "C"},
+        ("git", "-C", str(repo), *arguments), check=False, capture_output=True,
+        text=True, env={**os.environ, "LC_ALL": "C"},
     )
-    if result.returncode != 0:
+    if result.returncode:
         raise AssertionError(result.stderr or result.stdout)
     return result.stdout.strip()
 
 
 class IntegrationPublishFixture:
     def __init__(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(
-            prefix="git-finalizer-integration-"
-        )
+        self.temporary = tempfile.TemporaryDirectory(prefix="git-finalizer-publication-")
         self.root = Path(self.temporary.name)
-        self.repo = self.root / "repo"
-        self.remote = self.root / "remote.git"
-        self.candidate = self.root / "candidate"
+        self.repo, self.remote, self.candidate = (
+            self.root / "repo", self.root / "remote.git", self.root / "candidate",
+        )
         git(self.root, "init", "--bare", "--initial-branch=main", str(self.remote))
         git(self.remote, "config", "core.logAllRefUpdates", "true")
         git(self.root, "init", "--initial-branch=main", str(self.repo))
-        git(self.repo, "config", "user.name", "Integration Test")
-        git(self.repo, "config", "user.email", "integration@example.invalid")
-        (self.repo / "base.txt").write_text("base\n", encoding="utf-8")
+        git(self.repo, "config", "user.name", "Publication Test")
+        git(self.repo, "config", "user.email", "publication@example.invalid")
+        (self.repo / "base.txt").write_text("base\n")
         git(self.repo, "add", "base.txt")
         git(self.repo, "commit", "-m", "base")
         git(self.repo, "remote", "add", "origin", str(self.remote))
         git(self.repo, "push", "--set-upstream", "origin", "main")
         self.expected_main = git(self.repo, "rev-parse", "HEAD")
-        git(
-            self.repo,
-            "worktree",
-            "add",
-            "-b",
-            "integration/candidate",
-            str(self.candidate),
-            "main",
-        )
-        (self.candidate / "candidate.txt").write_text("candidate\n", encoding="utf-8")
+        git(self.repo, "worktree", "add", "-b", "integration/candidate", str(self.candidate), "main")
+        (self.candidate / "candidate.txt").write_text("candidate\n")
         git(self.candidate, "add", "candidate.txt")
         git(self.candidate, "commit", "-m", "candidate")
         self.candidate_oid = git(self.candidate, "rev-parse", "HEAD")
-        self.common = Path(
-            git(
-                self.candidate,
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-common-dir",
-            )
-        )
-        git_dir = Path(
-            git(
-                self.candidate,
-                "rev-parse",
-                "--path-format=absolute",
-                "--absolute-git-dir",
-            )
-        )
-        relative_git_dir = git_dir.relative_to(self.common)
-        self.worktree_key = (
-            "wt_" + hashlib.sha256(os.fspath(relative_git_dir).encode()).hexdigest()
-        )
-        self.metadata = self.common / "worktree-controller" / "v1"
-        self.allocation_id = str(uuid.uuid4())
-        self.repository_id = str(uuid.uuid4())
         self.lease_id = str(uuid.uuid4())
-        self.intent_id = str(uuid.uuid4())
         self.run_id = "integration-publish-test"
-        self.validation_evidence = "validation-evidence"
-        self._write_metadata(datetime.now(timezone.utc) + timedelta(minutes=5))
+        self.identity = {
+            "repository_id": str(uuid.uuid4()), "allocation_id": str(uuid.uuid4()),
+            "lease_id": self.lease_id, "run_id": self.run_id, "remote": "origin",
+            "target_ref": "refs/heads/main", "candidate_oid": self.candidate_oid,
+            "expected_main_oid": self.expected_main, "validation_evidence_id": "validation-evidence",
+            "record_version": 3,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        }
+        self.config_path = self.root / "public-contract.json"
+        self.config: dict[str, object] = {"repository": str(self.candidate), "identity": self.identity}
+        self.write_config()
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        controller = self.bin / "worktree-controller"
+        controller.write_text(
+            f"#!{sys.executable}\nimport os, sys\nos.execv({sys.executable!r}, "
+            f"[{sys.executable!r}, {str(ROOT / 'tests/publication_controller_fixture.py')!r}, "
+            f"{str(self.config_path)!r}, *sys.argv[1:]])\n"
+        )
+        controller.chmod(0o755)
+        self.environment = {**os.environ, "PATH": str(self.bin) + os.pathsep + os.environ["PATH"]}
 
     def close(self) -> None:
         self.temporary.cleanup()
 
-    @staticmethod
-    def _write(path: Path, payload: dict[str, object]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    def write_config(self) -> None:
+        self.config_path.write_text(json.dumps(self.config) + "\n")
 
-    def _write_metadata(self, expires: datetime) -> None:
-        self.metadata.mkdir(parents=True, exist_ok=True)
-        (self.metadata / "repo.lock").touch()
-        self._write(
-            self.metadata / "repo.json",
-            {"repository_id": self.repository_id},
-        )
-        self._write(
-            self.metadata / "bindings" / f"{self.worktree_key}.json",
-            {"allocation_id": self.allocation_id},
-        )
-        self._write(
-            self.metadata / "records" / f"{self.allocation_id}.json",
-            {
-                "allocation_id": self.allocation_id,
-                "role": "integration",
-                "lifecycle": "INTEGRATING",
-                "owner": "integration-owner",
-                "task_commit": self.candidate_oid,
-                "handoff_commit": self.candidate_oid,
-                "finalizer_record_id": self.validation_evidence,
-                "finalizer_commit": self.candidate_oid,
-            },
-        )
-        self._write(
-            self.metadata / "integration-intents" / f"{self.intent_id}.json",
-            {
-                "allocation_id": self.allocation_id,
-                "state": "VALIDATED",
-                "candidate_oid": self.candidate_oid,
-                "validated_oid": self.candidate_oid,
-                "validation_evidence_id": self.validation_evidence,
-            },
-        )
-        self._write(
-            self.metadata / "publication-lease.json",
-            {
-                "schema_version": 2,
-                "lease_id": self.lease_id,
-                "repository_id": self.repository_id,
-                "allocation_id": self.allocation_id,
-                "holder": "integration-owner",
-                "run_id": self.run_id,
-                "remote": "origin",
-                "branch": "main",
-                "target_ref": "refs/heads/main",
-                "candidate_oid": self.candidate_oid,
-                "expected_main_oid": self.expected_main,
-                "validation_evidence_id": self.validation_evidence,
-                "acquired_at": datetime.now(timezone.utc).isoformat(),
-                "expires_at": expires.isoformat(),
-            },
-        )
+    def command(self) -> list[str]:
+        return [
+            str(FINALIZER), "--publish-integration-candidate", self.candidate_oid,
+            "--repo", str(self.candidate), "--lease-id", self.lease_id,
+            "--run-id", self.run_id, "--summary",
+        ]
 
-    def use_v2_publishing_intent(
-        self,
-        *,
-        state: str = "PUBLISHING",
-        publication_identity: str | None = None,
-    ) -> None:
-        created_at = datetime.now(timezone.utc).isoformat()
-        scope_digest = hashlib.sha256(b'["backend/src"]').hexdigest()
-        prepare_identity = hashlib.sha256(b"prepare-identity").hexdigest()
-        prepared_receipt_id = str(uuid.uuid4())
-        tree_oid = git(self.candidate, "rev-parse", f"{self.candidate_oid}^{{tree}}")
-        tests_receipt_id = "tests-receipt"
-        snapshot_receipt_id = "snapshot-receipt"
-        self._write(
-            self.metadata / "integration-intents" / f"{self.intent_id}.json",
-            {
-                "schema_version": 3,
-                "contract_version": 2,
-                "intent_id": self.intent_id,
-                "allocation_id": self.allocation_id,
-                "state": state,
-                "attempt": 1,
-                "base_main_oid": self.expected_main,
-                "candidate_oid": self.candidate_oid,
-                "validated_oid": self.candidate_oid,
-                "validation_evidence_id": self.validation_evidence,
-                "publication_identity": publication_identity or self.lease_id,
-                "prepared_receipt_id": prepared_receipt_id,
-                "prepared_base_origin_main_oid": self.expected_main,
-                "prepared_commit_oid": self.candidate_oid,
-                "prepared_tree_oid": tree_oid,
-                "scope_digest": scope_digest,
-                "prepared_scope_digest": scope_digest,
-                "prepare_identity": prepare_identity,
-                "tests_receipt_id": tests_receipt_id,
-                "snapshot_receipt_id": snapshot_receipt_id,
-            },
-        )
-        self._write(
-            self.metadata
-            / "prepared-candidate-receipts"
-            / f"{prepared_receipt_id}.json",
-            {
-                "schema_version": 1,
-                "receipt_id": prepared_receipt_id,
-                "repository_id": self.repository_id,
-                "intent_id": self.intent_id,
-                "allocation_id": self.allocation_id,
-                "attempt": 1,
-                "base_origin_main_oid": self.expected_main,
-                "candidate_oid": self.candidate_oid,
-                "tree_oid": tree_oid,
-                "scope_digest": scope_digest,
-                "prepare_identity": prepare_identity,
-                "validation_evidence_id": self.validation_evidence,
-                "tests_receipt_id": tests_receipt_id,
-                "snapshot_receipt_id": snapshot_receipt_id,
-                "created_at": created_at,
-            },
-        )
-
-    def command(self) -> tuple[str, ...]:
-        return (
-            str(FINALIZER),
-            "--publish-integration-candidate",
-            self.candidate_oid,
-            "--repo",
-            str(self.candidate),
-            "--lease-id",
-            self.lease_id,
-            "--run-id",
-            self.run_id,
-            "--summary",
+    def run(self, **extra: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            self.command(), check=False, capture_output=True, text=True,
+            env={**self.environment, **extra}, timeout=30,
         )
 
     def remote_reflog_count(self) -> int:
-        output = git(self.remote, "reflog", "show", "--format=%H", "refs/heads/main")
-        return len(output.splitlines()) if output else 0
+        return len(git(self.remote, "reflog", "show", "--format=%H", "refs/heads/main").splitlines())
 
     def dirty_canonical(self) -> dict[str, object]:
-        base = self.repo / "base.txt"
-        base.write_text("staged\n", encoding="utf-8")
+        (self.repo / "base.txt").write_text("unrelated staged\n")
         git(self.repo, "add", "base.txt")
-        base.write_text("staged-and-modified\n", encoding="utf-8")
-        untracked = self.repo / "untracked.txt"
-        untracked.write_text("untracked\n", encoding="utf-8")
-        index = Path(git(self.repo, "rev-parse", "--git-path", "index"))
-        if not index.is_absolute():
-            index = self.repo / index
-        return {
-            "base": base.read_bytes(),
-            "untracked": untracked.read_bytes(),
-            "index": index.read_bytes(),
-            "head_ref": git(self.repo, "symbolic-ref", "HEAD"),
-            "main_oid": git(self.repo, "rev-parse", "refs/heads/main"),
-            "status": subprocess.run(
-                ("git", "-C", str(self.repo), "status", "--porcelain=v1", "-z"),
-                check=True,
-                capture_output=True,
-            ).stdout,
-        }
+        (self.repo / "untracked.txt").write_text("unrelated untracked\n")
+        return self.canonical_state()
 
     def canonical_state(self) -> dict[str, object]:
-        base = self.repo / "base.txt"
-        untracked = self.repo / "untracked.txt"
         index = Path(git(self.repo, "rev-parse", "--git-path", "index"))
         if not index.is_absolute():
             index = self.repo / index
         return {
-            "base": base.read_bytes(),
-            "untracked": untracked.read_bytes(),
-            "index": index.read_bytes(),
-            "head_ref": git(self.repo, "symbolic-ref", "HEAD"),
+            "base": (self.repo / "base.txt").read_bytes(),
+            "untracked": (self.repo / "untracked.txt").read_bytes(),
+            "index": index.read_bytes(), "head_ref": git(self.repo, "symbolic-ref", "HEAD"),
             "main_oid": git(self.repo, "rev-parse", "refs/heads/main"),
             "status": subprocess.run(
                 ("git", "-C", str(self.repo), "status", "--porcelain=v1", "-z"),
-                check=True,
-                capture_output=True,
+                check=True, capture_output=True,
             ).stdout,
         }
 
@@ -279,189 +123,141 @@ class IntegrationPublishTests(unittest.TestCase):
         self.fixture = IntegrationPublishFixture()
         self.addCleanup(self.fixture.close)
 
-    def test_interrupted_publish_recovers_without_duplicate_remote_mutation(
-        self,
-    ) -> None:
-        before_canonical = self.fixture.dirty_canonical()
-        before_reflog = self.fixture.remote_reflog_count()
-        environment = {
-            **os.environ,
-            "GIT_FINALIZER_TEST_CRASH_AFTER_PUSH": "1",
-        }
-        interrupted = subprocess.run(
-            self.fixture.command(),
-            check=False,
-            capture_output=True,
-            text=True,
-            env=environment,
-        )
-        self.assertEqual(interrupted.returncode, 97)
-        self.assertEqual(
-            git(self.fixture.remote, "rev-parse", "refs/heads/main"),
-            self.fixture.candidate_oid,
-        )
-        self.assertEqual(self.fixture.remote_reflog_count(), before_reflog + 1)
-
-        recovered = subprocess.run(
-            self.fixture.command(), check=False, capture_output=True, text=True
-        )
-        self.assertEqual(recovered.returncode, 0, recovered.stderr)
-        summary = json.loads(recovered.stdout)
-        self.assertEqual(summary["push"]["result"], "already_published_recovered")
-        self.assertFalse(summary["push"]["executed"])
-        self.assertEqual(summary["remote_verify"]["oid"], self.fixture.candidate_oid)
-        self.assertEqual(self.fixture.remote_reflog_count(), before_reflog + 1)
-        self.assertEqual(self.fixture.canonical_state(), before_canonical)
-
-    def test_controller_v2_publishing_intent_publishes_exact_prepared_candidate(
-        self,
-    ) -> None:
-        self.fixture.use_v2_publishing_intent()
-
-        result = subprocess.run(
-            self.fixture.command(), check=False, capture_output=True, text=True
-        )
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        summary = json.loads(result.stdout)
-        self.assertEqual(summary["push"]["result"], "published")
-        self.assertEqual(summary["remote_verify"]["oid"], self.fixture.candidate_oid)
-
-    def test_controller_v2_interrupted_publish_recovers_idempotently(self) -> None:
-        self.fixture.use_v2_publishing_intent()
-        before_reflog = self.fixture.remote_reflog_count()
-
-        interrupted = subprocess.run(
-            self.fixture.command(),
-            check=False,
-            capture_output=True,
-            text=True,
-            env={
-                **os.environ,
-                "GIT_FINALIZER_TEST_CRASH_AFTER_PUSH": "1",
-            },
-        )
-        self.assertEqual(interrupted.returncode, 97)
-
-        recovered = subprocess.run(
-            self.fixture.command(), check=False, capture_output=True, text=True
-        )
-
-        self.assertEqual(recovered.returncode, 0, recovered.stderr)
-        summary = json.loads(recovered.stdout)
-        self.assertEqual(summary["push"]["result"], "already_published_recovered")
-        self.assertFalse(summary["push"]["executed"])
-        self.assertEqual(self.fixture.remote_reflog_count(), before_reflog + 1)
-
-    def test_controller_v2_publication_identity_drift_fails_closed(self) -> None:
-        self.fixture.use_v2_publishing_intent(
-            publication_identity=str(uuid.uuid4())
-        )
-        before_reflog = self.fixture.remote_reflog_count()
-
-        result = subprocess.run(
-            self.fixture.command(), check=False, capture_output=True, text=True
-        )
-
-        self.assertEqual(result.returncode, 1)
-        summary = json.loads(result.stdout)
-        self.assertEqual(summary["status"], "blocked")
-        self.assertIn("publishing intent", summary["reason"])
-        self.assertEqual(self.fixture.remote_reflog_count(), before_reflog)
-
-    def test_controller_v2_prepared_receipt_drift_fails_closed(self) -> None:
-        self.fixture.use_v2_publishing_intent()
-        intent = json.loads(
-            (
-                self.fixture.metadata
-                / "integration-intents"
-                / f"{self.fixture.intent_id}.json"
-            ).read_text(encoding="utf-8")
-        )
-        receipt_path = (
-            self.fixture.metadata
-            / "prepared-candidate-receipts"
-            / f"{intent['prepared_receipt_id']}.json"
-        )
-        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-        receipt["tests_receipt_id"] = "drifted-tests-receipt"
-        self.fixture._write(receipt_path, receipt)
-        before_reflog = self.fixture.remote_reflog_count()
-
-        result = subprocess.run(
-            self.fixture.command(), check=False, capture_output=True, text=True
-        )
-
-        self.assertEqual(result.returncode, 1)
-        summary = json.loads(result.stdout)
-        self.assertEqual(summary["status"], "blocked")
-        self.assertIn("prepared candidate receipt", summary["reason"])
-        self.assertEqual(self.fixture.remote_reflog_count(), before_reflog)
-
-    def test_controller_v2_ready_without_live_lease_state_fails_closed(self) -> None:
-        self.fixture.use_v2_publishing_intent(state="READY_TO_PUBLISH")
-        before_reflog = self.fixture.remote_reflog_count()
-
-        result = subprocess.run(
-            self.fixture.command(), check=False, capture_output=True, text=True
-        )
-
-        self.assertEqual(result.returncode, 1)
-        summary = json.loads(result.stdout)
-        self.assertEqual(summary["status"], "blocked")
-        self.assertIn("publishing intent", summary["reason"])
-        self.assertEqual(self.fixture.remote_reflog_count(), before_reflog)
-
-    def test_concurrent_duplicate_executor_performs_one_remote_update(self) -> None:
-        before_reflog = self.fixture.remote_reflog_count()
-        first = subprocess.Popen(
-            self.fixture.command(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        second = subprocess.Popen(
-            self.fixture.command(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        first_output, first_error = first.communicate(timeout=20)
-        second_output, second_error = second.communicate(timeout=20)
-        self.assertEqual(first.returncode, 0, first_error)
-        self.assertEqual(second.returncode, 0, second_error)
-        results = {
-            json.loads(first_output)["push"]["result"],
-            json.loads(second_output)["push"]["result"],
-        }
-        self.assertEqual(results, {"published", "already_published_recovered"})
-        self.assertEqual(self.fixture.remote_reflog_count(), before_reflog + 1)
-
-    def test_publication_preserves_the_repository_pre_push_hook(self) -> None:
-        hook = self.fixture.common / "hooks/pre-push"
-        hook.write_text("#!/bin/sh\nprintf 'synthetic-private-diagnostic\\n' >&2\nexit 1\n")
-        hook.chmod(0o755)
-        before_reflog = self.fixture.remote_reflog_count()
-        result = subprocess.run(self.fixture.command(), capture_output=True, text=True, check=False)
+    def assert_blocked(self, result: subprocess.CompletedProcess[str], reason: str) -> dict[str, object]:
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertEqual(self.fixture.remote_reflog_count(), before_reflog)
-        self.assertNotIn("synthetic-private-diagnostic", result.stdout + result.stderr)
-
-    def test_expired_writer_cannot_modify_main(self) -> None:
-        self.fixture._write_metadata(datetime.now(timezone.utc) - timedelta(seconds=1))
-        before_reflog = self.fixture.remote_reflog_count()
-        result = subprocess.run(
-            self.fixture.command(), check=False, capture_output=True, text=True
-        )
-        self.assertEqual(result.returncode, 1)
         summary = json.loads(result.stdout)
         self.assertEqual(summary["status"], "blocked")
-        self.assertIn("expired", summary["reason"])
-        self.assertEqual(
-            git(self.fixture.remote, "rev-parse", "refs/heads/main"),
-            self.fixture.expected_main,
-        )
-        self.assertEqual(self.fixture.remote_reflog_count(), before_reflog)
+        self.assertIn(reason, summary["reason"])
+        return summary
+
+    def test_publication_needs_no_private_controller_metadata_and_preserves_canonical(self) -> None:
+        before = self.fixture.dirty_canonical()
+        common = Path(git(self.fixture.candidate, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+        self.assertFalse((common / "worktree-controller").exists())
+        result = self.fixture.run()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        summary = json.loads(result.stdout)
+        self.assertEqual(summary["remote_verify"]["oid"], self.fixture.candidate_oid)
+        self.assertEqual(summary["controller_execution"]["contract"], "integration-publication-session/v1")
+        self.assertTrue(summary["controller_execution"]["lifecycle_completion_required"])
+        self.assertFalse((common / "worktree-controller").exists())
+        self.assertEqual(self.fixture.canonical_state(), before)
+
+    def test_interrupted_push_recovers_without_duplicate_mutation(self) -> None:
+        before = self.fixture.remote_reflog_count()
+        interrupted = self.fixture.run(GIT_FINALIZER_TEST_CRASH_AFTER_PUSH="1")
+        self.assertEqual(interrupted.returncode, 97, interrupted.stdout + interrupted.stderr)
+        self.assertEqual(self.fixture.remote_reflog_count(), before + 1)
+        recovered = self.fixture.run()
+        self.assertEqual(recovered.returncode, 0, recovered.stdout + recovered.stderr)
+        summary = json.loads(recovered.stdout)
+        self.assertEqual(summary["push"]["result"], "already_published_recovered")
+        self.assertFalse(summary["push"]["executed"])
+        self.assertEqual(self.fixture.remote_reflog_count(), before + 1)
+
+    def test_duplicate_consumers_share_the_public_session_gate(self) -> None:
+        before = self.fixture.remote_reflog_count()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: self.fixture.run(), range(2)))
+        for result in results:
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        summaries = [json.loads(result.stdout) for result in results]
+        self.assertEqual(sum(result["push"]["executed"] for result in summaries), 1)
+        self.assertEqual(self.fixture.remote_reflog_count(), before + 1)
+
+    def test_failed_push_leaves_same_candidate_for_recovery(self) -> None:
+        hook = self.fixture.remote / "hooks" / "pre-receive"
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+        before = self.fixture.remote_reflog_count()
+        self.assert_blocked(self.fixture.run(), "integration push failed")
+        self.assertEqual(self.fixture.remote_reflog_count(), before)
+        hook.unlink()
+        recovered = self.fixture.run()
+        self.assertEqual(recovered.returncode, 0, recovered.stdout + recovered.stderr)
+        self.assertEqual(git(self.fixture.candidate, "rev-parse", "HEAD"), self.fixture.candidate_oid)
+
+    def test_completion_refusal_after_push_blocks_then_recovers_without_repeating_push(self) -> None:
+        self.fixture.config["refusal"] = "completed"
+        self.fixture.write_config()
+        before = self.fixture.remote_reflog_count()
+        self.assert_blocked(self.fixture.run(), "FIXTURE_REFUSAL")
+        self.assertEqual(self.fixture.remote_reflog_count(), before + 1)
+        del self.fixture.config["refusal"]
+        self.fixture.write_config()
+        recovered = self.fixture.run()
+        self.assertEqual(recovered.returncode, 0, recovered.stdout + recovered.stderr)
+        self.assertFalse(json.loads(recovered.stdout)["push"]["executed"])
+        self.assertEqual(self.fixture.remote_reflog_count(), before + 1)
+
+    def test_old_or_malformed_capability_cannot_fall_back_to_private_files(self) -> None:
+        before = self.fixture.remote_reflog_count()
+        for capability in (0, 2, True, None):
+            with self.subTest(capability=capability):
+                self.fixture.config["capability"] = capability
+                self.fixture.write_config()
+                self.assert_blocked(self.fixture.run(), "required public integration publication protocol")
+                self.assertEqual(self.fixture.remote_reflog_count(), before)
+
+    def test_missing_controller_refuses_before_push(self) -> None:
+        before = self.fixture.remote_reflog_count()
+        self.assert_blocked(self.fixture.run(PATH="/usr/bin:/bin"), "Worktree Controller is required")
+        self.assertEqual(self.fixture.remote_reflog_count(), before)
+
+    def test_unsafe_remote_and_wrong_candidate_identity_are_rejected(self) -> None:
+        before = self.fixture.remote_reflog_count()
+        for field, value in (("remote", "-unsafe"), ("candidate_oid", self.fixture.expected_main), ("record_version", True)):
+            with self.subTest(field=field):
+                changed = {**self.fixture.identity, field: value}
+                self.fixture.config["overrides"] = {"verified": {"identity": changed}}
+                self.fixture.write_config()
+                self.assert_blocked(self.fixture.run(), "Controller")
+                self.assertEqual(self.fixture.remote_reflog_count(), before)
+
+    def test_schema_phase_and_authorization_identity_drift_are_rejected(self) -> None:
+        before = self.fixture.remote_reflog_count()
+        for phase, override in (
+            ("verified", {"schema_version": True}),
+            ("verified", {"contract": "unsupported/v2"}),
+            ("verified", {"action": {}}),
+            ("authorized", {"action": []}),
+            ("authorized", {"phase": "completed"}),
+            ("authorized", {"identity": {**self.fixture.identity, "record_version": False}}),
+            ("authorized", {"identity": {**self.fixture.identity, "run_id": "wrong-run"}}),
+        ):
+            with self.subTest(phase=phase, override=override):
+                self.fixture.config["overrides"] = {phase: override}
+                self.fixture.write_config()
+                self.assert_blocked(self.fixture.run(), "Controller")
+                self.assertEqual(self.fixture.remote_reflog_count(), before)
+
+    def test_duplicate_json_response_is_rejected_before_mutation(self) -> None:
+        self.fixture.config["raw"] = {"verified": '{"schema_version":1,"schema_version":1}'}
+        self.fixture.write_config()
+        before = self.fixture.remote_reflog_count()
+        self.assert_blocked(self.fixture.run(), "duplicate JSON key")
+        self.assertEqual(self.fixture.remote_reflog_count(), before)
+
+    def test_exact_branch_push_does_not_follow_configured_tags(self) -> None:
+        git(self.fixture.candidate, "config", "push.followTags", "true")
+        git(self.fixture.candidate, "tag", "-a", "candidate-tag", "-m", "candidate tag")
+        result = self.fixture.run()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(git(self.fixture.remote, "for-each-ref", "--format=%(refname)", "refs/tags/"), "")
+
+    def test_session_timeout_is_bounded_and_preserves_remote(self) -> None:
+        self.fixture.config["delays"] = {"verified": 0.5}
+        self.fixture.write_config()
+        spec = importlib.util.spec_from_file_location("publication_consumer", ROOT / "git-finalize-integration-publish.py")
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        before = self.fixture.remote_reflog_count()
+        with patch.dict(os.environ, self.fixture.environment), patch.object(module, "RESPONSE_TIMEOUT_SECONDS", 0.05):
+            arguments = module.build_parser().parse_args(self.fixture.command()[1:])
+            with self.assertRaisesRegex(module.PublishError, "timed out"):
+                module.publish(arguments)
+        self.assertEqual(self.fixture.remote_reflog_count(), before)
 
 
 if __name__ == "__main__":

@@ -31,6 +31,17 @@ section is invented for it.
 - Correct the deployment-health adapter ledger, track custom Claude homes and project instruction
   files, register the independently attested released Skill payload, and ignore only host worktree policy.
 
+## 1.7.0
+
+- Consume Controller's provider-neutral `integration-publication-session/v1` instead of opening
+  private leases, locks, bindings, allocation records, intents or prepared receipts. Require the
+  advertised capability and verify each public response identity before executing an exact push.
+- Preserve one producer-owned lock, branch-only non-force pushes, crash recovery without duplicate
+  mutation, completion refusal and unchanged canonical checkout state. Bound waits and fail closed
+  when the producer or its protocol is unavailable.
+- Advance Git Finalizer CLI contract to 6 and accept reviewed Controller CLI contract 41. Core
+  lifecycle commands remain independent of Controller and AI provider credentials.
+
 ## 1.6.3
 
 - Classify the unique fixed public Controller capability description only in its matching schema.

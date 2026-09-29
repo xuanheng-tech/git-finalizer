@@ -238,19 +238,21 @@ $HOME/bin/git-finalize \
   --run-id <controller-run-id>
 ```
 
-该接口要求 candidate 是 clean attached integration checkout，并由唯一 pre-0.6 `VALIDATED`
-intent 或 Controller 0.6+ lease-bound `PUBLISHING` V2 intent、`INTEGRATING` allocation、exact
-validation evidence 和 schema v2 lease 共同绑定。V2 还必须匹配 prepared base/commit/tree/scope、
-tests/Snapshot evidence 与 immutable prepared-candidate receipt。repository ID、allocation、holder、
-run、remote、target ref、expected main、candidate 和 expiry 任一不匹配都停止。
+该接口要求 Controller 的公开 capability `integration_publication_execution_version` 为 1。
+`integration-publication-session/v1` 由 Controller 核验 clean attached candidate、allocation、
+lease、intent、prepared receipt 与 validation evidence；这些私有字段和存储路径不由 Finalizer
+读取或重建。公开 identity 绑定 repository/allocation、lease/run、remote/target、expected main、
+candidate、validation evidence、record version 和 expiry，任一响应漂移都停止。
 
-Finalizer 使用 Controller 现有 `repo.lock` 的 exclusive flock，先读取 live target；remote 已等于
-candidate 时只返回 `already_published_recovered`，不再 push。否则 lease 必须仍未过期且 live
-target 精确等于 expected main，随后只执行 non-force、`--no-follow-tags` 的
+Controller 在同一公开 stdio session 中持有现有 exclusive repository lock，先 verify，收到
+请求后重新 authorize，并在 Finalizer 推送后独立核验 completion。remote 已等于 candidate 时
+只返回 `already_published_recovered`，不再 push；过期 lease 也可恢复已发生的精确结果。否则
+生产方必须确认 lease 未过期且 live target 精确等于 expected main，才允许 non-force、`--no-follow-tags` 的
 `candidate:refs/heads/<target>` push 并 live verify。它不 fetch、不切换分支、不 add/commit，不修改
 canonical files/index/local branch，也不释放 lease 或 worktree。成功 receipt 的 `record_id` 必须
 传给 Controller `lease-complete --run-id ...`；Controller 才拥有 receipt persistence、lease
-release、registered disposable cleanup 和 guarded release。若进程中断，先以同一 lease/run/OID
+release、registered disposable cleanup 和 guarded release。缺能力、断连、超时或 completion
+拒绝都保持 blocked，不回退到私有文件读取。若进程中断，先以同一 lease/run/OID
 重入本接口读取 remote fact；不得改走 normal mode、创建新 commit 或原始 `git push`。
 
 ## Initial publish
