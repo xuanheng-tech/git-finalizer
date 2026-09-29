@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.6.0"
+readonly VERSION="1.6.1"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -979,7 +979,7 @@ load_source_reviews() {
 readonly private_key_re='-----BEGIN ([A-Z0-9]+[[:space:]]+)*PRIVATE KEY-----'
 readonly known_token_re='(AKIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,})'
 readonly ssh_key_re='(^|[[:space:]])ssh-(rsa|dss|ecdsa|ed25519)[[:space:]]+[A-Za-z0-9+/]{40,}'
-readonly assignment_re="(credential|password|passwd|secret|token|api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token)['\"]?[[:space:]]*[:=][[:space:]]*['\"][^'\"]{12,}['\"]"
+readonly assignment_re="(credentials?|password|passwd|secret|token|api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token)['\"]?[[:space:]]*[:=][[:space:]]*['\"][^'\"]{12,}['\"]"
 
 working_content_reason() {
     local path=$1
@@ -1005,7 +1005,8 @@ working_content_reason() {
     fi
     if [[ -z "$only_detector" || "$only_detector" == 'credential-assignment-v1' ]] &&
         [[ "$excepted_detectors" != *'|credential-assignment-v1|'* ]] &&
-        LC_ALL=C grep -aEiq -- "$assignment_re" "$path"; then
+        LC_ALL=C grep -aEiq -- "$assignment_re" "$path" &&
+        credential_assignment_found file "$path" "$excepted_detectors"; then
         printf '疑似硬编码 credential/secret/token'
         return 0
     fi
@@ -1035,7 +1036,8 @@ staged_content_reason() {
     fi
     if [[ -z "$only_detector" || "$only_detector" == 'credential-assignment-v1' ]] &&
         [[ "$excepted_detectors" != *'|credential-assignment-v1|'* ]] &&
-        LC_ALL=C grep -aEiq -- "$assignment_re" < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null); then
+        LC_ALL=C grep -aEiq -- "$assignment_re" < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null) &&
+        credential_assignment_found blob "$oid" "$excepted_detectors"; then
         printf '疑似硬编码 credential/secret/token'
         return 0
     fi
@@ -3709,6 +3711,141 @@ validate_retirement_oid() {
 }
 
 # GF-INTEGRATION-ADAPTER: worktree-controller-retirement (single site)
+credential_assignment_found() {
+    # Python absence preserves the original strict assignment decision.
+    python3_available || return 0
+    local assignment_verdict
+    assignment_verdict=$("$PYTHON3_EXECUTABLE" -B - "$1" "$2" "$repo" "$assignment_re" \
+        "$private_key_re" "$known_token_re" "$ssh_key_re" "$3" <<'PY'
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+
+def expression(value):
+    return re.compile(value.replace("[[:space:]]", r"[\x09-\x0d ]").encode(), re.I)
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def invalid_constant(value):
+    raise ValueError("non-JSON constant")
+
+
+def strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield key
+            yield from strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from strings(item)
+
+
+def decoded_assignment(value, detector):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            # Reuse the original sensitive-name matcher with a fixed sentinel.
+            # Inspect the actual value separately: quotes cannot shorten it.
+            if isinstance(item, str) and len(item.encode()) >= 12 and detector.search(
+                key.encode() + b'="AAAAAAAAAAAA"'
+            ):
+                return True
+            if decoded_assignment(item, detector):
+                return True
+    elif isinstance(value, list):
+        return any(decoded_assignment(item, detector) for item in value)
+    elif isinstance(value, str):
+        return detector.search(value.encode()) is not None
+    return False
+
+
+try:
+    kind, source, repo, assignment, private_key, known, ssh_key, excepted = sys.argv[1:]
+    raw = (
+        Path(source).read_bytes() if kind == "file"
+        else subprocess.check_output(
+            ["git", "-C", repo, "cat-file", "blob", source], stderr=subprocess.DEVNULL
+        )
+    )
+    detector = expression(assignment)
+    if detector.search(raw) is None:
+        sys.exit(0)
+    document = json.loads(
+        raw, object_pairs_hook=unique_object, parse_constant=invalid_constant
+    )
+    if not (
+        isinstance(document, dict)
+        and type(document.get("schema_version")) is int
+        and document["schema_version"] == 1
+        and document.get("tool_name") == "worktree-controller"
+        and type(document.get("contract_version")) is int
+        and document["contract_version"] > 0
+        and type(document.get("branch_retirement_execution_version")) is int
+        and document["branch_retirement_execution_version"] == 1
+    ):
+        sys.exit(0)
+    retirement = document.get("branch_retirement_contract")
+    if not isinstance(retirement, dict) or retirement.get("contract") != "branch-retirement/v3":
+        sys.exit(0)
+    declaration = retirement.get("execution_authorization")
+    description = (
+        "a 256-bit Controller-generated capability returned only by authorize and "
+        "compared constant-time at complete or abandon; it is excluded from the "
+        "identity so it cannot change the authorization address"
+    )
+    if not (
+        isinstance(declaration, dict)
+        and declaration.get("contract") == "branch-retirement-execution/v1"
+        and declaration.get("capability") == "branch_retirement_execution_version"
+        and declaration.get("token") == description
+    ):
+        sys.exit(0)
+    # Even escaped signatures in decoded schema strings take priority. Existing
+    # exact fixture exceptions keep their detector scope; no new flag is exposed.
+    for name, pattern in (
+        ("private-key-header-v1", private_key),
+        ("known-token-v1", known),
+        ("ssh-key", ssh_key),
+    ):
+        if "|" + name + "|" not in excepted and any(
+            expression(pattern).search(value.encode()) for value in strings(document)
+        ):
+            sys.exit(0)
+    # Mask only the unique literal for this exact public declaration. Preserve
+    # all other raw bytes: JSON normalization must not shorten other assignments.
+    literals = re.finditer(rb'"(?:[^"\\]|\\.)*"', raw)
+    descriptions = [match for match in literals if json.loads(match.group()) == description]
+    if len(descriptions) != 1:
+        sys.exit(0)
+    match = descriptions[0]
+    masked = raw[:match.start()] + b'""' + raw[match.end():]
+    # Decoded keys and values supplement the raw scan; quoted characters in a
+    # sensitive value must not turn it into a shorter apparent assignment.
+    declaration["token"] = ""
+    if not (detector.search(masked) or decoded_assignment(document, detector)):
+        print("public-schema-assignment-clear-v1")
+    sys.exit(0)
+except (OSError, ValueError, TypeError, RecursionError, subprocess.CalledProcessError):
+    # An unreadable or non-schema candidate keeps the original strict result.
+    sys.exit(0)
+PY
+    ) || return 0
+    # Only a successful explicit verdict is safe; process failure is strict.
+    [[ "$assignment_verdict" != "public-schema-assignment-clear-v1" ]]
+}
+
 verify_retirement_plan() {
     local operation=$1
     local common_dir

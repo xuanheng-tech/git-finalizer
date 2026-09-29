@@ -31,6 +31,16 @@ section is invented for it.
 - Correct the deployment-health adapter ledger, track custom Claude homes and project instruction
   files, register the independently attested released Skill payload, and ignore only host worktree policy.
 
+## 1.6.1
+
+- Recognize the exact public Controller retirement capability declaration during
+  credential-assignment checks in worktrees and blobs. Reject opaque values,
+  Bearer values, altered descriptions and credentials elsewhere in the same file.
+  Preserve raw matches while also checking decoded assignments and plural credentials.
+- Keep private-key, SSH-key and known-token signatures mandatory, including decoded
+  schema strings. Malformed JSON and duplicate keys retain the strict result.
+- Preserve CLI contract version 5, summary schema and publication interfaces.
+
 ## 1.6.0
 
 Authorization-boundary release. It carries the rule that lets an approved delivery finish inside one

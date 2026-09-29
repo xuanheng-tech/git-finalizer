@@ -107,6 +107,9 @@ Skill 参考和 `.gitea/workflows` 不在该范围内：前者必须能构造外
 - `worktree-controller` 可执行文件探测（`which("worktree-controller")`）只允许在 retirement
   protocol companion 与 read-only deployment-health adapter；核心生命周期不得按名字调用 controller。
 - active runtime frozen contract 路径只允许在 deployment-health adapter。
+- retirement adapter 识别 public CLI schema 中 execution/v1 的精确 capability 描述；
+  working/index/history 共用 assignment 判定，不按文件名豁免 JSON；其它敏感赋值和
+  key/token 签名保持拒绝，重复键或非法 JSON 不进入 schema 描述处理。
 - `snapshot-runner/snapshots` 布局只允许出现在 snapshot adapter。
 - `/api/v1` 只允许出现在 Gitea bootstrap adapter。
 - Context Loader 无运行时耦合（GF 不调用它，也不引用其名称或状态）。
