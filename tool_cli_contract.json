@@ -164,7 +164,8 @@
         "--task-key",
         "--authority-key",
         "--summary",
-        "--"
+        "--",
+        "--fixture-exceptions"
       ],
       "name": "normal_publish",
       "operation_class": "remote_mutation",
@@ -260,7 +261,8 @@
       "flags": [
         "--resume-publish",
         "--repo",
-        "--summary"
+        "--summary",
+        "--fixture-exceptions"
       ],
       "name": "resume_publish",
       "operation_class": "remote_mutation",
@@ -445,7 +447,7 @@
       ]
     }
   ],
-  "contract_version": 4,
+  "contract_version": 5,
   "exit_codes": {
     "0": "success or verification passed",
     "1": "blocked, failed verification, or Finalizer preflight refusal",

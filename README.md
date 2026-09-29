@@ -33,6 +33,16 @@ terminal and an automation layer can rely on "it stopped, and here is why".
 - **Auditable results.** One deterministic JSON object per run with a closed classification triple,
   documented in [docs/agent-contract.md](docs/agent-contract.md).
 
+
+Exact content review is optional: `--fixture-exceptions /absolute/review.json` is accepted by normal
+publication and configured-upstream `--resume-publish`, as well as existing branch/history modes.
+The default scanners remain unchanged. Every review binds the repository root commit, push URL hash,
+exact path, raw blob OID, SHA-256 and detector; other detectors still apply. Normal publication requires
+HEAD to match upstream and checks the same raw blob again after staging. Tests remain limited to
+`tests/`. The sole documentation exception is `CHANGELOG.md` with `private-key-header-v1`: only an
+already-published, inline-backtick header example may be preserved, and its following historical text
+must remain byte-for-byte unchanged. New headers, closing markers and other document paths are refused.
+
 ## Requirements
 
 - GNU Bash, Git and GNU command-line utilities (`realpath`, `stat`, `grep`, `sed`). Verified baseline:

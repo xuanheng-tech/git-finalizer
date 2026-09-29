@@ -593,7 +593,7 @@ Usage:
   git-finalize --resume-initial-publish <full-head-oid>
     --remote <remote-name> --repo <absolute-repo> [--summary]
   git-finalize --resume-publish <full-head-oid>
-    --repo <absolute-repo> [--summary]
+    --repo <absolute-repo> [--summary] [--fixture-exceptions <absolute-json-file>]
   git-finalize --publish-existing-branch <full-head-oid>
     --remote <remote-name> --remote-branch <branch-name>
     --repo <absolute-repo> [--summary] [--fixture-exceptions <absolute-json-file>]
@@ -675,7 +675,7 @@ Options:
   --ci-verified-at <timestamp>   Optional caller-supplied CI evidence timestamp.
   --snapshot <id>                Bind initial publish to a complete snapshot.
   --allow-test-fixture <path>    Ignore content secret signatures for this exact tests/ file.
-  --fixture-exceptions <file>   Exact repository/path/blob/hash/rule exceptions for first branch/history publication.
+  --fixture-exceptions <file>   Exact repository/path/blob/hash/rule reviews for normal or existing publication.
   --reviewed-sensitive-source <file>
                                External exact Python source review; secret scans remain mandatory.
   --allow-large-binary <path>    Allow this exact binary file above 5 MiB, up to 25 MiB.
@@ -983,20 +983,29 @@ readonly assignment_re="(credential|password|passwd|secret|token|api[_-]?key|cli
 
 working_content_reason() {
     local path=$1
+    local excepted_detectors=${2:-}
+    local only_detector=${3:-}
 
-    if LC_ALL=C grep -aEiq -- "$private_key_re" "$path"; then
+    if [[ -z "$only_detector" || "$only_detector" == 'private-key-header-v1' ]] &&
+        [[ "$excepted_detectors" != *'|private-key-header-v1|'* ]] &&
+        LC_ALL=C grep -aEiq -- "$private_key_re" "$path"; then
         printf 'private key 内容签名'
         return 0
     fi
-    if LC_ALL=C grep -aEiq -- "$known_token_re" "$path"; then
+    if [[ -z "$only_detector" || "$only_detector" == 'known-token-v1' ]] &&
+        [[ "$excepted_detectors" != *'|known-token-v1|'* ]] &&
+        LC_ALL=C grep -aEiq -- "$known_token_re" "$path"; then
         printf '高置信度 token/credential 内容签名'
         return 0
     fi
-    if LC_ALL=C grep -aEiq -- "$ssh_key_re" "$path"; then
+    if [[ -z "$only_detector" ]] &&
+        LC_ALL=C grep -aEiq -- "$ssh_key_re" "$path"; then
         printf 'SSH key 内容签名'
         return 0
     fi
-    if LC_ALL=C grep -aEiq -- "$assignment_re" "$path"; then
+    if [[ -z "$only_detector" || "$only_detector" == 'credential-assignment-v1' ]] &&
+        [[ "$excepted_detectors" != *'|credential-assignment-v1|'* ]] &&
+        LC_ALL=C grep -aEiq -- "$assignment_re" "$path"; then
         printf '疑似硬编码 credential/secret/token'
         return 0
     fi
@@ -2283,11 +2292,14 @@ is_committed_large_binary() {
 }
 
 load_fixture_exceptions() {
+    local phase=${1:-history}
     local records path oid detector record key
 
     [[ -n "$fixture_exceptions_file" ]] || return 0
     if ! records=$("$PYTHON3_EXECUTABLE" -B - \
-        "$fixture_exceptions_file" "$repo" "$resume_expected_oid" "$branch_publish_remote" <<'PY'
+        "$fixture_exceptions_file" "$repo" "${resume_expected_oid:-HEAD}" \
+        "${branch_publish_remote:-$upstream_remote}" "$phase" "${normal_upstream_hash:-}" <<'PY'
+from collections import Counter
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -2314,7 +2326,8 @@ def git(*args):
 
 
 try:
-    filename, repo, head, remote = sys.argv[1:]
+    filename, repo, head, remote, phase, example_base = sys.argv[1:]
+    require(phase in {"worktree", "history"}, "unknown content review phase")
     source = Path(filename)
     require(source.is_absolute() and str(source.resolve(strict=True)) == filename
             and source.is_file() and not source.is_symlink(), "expected canonical regular file")
@@ -2342,9 +2355,9 @@ try:
                 "unknown or missing exception fields")
         require(all(type(value) is str for value in entry.values()), "exception fields must be strings")
         path, oid, detector = entry["path"], entry["blob_oid"], entry["detector"]
-        require(path.startswith("tests/") and len(path) <= 1024
+        require((path.startswith("tests/") or path == "CHANGELOG.md") and len(path) <= 1024
                 and str(PurePosixPath(path)) == path and ".." not in PurePosixPath(path).parts
-                and not any(c in path for c in "\x00\n\r\t*?[]"), "expected exact canonical tests/ path")
+                and not any(c in path for c in "\x00\n\r\t*?[]"), "expected exact canonical tests/ or CHANGELOG.md path")
         require(len(oid) == len(roots[0]) and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", oid) is not None
                 and re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]) is not None, "invalid content identity")
         require(detector in {"private-key-header-v1", "known-token-v1", "credential-assignment-v1"},
@@ -2354,8 +2367,45 @@ try:
         key = (path, oid, detector)
         require(key not in seen, "duplicate exception")
         seen.add(key)
-        require(hashlib.sha256(git("cat-file", "blob", oid)).hexdigest() == entry["sha256"],
+        if phase == "worktree":
+            candidate = Path(repo) / path
+            require(candidate.is_file() and not candidate.is_symlink()
+                    and str(candidate.resolve(strict=True)) == str(candidate),
+                    "expected canonical regular review path")
+            require(candidate.stat().st_size <= 16 * 1024 * 1024, "reviewed file exceeds 16 MiB")
+            content = candidate.read_bytes()
+            require(git("hash-object", "--no-filters", "--", path).decode().strip() == oid,
+                    "working content blob identity mismatch")
+        else:
+            content = git("cat-file", "blob", oid)
+        require(hashlib.sha256(content).hexdigest() == entry["sha256"],
                 "fixture content hash mismatch")
+        if path == "CHANGELOG.md":
+            require(detector == "private-key-header-v1", "changelog review allows only a quoted header")
+            baseline = head if phase == "worktree" else example_base
+            require(bool(baseline), "changelog review requires an existing upstream baseline")
+            published = git("show", baseline + ":CHANGELOG.md")
+            marker = re.compile(rb"-----BEGIN (?:[A-Z0-9]+[ \t\v\f\r]+)*PRIVATE KEY-----", re.I)
+            def quoted_lines(data):
+                lines = data.splitlines(keepends=True)
+                found = []
+                for index, line in enumerate(lines):
+                    for match in marker.finditer(line):
+                        require(match.start() > 0 and match.end() < len(line)
+                                and line[match.start() - 1:match.start()] == b"`"
+                                and line[match.end():match.end() + 1] == b"`",
+                                "changelog header must be an inline quoted literal")
+                        found.append((index, line))
+                return lines, found
+            old_lines, old_examples = quoted_lines(published)
+            _, new_examples = quoted_lines(content)
+            require(bool(old_examples) and bool(new_examples), "changelog example is not present in baseline")
+            require(not (Counter(line for _, line in new_examples)
+                         - Counter(line for _, line in old_examples)), "changelog example was added or changed")
+            require(content.endswith(b"".join(old_lines[old_examples[0][0]:])),
+                    "published changelog example and following history must remain unchanged")
+            require(re.search(rb"-----END (?:[A-Z0-9]+[ \t\v\f\r]+)*PRIVATE KEY-----", content, re.I) is None,
+                    "changelog review does not allow a private key closing marker")
         approved = {"schema_version": 1, "repository": identity, "exception": entry}
         digest = hashlib.sha256(json.dumps(approved, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         receipt = {"exception_id": "sha256:" + digest, "repository": identity, **entry, "applied": True}
@@ -2371,13 +2421,44 @@ PY
         fail 'fixture exception 文件无效；未执行 push'
     fi
     while IFS=$'\t' read -r path oid detector record; do
-        staged_content_reason "$oid" '' "$detector" >/dev/null ||
-            fail 'fixture exception detector 未命中指定 blob；未执行 push'
+        if [[ "$phase" == worktree ]]; then
+            [[ -n ${allowed_paths[$path]+present} ]] ||
+                fail 'fixture exception 超出显式文件范围；未执行 add、commit 或 push'
+            working_content_reason "$repo/$path" '' "$detector" >/dev/null ||
+                fail 'fixture exception detector 未命中 working blob；未执行 add、commit 或 push'
+        else
+            staged_content_reason "$oid" '' "$detector" >/dev/null ||
+                fail 'fixture exception detector 未命中指定 blob；未执行 push'
+        fi
         key=$path:$oid:$detector
         history_fixture_exceptions["$key"]=$record
         history_fixture_rules["$path:$oid"]+="|$detector|"
         history_fixture_paths["$path"]=1
     done <<<"$records"
+}
+
+check_exact_fixture_staged_scope() {
+    local path detector key
+    declare -A changed_paths=()
+    for path in "${staged_paths[@]}"; do
+        changed_paths["$path"]=1
+    done
+    for path in "${!history_fixture_paths[@]}"; do
+        if [[ -z ${changed_paths[$path]+present} ]] || ! get_index_entry "$path" ||
+            [[ -z ${history_fixture_rules[$path:$index_oid]+present} ]]; then
+            fail 'fixture exception staged path/blob identity mismatch；未执行 commit 或 push'
+        fi
+        for detector in private-key-header-v1 known-token-v1 credential-assignment-v1; do
+            key=$path:$index_oid:$detector
+            if [[ -n ${history_fixture_exceptions[$key]+present} ]]; then
+                staged_content_reason "$index_oid" '' "$detector" >/dev/null ||
+                    fail 'fixture exception detector 未命中 staged blob；未执行 commit 或 push'
+                history_fixture_applied["$key"]=1
+                summary_fixture_exceptions+=("${history_fixture_exceptions[$key]}")
+                printf 'fixture exception applied: %s\n' "${history_fixture_exceptions[$key]}"
+            fi
+        done
+    done
 }
 
 validate_existing_publish_range() {
@@ -3146,6 +3227,8 @@ resume_existing_publish() {
     printf 'pre-publish ahead/behind: %s/%s\n' "$normal_ahead" "$normal_behind"
     printf 'commit count: %s\n' "$resume_publish_commit_count"
     printf 'commit range: %s\n' "$resume_publish_range"
+    branch_publish_remote=$resume_remote
+    load_fixture_exceptions
     if ! validate_existing_publish_range; then
         fail "$existing_range_error；未执行 push"
     fi
@@ -5024,8 +5107,14 @@ if ((source_review_seen == 1)); then
         authority_key_seen == 1)) || fail 'source review 要求完整 Controller linkage'
 fi
 if ((fixture_exceptions_seen == 1)); then
-    ((publish_existing_branch == 1 || publish_existing_history == 1 || resume_existing_history == 1)) ||
-        fail '--fixture-exceptions 只接受 existing-branch 或 existing-history publication/resume'
+    ((publish_existing_branch == 1 || publish_existing_history == 1 ||
+        resume_existing_history == 1 || resume_existing == 1 ||
+        (commit_only == 0 && verify_only == 0 && initial_commit_only == 0 &&
+         initial_publish == 0 && initial_branch_publish == 0 && resume_initial == 0 &&
+         retire_remote_branch == 0 && retire_local_branch == 0))) ||
+        fail '--fixture-exceptions 只接受 normal 或 existing branch/history publication/resume'
+    ((${#allow_test_fixture_args[@]} == 0)) ||
+        fail '--fixture-exceptions 不接受 --allow-test-fixture'
 fi
 if ((commit_only == 1 || verify_only == 1)); then
     ((initial_commit_only == 0 && initial_publish == 0 &&
@@ -5653,6 +5742,8 @@ for path in "${staged_paths[@]}"; do
     fi
 done
 
+load_fixture_exceptions worktree
+
 for index in "${!paths[@]}"; do
     path=${paths[$index]}
     absolute_path=${absolute_paths[$index]}
@@ -5669,8 +5760,15 @@ for index in "${!paths[@]}"; do
     fi
     if [[ -f "$absolute_path" && ! -L "$absolute_path" ]]; then
         [[ -r "$absolute_path" ]] || fail "文件不可读: $(printf '%q' "$path")"
+        working_fixture_rules=''
+        if [[ -n ${history_fixture_paths[$path]+present} ]]; then
+            working_fixture_oid=$(git -C "$repo" hash-object --no-filters -- "$path") ||
+                fail '无法复核 working fixture blob'
+            working_fixture_rules=${history_fixture_rules[$path:$working_fixture_oid]-}
+            [[ -n "$working_fixture_rules" ]] || fail 'fixture exception working blob 已漂移'
+        fi
         if [[ -z ${test_fixture_content_overrides[$path]+present} ]] &&
-            reason=$(working_content_reason "$absolute_path"); then
+            reason=$(working_content_reason "$absolute_path" "$working_fixture_rules"); then
             fail "拒绝敏感文件 $(printf '%q' "$path"): $reason"
         fi
     fi
@@ -5769,6 +5867,8 @@ else
         fail "$normal_remote_error；未执行新增 git add、commit 或 push"
     fi
     if ((normal_ahead > 0)); then
+        ((fixture_exceptions_seen == 0)) ||
+            fail 'normal fixture review 要求 HEAD 与 upstream 对齐；existing commits 使用 resume-publish'
         resume_publish_range="$normal_upstream_hash..$normal_local_hash"
         resume_publish_commit_count=$normal_ahead
         if ! validate_existing_publish_range; then
@@ -5800,6 +5900,7 @@ fi
 
 check_staged_scope
 check_test_fixture_staged_scope
+check_exact_fixture_staged_scope
 check_large_binary_staged_scope
 ((${#staged_paths[@]} > 0)) || fail 'staged diff 为空；未执行 commit 或 push'
 
@@ -5828,7 +5929,7 @@ for path in "${staged_paths[@]}"; do
     if get_index_entry "$path" &&
         [[ $(git -C "$repo" cat-file -t "$index_oid" 2>/dev/null) == 'blob' ]]; then
         if [[ -z ${test_fixture_content_overrides[$path]+present} ]] &&
-            reason=$(staged_content_reason "$index_oid"); then
+            reason=$(staged_content_reason "$index_oid" "${history_fixture_rules[$path:$index_oid]-}"); then
             fail "拒绝敏感 staged 文件 $(printf '%q' "$path"): $reason"
         fi
     fi

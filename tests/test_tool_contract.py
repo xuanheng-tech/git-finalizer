@@ -78,7 +78,7 @@ class ToolContractTests(unittest.TestCase):
         assert companion_version_match is not None
         self.assertEqual(contract["schema_version"], 1)
         self.assertEqual(manifest["schema_version"], 2)
-        self.assertEqual(contract["contract_version"], 4)
+        self.assertEqual(contract["contract_version"], 5)
         self.assertEqual(contract["tool_name"], "git-finalizer")
         self.assertEqual(contract["tool_version"], manifest["tool_version"])
         self.assertEqual(contract["tool_version"], version_match.group(1))
@@ -211,7 +211,7 @@ class ToolContractTests(unittest.TestCase):
         # Sibling contracts advanced to v3 (Context Loader 1.3.1, Snapshot Runner 2.3.1);
         # per-tool contract advances do not move toolchain_contract_version by themselves.
         self.assertEqual(compatibility["snapshot_runner_contract_version"], 3)
-        self.assertEqual(compatibility["git_finalizer_contract_version"], 4)
+        self.assertEqual(compatibility["git_finalizer_contract_version"], 5)
         self.assertEqual(compatibility["worktree_controller_contract_version"], 3)
         self.assertEqual(
             compatibility["worktree_controller_status"],

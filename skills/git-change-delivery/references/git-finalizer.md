@@ -470,3 +470,18 @@ tag、Release、Artifact 和 deployment 是独立 Release 流程，必须按仓�
 - 继续需要 amend、force push、重复创建 commit、自动冲突处理，或任何原始 Git 写命令绕过 Finalizer。
 
 停止时报告工具是否已经创建 commit、确切 commit OID、已验证与未验证状态，以及工具给出的安全恢复入口。不得把失败或不确定结果描述为发布成功。
+
+## Exact content review
+
+`--fixture-exceptions <absolute-json-file>` 是显式精确复核，默认扫描保持不变。支持 normal、
+configured-upstream `--resume-publish` 以及 existing branch/history publication/resume；不支持
+verify-only、commit-only、root publication，也不能与 `--allow-test-fixture` 混用。
+复核文件 schema 为 1，顶层仅含 `schema_version`、`repository`、`exceptions`。
+`repository` 仅含 Git 唯一 `root_commit` 和唯一 push URL 的 `remote_url_sha256`。
+每个 exception 仅含 `path`、`blob_oid`、原始字节 `sha256`、`detector`、非空 `reason`，最多 16 条；
+receipt 返回绑定全部字段的 exception ID。例外只排除指定 detector，其他内容与路径守卫照常执行。
+测试路径必须精确位于 `tests/`。唯一文档路径为 `CHANGELOG.md`，且只接受 `private-key-header-v1`：
+marker 必须是 upstream 已有的行内反引号示例，从最早示例起的历史后缀必须逐字节保留；
+新增 marker、闭合 key marker、其他文件或规则均拒绝。normal 必须与 upstream 对齐，先校验 working
+raw blob，再复核 index 的相同 OID；filter 或并发变更导致 staged blob 漂移时停止 commit/push。
+resume 则将每条复核绑定待发布历史中的 exact path/blob/detector，未使用或过期复核也会被拒绝。

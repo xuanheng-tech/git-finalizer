@@ -3,7 +3,7 @@
     "owner": "git-finalizer",
     "path": "skills/git-change-delivery/SKILL.md"
   },
-  "canonical_skill_sha256": "26cfc709c3fea30c96d4cc4211eb6c39910cf9d7811e23eebe39550eb437c8f9",
+  "canonical_skill_sha256": "39ba1a829e33eb5ca45facc12aac6b80b4a9534195e52a40a2f428771e6b11a3",
   "compatibility_skill": {
     "name": "three-tool-git-workflow",
     "path": "skills/three-tool-git-workflow/SKILL.md",
@@ -22,10 +22,10 @@
       "project-context"
     ]
   },
-  "public_cli_contract_sha256": "82f1580f81621ad553f7cd9444bda32fb127e9aa34bfec23985d16216c0db367",
+  "public_cli_contract_sha256": "d24b84098c114e7c0b2556c4d8e29d6cf7a842f33c97e16e3178a26bbfcdbc9b",
   "schema_version": 2,
   "skill_contract_version": 2,
   "tool_commit": "@release",
   "tool_name": "context-loader",
-  "tool_version": "1.3.1"
+  "tool_version": "1.3.2"
 }
