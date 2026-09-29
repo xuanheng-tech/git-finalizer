@@ -1,6 +1,6 @@
 {
   "context_loader_contract_version": 3,
-  "git_finalizer_contract_version": 5,
+  "git_finalizer_contract_version": 6,
   "runtime_requirements": {
     "worktree-controller": {
       "capability_versions": {
@@ -11,6 +11,7 @@
         "delivered_closeout_version": 1,
         "doctor_mount_version": 2,
         "governance_version": 2,
+        "integration_publication_execution_version": 1,
         "namespace_migration_version": 1,
         "retained_archive_version": 1,
         "writer_lease_schema_version": 2,
@@ -20,7 +21,8 @@
         37,
         38,
         39,
-        40
+        40,
+        41
       ],
       "storage_layout_versions": [
         4
@@ -38,7 +40,7 @@
       "source_directory": "context-loader"
     },
     "git-finalizer": {
-      "public_cli_contract_version": 5,
+      "public_cli_contract_version": 6,
       "skill_contract_version": 2,
       "source_directory": "git-finalizer"
     },

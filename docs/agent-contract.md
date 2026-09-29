@@ -142,10 +142,14 @@ assume the same keys:
   decision could not be classified (`status=failed`). Whether any remote change already happened is
   reported by `bootstrap.executed`, not by the exit code: a `BLOCK_REMOTE_MISMATCH` can be raised
   after a repository was created.
-- `--publish-integration-candidate`: a seven-key verdict object
+- `--publish-integration-candidate`: a seven-key blocked verdict object
   (`final_phase, finalizer_version, mode, next_action, reason, status, summary_schema_version`)
   with its own `next_action` vocabulary, for example
-  `read_remote_fact_and_reenter_controller_publish_gate`. Exit codes `0`, `1`, and argparse `2`.
+  `read_remote_fact_and_reenter_controller_publish_gate`. Success instead includes exact repository,
+  allocation, lease/run, target/expected main/candidate identities, `record_id`, `push`,
+  `remote_verify` and `controller_execution`. The latter identifies the public Controller session
+  and `lifecycle_completion_required=true`; pass `record_id` to Controller `lease-complete`.
+  Exit codes `0`, `1`, and argparse `2`.
 
 `1` is also possible on either companion when the entrypoint's pre-execution guard finds the
 companion file missing or unsafe, or when an uncaught traceback occurs.

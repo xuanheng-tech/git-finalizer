@@ -73,16 +73,17 @@ adapter_files() {
     case "$1" in
         legacy-namespace) printf 'git-finalize ' ;;
         controller-state-root)
-            printf 'git-finalize git-finalize-integration-publish.py ' ;;
+            printf 'git-finalize ' ;;
         controller-lock)
-            printf 'git-finalize-integration-publish.py ' ;;
+            printf '' ;;
         controller-lease)
-            printf 'git-finalize-integration-publish.py ' ;;
+            printf '' ;;
+        controller-private-inventory) printf '' ;;
         snapshot-state-root) printf 'git-finalize-snapshot-verify.py ' ;;
         gitea-api) printf 'git-finalize-repo-bootstrap.py ' ;;
         retirement-plan-files) printf '' ;;
         controller-policy-term) printf '' ;;
-        controller-executable-probe) printf 'git-finalize-retirement-plan.py tooling/workflow_health.py ' ;;
+        controller-executable-probe) printf 'git-finalize-integration-publish.py git-finalize-retirement-plan.py tooling/workflow_health.py ' ;;
         controller-runtime-contract) printf 'tooling/workflow_health.py ' ;;
         *) printf 'unknown ledger: %s\n' "$1" >&2; return 1 ;;
     esac
@@ -143,6 +144,9 @@ test_layout_literals_do_not_spread() {
         'worktree-controller/v1' '"worktree-controller" / "v1"'
     assert_ledger controller-lock 'repo.lock'
     assert_ledger controller-lease 'publication-lease'
+    assert_ledger controller-private-inventory \
+        'prepared-candidate-receipts' 'integration-intents' \
+        'metadata_root / "bindings"' 'metadata_root / "records"' 'worktree_key('
     assert_ledger retirement-plan-files \
         'branch-retirement-plans' 'branch-retirement-receipts'
     assert_ledger controller-policy-term 'worktree-policy.toml'
@@ -168,6 +172,7 @@ test_documented_matrix_matches_code() {
     done <<'NEEDLES'
 refused or failed	git-finalize-retirement-plan.py
 required public retirement protocols	git-finalize-retirement-plan.py
+required public integration publication protocol	git-finalize-integration-publish.py
 already records a consumed receipt	git-finalize-retirement-plan.py
 Worktree Controller is required	git-finalize-retirement-plan.py
 legacy codex-worktree namespace	git-finalize

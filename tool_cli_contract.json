@@ -373,11 +373,12 @@
       "name": "integration_candidate_publish",
       "operation_class": "remote_mutation",
       "preconditions": [
-        "controller_schema_v2_publication_lease",
-        "exact_v1_validated_or_v2_publishing_candidate",
-        "unexpired_matching_run_identity",
+        "controller_public_integration_publication_session_v1",
+        "exact_controller_verified_candidate",
+        "unexpired_matching_run_identity_or_already_published_recovery",
         "live_expected_main_oid",
-        "single_controller_repository_lock"
+        "single_producer_owned_repository_lock",
+        "producer_verified_completion"
       ],
       "result_statuses": [
         "published",
@@ -455,7 +456,7 @@
       ]
     }
   ],
-  "contract_version": 5,
+  "contract_version": 6,
   "exit_codes": {
     "0": "success or verification passed",
     "1": "blocked, failed verification, or Finalizer preflight refusal",
@@ -486,5 +487,5 @@
   ],
   "schema_version": 1,
   "tool_name": "git-finalizer",
-  "tool_version": "1.6.3"
+  "tool_version": "1.7.0"
 }

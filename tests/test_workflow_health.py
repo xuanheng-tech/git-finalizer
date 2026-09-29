@@ -179,7 +179,7 @@ class WorkflowHealthTests(unittest.TestCase):
         self.assertEqual((root / "active").resolve().parent.name, "a" * 40)
 
     def test_reviewed_controller_cli_contracts(self) -> None:
-        for version in (37, 38, 39, 40):
+        for version in (37, 38, 39, 40, 41):
             with self.subTest(contract_version=version):
                 root, requirements, envelope, frozen = self.controller_fixture(version)
                 result = self.probe_controller(root, requirements, envelope, frozen)
@@ -187,12 +187,12 @@ class WorkflowHealthTests(unittest.TestCase):
                 self.assertEqual(result["cli_contract_version"], version)
 
     def test_unreviewed_controller_cli_contract_is_rejected_without_writing(self) -> None:
-        root, requirements, envelope, frozen = self.controller_fixture(41)
+        root, requirements, envelope, frozen = self.controller_fixture(42)
         active_runtime = (root / "active").resolve()
         skill_before = self.skill.read_bytes()
         result = self.probe_controller(root, requirements, envelope, frozen)
         self.assertEqual(result["status"], "FAIL")
-        self.assertIn("unreviewed contract_version: 41", result["errors"])
+        self.assertIn("unreviewed contract_version: 42", result["errors"])
         self.assertEqual((root / "active").resolve(), active_runtime)
         self.assertEqual(self.skill.read_bytes(), skill_before)
 
