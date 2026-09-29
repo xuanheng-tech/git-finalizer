@@ -43,6 +43,10 @@ HEAD to match upstream and checks the same raw blob again after staging. Tests r
 already-published, inline-backtick header example may be preserved, and its following historical text
 must remain byte-for-byte unchanged. New headers, closing markers and other document paths are refused.
 
+Python prose reviews are limited to already-published literal refusal-reason pairs in module-level
+`*_REASONS` dictionaries. The full raw key/value pair must be preserved, with only whitespace and a
+colon between the literals; other assignments and all other detectors remain mandatory.
+
 ## Requirements
 
 - GNU Bash, Git and GNU command-line utilities (`realpath`, `stat`, `grep`, `sed`). Verified baseline:

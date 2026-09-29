@@ -2300,7 +2300,8 @@ load_fixture_exceptions() {
     [[ -n "$fixture_exceptions_file" ]] || return 0
     if ! records=$("$PYTHON3_EXECUTABLE" -B - \
         "$fixture_exceptions_file" "$repo" "${resume_expected_oid:-HEAD}" \
-        "${branch_publish_remote:-$upstream_remote}" "$phase" "${normal_upstream_hash:-}" <<'PY'
+        "${branch_publish_remote:-$upstream_remote}" "$phase" "${normal_upstream_hash:-}" "$assignment_re" <<'PY'
+import ast
 from collections import Counter
 import hashlib
 import json
@@ -2328,7 +2329,7 @@ def git(*args):
 
 
 try:
-    filename, repo, head, remote, phase, example_base = sys.argv[1:]
+    filename, repo, head, remote, phase, example_base, assignment = sys.argv[1:]
     require(phase in {"worktree", "history"}, "unknown content review phase")
     source = Path(filename)
     require(source.is_absolute() and str(source.resolve(strict=True)) == filename
@@ -2357,9 +2358,10 @@ try:
                 "unknown or missing exception fields")
         require(all(type(value) is str for value in entry.values()), "exception fields must be strings")
         path, oid, detector = entry["path"], entry["blob_oid"], entry["detector"]
-        require((path.startswith("tests/") or path == "CHANGELOG.md") and len(path) <= 1024
+        require((path.startswith("tests/") or path == "CHANGELOG.md" or path.endswith(".py")) and len(path) <= 1024
+                and not PurePosixPath(path).is_absolute()
                 and str(PurePosixPath(path)) == path and ".." not in PurePosixPath(path).parts
-                and not any(c in path for c in "\x00\n\r\t*?[]"), "expected exact canonical tests/ or CHANGELOG.md path")
+                and not any(c in path for c in "\x00\n\r\t*?[]"), "expected exact canonical tests/, CHANGELOG.md or Python prose path")
         require(len(oid) == len(roots[0]) and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", oid) is not None
                 and re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]) is not None, "invalid content identity")
         require(detector in {"private-key-header-v1", "known-token-v1", "credential-assignment-v1"},
@@ -2408,6 +2410,58 @@ try:
                     "published changelog example and following history must remain unchanged")
             require(re.search(rb"-----END (?:[A-Z0-9]+[ \t\v\f\r]+)*PRIVATE KEY-----", content, re.I) is None,
                     "changelog review does not allow a private key closing marker")
+        if not path.startswith("tests/") and path != "CHANGELOG.md":
+            require(detector == "credential-assignment-v1",
+                    "Python prose review accepts only the assignment detector")
+            baseline = head if phase == "worktree" else example_base
+            require(bool(baseline), "Python prose review requires an existing upstream baseline")
+            published = git("show", baseline + ":" + path)
+            pattern = re.compile(assignment.replace("[[:space:]]", r"[\x09-\x0d ]").encode(), re.I)
+
+            def prose_matches(raw):
+                require(len(raw) <= 1024 * 1024, "Python prose review exceeds 1 MiB")
+                try:
+                    tree = ast.parse(raw.decode("utf-8"))
+                except (UnicodeError, SyntaxError, RecursionError):
+                    raise ValueError("Python prose review requires bounded valid UTF-8 Python") from None
+                lines = raw.splitlines(keepends=True)
+                starts = [0]
+                for line in lines:
+                    starts.append(starts[-1] + len(line))
+                spans = []
+                for node in tree.body:
+                    if not (isinstance(node, ast.Assign) and len(node.targets) == 1
+                            and isinstance(node.targets[0], ast.Name)
+                            and re.fullmatch(r"[A-Z][A-Z0-9_]*_REASONS", node.targets[0].id)
+                            and isinstance(node.value, ast.Dict)):
+                        continue
+                    for key, value in zip(node.value.keys, node.value.values):
+                        if not (isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+                                and type(key.value) is str and type(value.value) is str
+                                and re.fullmatch(r"[A-Za-z]+(?:[ -]+[A-Za-z]+){2,}", key.value)
+                                and re.fullmatch(r"[A-Za-z]+(?:[ -]+[A-Za-z]+){2,}", value.value)):
+                            continue
+                        left = starts[key.lineno - 1] + key.col_offset
+                        key_end = starts[key.end_lineno - 1] + key.end_col_offset
+                        value_start = starts[value.lineno - 1] + value.col_offset
+                        right = starts[value.end_lineno - 1] + value.end_col_offset
+                        if re.fullmatch(rb"[\x09-\x0d ]*:[\x09-\x0d ]*", raw[key_end:value_start]) is None:
+                            continue
+                        spans.append((left, right, raw[left:right]))
+                matches = []
+                for index, line in enumerate(lines):
+                    for match in pattern.finditer(line):
+                        start, end = starts[index] + match.start(), starts[index] + match.end()
+                        pair = next((literal for left, right, literal in spans
+                                     if left <= start and end <= right), None)
+                        require(pair is not None,
+                                "assignment is outside an ordinary literal refusal-reason pair")
+                        matches.append(pair)
+                require(bool(matches), "Python prose review has no refusal-reason assignment")
+                return Counter(matches)
+
+            require(not (prose_matches(content) - prose_matches(published)),
+                    "published Python refusal-reason literals were added or changed")
         approved = {"schema_version": 1, "repository": identity, "exception": entry}
         digest = hashlib.sha256(json.dumps(approved, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         receipt = {"exception_id": "sha256:" + digest, "repository": identity, **entry, "applied": True}

@@ -485,3 +485,10 @@ marker 必须是 upstream 已有的行内反引号示例，从最早示例起的
 新增 marker、闭合 key marker、其他文件或规则均拒绝。normal 必须与 upstream 对齐，先校验 working
 raw blob，再复核 index 的相同 OID；filter 或并发变更导致 staged blob 漂移时停止 commit/push。
 resume 则将每条复核绑定待发布历史中的 exact path/blob/detector，未使用或过期复核也会被拒绝。
+
+Python prose 复核仅接受 `.py` 和 `credential-assignment-v1`，且必须存在发布过的 upstream
+文件。源码不超过 1 MiB，必须能通过 UTF-8 AST 解析；所有 assignment 命中必须完整位于
+模块级大写 `*_REASONS` 字典的普通多词字符串 key/value 对内，两者间仅允许空白和冒号。
+完整原始 key/value 对只能来自 upstream 的同类声明，新增/改变字面量、其他位置的赋值、配置字段、解析失败
+均拒绝。私钥、known-token、SSH 和路径守卫照常执行；首次发布没有可证明的 baseline 时拒绝。
+这仍是逐 blob 的显式人工复核，不改变默认扫描，也不是任意 Python 源码豁免。
