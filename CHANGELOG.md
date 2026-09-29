@@ -13,6 +13,8 @@ section is invented for it.
 
 ## Unreleased
 
+- Restore owner write permission on validated, owned read-only subdirectories
+  during registered temporary-directory cleanup.
 - Allow explicit cleanup of owned FIFOs inside pytest subtrees of registered task
   directories, even when the task prefix is not a fixture name. Keep other FIFO
   locations and special files blocked before deletion.

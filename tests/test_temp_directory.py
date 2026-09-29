@@ -339,6 +339,24 @@ class TempDirToolTest(unittest.TestCase):
         temp_tool.cleanup_directory(str(path), allow_owned_fixture_fifo=True)
         self.assertFalse(path.exists())
 
+    def test_cleanup_owned_readonly_subdirectory_with_scoped_fifo(self) -> None:
+        _result, path = self.create("readonly")
+        pytest_root = path / "pytest-candidate"
+        pytest_root.mkdir()
+        os.mkfifo(pytest_root / "pipe", mode=0o600)
+        readonly = pytest_root / "readonly"
+        readonly.mkdir()
+        (readonly / "manifest.json").write_text("{}", encoding="utf-8")
+        readonly.chmod(0o500)
+        self.addCleanup(lambda: readonly.chmod(0o700) if readonly.exists() else None)
+
+        preview = temp_tool.dry_run_cleanup(
+            str(path), allow_owned_fixture_fifo=True
+        )
+        self.assertTrue(preview["ok"])
+        temp_tool.cleanup_directory(str(path), allow_owned_fixture_fifo=True)
+        self.assertFalse(path.exists())
+
     def test_cli_uses_only_neutral_state_in_an_empty_home(self) -> None:
         home = Path(self.temporary_state.name) / "empty-home"
         home.mkdir()

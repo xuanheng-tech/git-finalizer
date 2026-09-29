@@ -19,7 +19,7 @@ from typing import Any
 TMP_ROOT = Path("/tmp")
 STATE_ROOT = Path.home() / ".local/state/tool-temp-dir"
 RECORD_VERSION = 2
-TOOL_VERSION = "1.0.1"
+TOOL_VERSION = "1.0.2"
 PREFIX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 NAME_RE = re.compile(
     r"^tool-task-(?P<prefix>[A-Za-z0-9][A-Za-z0-9_-]{0,63})-"
@@ -558,6 +558,20 @@ def _delete_contents(
     fifo_requires_pytest_subtree: bool = False,
     relative_root: str = "",
 ) -> None:
+    directory = os.fstat(descriptor)
+    if not stat.S_ISDIR(directory.st_mode):
+        raise TempDirError("directory_changed", f"待删除条目不再是目录：{relative_root}")
+    if directory.st_uid != expected_uid:
+        raise TempDirError("owner_mismatch", f"目录树条目不属于登记 UID：{relative_root}")
+    if directory.st_dev != expected_device:
+        raise TempDirError("cross_device_entry", f"目录树条目跨越登记 filesystem：{relative_root}")
+    if not directory.st_mode & stat.S_IWUSR:
+        try:
+            os.fchmod(descriptor, stat.S_IMODE(directory.st_mode) | stat.S_IWUSR)
+        except OSError as exc:
+            raise TempDirError(
+                "cleanup_failed", f"无法写入待删除目录：{relative_root}: {exc}"
+            ) from exc
     try:
         with os.scandir(descriptor) as iterator:
             names = sorted(entry.name for entry in iterator)
