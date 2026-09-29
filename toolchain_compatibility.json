@@ -7,6 +7,7 @@
         "branch_retirement_execution_version": 1,
         "branch_retirement_verify_version": 1,
         "branch_retirement_version": 1,
+        "canonical_transition_version": 1,
         "capabilities_version": 1,
         "delivered_closeout_version": 1,
         "doctor_mount_version": 2,
@@ -22,7 +23,8 @@
         38,
         39,
         40,
-        41
+        41,
+        42
       ],
       "storage_layout_versions": [
         4
