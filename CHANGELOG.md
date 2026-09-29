@@ -31,6 +31,12 @@ section is invented for it.
 - Correct the deployment-health adapter ledger, track custom Claude homes and project instruction
   files, register the independently attested released Skill payload, and ignore only host worktree policy.
 
+## 1.6.2
+
+- Accept reviewed Controller CLI contract version 40 alongside 37, 38 and 39.
+  Keep storage layout 4 and the existing independently checked capability requirements.
+- Preserve Git Finalizer CLI contract version 5 and the strict credential classifier.
+
 ## 1.6.1
 
 - Recognize the exact public Controller retirement capability declaration during

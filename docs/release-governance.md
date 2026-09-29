@@ -58,7 +58,7 @@ manual run has to happen in a clean checkout of the commit being tagged.
 `scripts/release.py preflight vX.Y.Z` refuses the release unless all of the following agree:
 
 - the tag name equals the `git-finalize` `VERSION`, and `VERSION` equals the README `当前版本`
-  declaration (the English `Current stable release:` line is bound by `just check`, not here);
+  declaration (the English `Current source version:` line is bound by `just check`, not here);
 - all three governance companions declare the same `VERSION`;
 - `tool_cli_contract.json` and `tool_skill_manifest.json` declare the same `tool_version`, and
   `contract_version` matches `toolchain_compatibility.json`;
@@ -139,7 +139,7 @@ source repository rather than the release artifact.
 ### Before
 
 1. A release-preparation batch is merged to `main` and contains: version bump in `git-finalize` and
-   the three companions, README current-release declarations, `tool_version` in contract and manifest,
+   the three companions, README source-version declarations, `tool_version` in contract and manifest,
    a `CHANGELOG.md` section for that version, and any manifest/contract re-pins made in the same
    commit.
 2. Decide the host. For the first public release the host is **GitHub**; do not also publish that

@@ -9,9 +9,12 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current stable release: **1.6.1**.
+Current source version: **1.6.2**.
 
-当前版本：`1.6.1`
+当前版本：`1.6.2`
+
+This is the source version. Source delivery and local installation do not imply a GitHub tag,
+release or downloadable asset.
 
 ## Why it exists
 
@@ -68,11 +71,14 @@ each one carries `git-finalizer-<version>.tar.gz` plus a `SHA256SUMS.txt` that n
 <https://github.com/xuanheng-tech/git-finalizer/releases>. GitHub carries every release from `v1.5.0`
 onward; earlier versions were published on the governed delivery remote described in
 [docs/release-governance.md](docs/release-governance.md), so they are not listed here. Fetch both,
-verify the artifact, then install it.
+verify the artifact, then install it. Select an actual published release from that page and set
+`GF_RELEASE_VERSION` to its version number without the `v` prefix; it can differ from the source
+version above.
 
 ```bash
-curl -fsSLO https://github.com/xuanheng-tech/git-finalizer/releases/download/v1.6.1/SHA256SUMS.txt
-curl -fsSLO https://github.com/xuanheng-tech/git-finalizer/releases/download/v1.6.1/git-finalizer-1.6.1.tar.gz
+GF_RELEASE_VERSION='<published-version>'
+curl -fsSLO "https://github.com/xuanheng-tech/git-finalizer/releases/download/v${GF_RELEASE_VERSION}/SHA256SUMS.txt"
+curl -fsSLO "https://github.com/xuanheng-tech/git-finalizer/releases/download/v${GF_RELEASE_VERSION}/git-finalizer-${GF_RELEASE_VERSION}.tar.gz"
 sha256sum --check SHA256SUMS.txt
 ```
 
@@ -80,9 +86,10 @@ From the verified tarball (files `git-finalize*` must stay in one directory, bec
 locates its companions relative to itself):
 
 ```bash
-tar -xzf git-finalizer-1.6.1.tar.gz
+tar -xzf "git-finalizer-${GF_RELEASE_VERSION}.tar.gz"
 install -d -m 0755 "$HOME/.local/bin"
-cp git-finalizer-1.6.1/git-finalize git-finalizer-1.6.1/git-finalize-*.py "$HOME/.local/bin/"
+cp "git-finalizer-${GF_RELEASE_VERSION}/git-finalize" \
+    "git-finalizer-${GF_RELEASE_VERSION}"/git-finalize-*.py "$HOME/.local/bin/"
 chmod 0755 "$HOME/.local/bin/git-finalize"
 export PATH="$HOME/.local/bin:$PATH"
 git-finalize --version
