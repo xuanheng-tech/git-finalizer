@@ -80,6 +80,25 @@ class WorkflowHealthTests(unittest.TestCase):
         self.assertEqual(health.file_identity(bridge / "skills/worktree-lifecycle/SKILL.md")["real_path"],
                          health.file_identity(self.skill)["real_path"])
 
+    def test_claude_synced_skills_do_not_leak_into_shared_root(self) -> None:
+        bridge = self.root / ".claude"
+        bridge.mkdir()
+        (bridge / "skills").symlink_to(self.agents / "skills", target_is_directory=True)
+        (self.agents / "skills/synced").mkdir()
+        result = health.instruction_state(self.repo, self.agents, self.codex)
+        self.assertIn("Claude-synced skills leak into the shared personal skills root", result["warnings"])
+
+    def test_claude_per_skill_links_expose_every_shared_skill(self) -> None:
+        skills = self.root / ".claude/skills"
+        skills.mkdir(parents=True)
+        (skills / "synced").mkdir()
+        (skills / "worktree-lifecycle").symlink_to(self.skill.parent, target_is_directory=True)
+        self.assertFalse(health.instruction_state(self.repo, self.agents, self.codex)["warnings"])
+        (self.agents / "skills/new-skill").mkdir()
+        (self.agents / "skills/new-skill/SKILL.md").write_text("new\n")
+        result = health.instruction_state(self.repo, self.agents, self.codex)
+        self.assertEqual(result["warnings"], ["Claude skills do not expose shared skill new-skill"])
+
     def test_custom_shared_root_does_not_move_claude_home(self) -> None:
         shared = self.root / "custom-shared"
         shared.mkdir()

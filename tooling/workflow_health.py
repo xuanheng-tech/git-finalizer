@@ -243,8 +243,18 @@ def instruction_state(
         claude_skills = claude_home / "skills"
         if claude_skills.is_symlink() and not claude_skills.exists():
             result["warnings"].append("Claude personal skills link is broken")
-        elif claude_skills.exists() and claude_skills.resolve() != (agents_root / "skills").resolve():
-            result["warnings"].append("Claude and shared personal skills have different real paths")
+        elif claude_skills.exists():
+            # Claude writes its account-synced skills under skills/synced; a whole-root link
+            # would publish them to every client reading the shared root.
+            shared_skills = agents_root / "skills"
+            if claude_skills.resolve() == shared_skills.resolve():
+                if (shared_skills / "synced").exists():
+                    result["warnings"].append("Claude-synced skills leak into the shared personal skills root")
+            else:
+                for path in sorted(shared_skills.glob("*/SKILL.md")):
+                    exposed = claude_skills / path.parent.name / "SKILL.md"
+                    if not exposed.is_file() or exposed.resolve() != path.resolve():
+                        result["warnings"].append(f"Claude skills do not expose shared skill {path.parent.name}")
         bridge = claude_home / "CLAUDE.md"
         if bridge.is_file():
             result.setdefault("references", []).append(file_identity(bridge))

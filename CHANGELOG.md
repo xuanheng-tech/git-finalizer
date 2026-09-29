@@ -13,6 +13,9 @@ section is invented for it.
 
 ## Unreleased
 
+- `tool-skill-sync doctor` accepts a Claude skills directory that links each shared personal Skill
+  and warns when Claude-synced skills live inside the shared root, instead of requiring one
+  whole-root link.
 - Replace the mirrored Controller retirement digest with public verification, single-use CAS
   authorization and completion. Recover interrupted requests without duplicate deletion, preserve
   completion failures, and attest legacy already-absent refs through the producer.
