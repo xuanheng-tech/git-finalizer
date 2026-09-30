@@ -22,7 +22,7 @@ import tempfile
 import uuid
 
 # GF-INTEGRATION-ADAPTER: worktree-controller-retirement (single site)
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 BRANCH_RETIREMENT_CAPABILITY = "branch_retirement_version"
 PLAN_ID_RE = re.compile(r"[0-9a-f]{64}")
 OID_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")

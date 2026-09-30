@@ -99,6 +99,8 @@ Closed enumeration:
 | Value | Meaning |
 | --- | --- |
 | `not_run` | no push was attempted |
+| `not_needed_already_aligned` | both live branch OIDs were already exact; no second push |
+| `skipped_by_dry_run` | sync preflight passed; no push attempted |
 | `succeeded` | push returned success and live verification confirmed it |
 | `confirmed_after_uncertain` | the push outcome was initially uncertain and was then confirmed from the remote |
 | `uncertain` | the push could not be confirmed; **do not** treat the commit as published, and do not force-push a "fix" |
@@ -122,6 +124,7 @@ was performed: publication is always a non-force, branch-only refspec with tag f
 | `publish_existing_branch` | `--publish-existing-branch` |
 | `publish_existing_history` | `--publish-existing-history` |
 | `resume` | `--resume-publish` and the other resume interfaces |
+| `sync_published_branch` | `--sync-published-branch` |
 | `retire_local_branch` | `--retire-local-branch` |
 | `retire_remote_branch` | `--retire-remote-branch` |
 
@@ -269,6 +272,24 @@ In every case `commit.created` is `false`, `push.executed` is `false`, and no re
 written: the reason text is identical. `failed` here means "the write stage could not start", not
 "the repository is broken"; do not retry with force options, and do not treat it as publication
 failure. A future classification batch may normalise this to `blocked`; until then, read the table.
+
+## Exact published-branch sync
+
+`sync_published_branch` reports `mode_result.interface=sync-published-branch`, `source_remote`,
+`published_oid`, `expected_target_oid`, `push_target`, `commit_count`, `post_verify`,
+`remote_conclusion`, `final_remote_oid`, `local_head_unchanged` and `local_upstream_unchanged`.
+The source and target use the same existing branch name and exact source OID. The local checkout
+can name another clean attached branch; `commit.sha` is the copied published OID, not its HEAD.
+No new commit, upstream rewrite, branch creation, force push or tag publication occurs.
+
+`published_source_fast_forward_ready` is a preflight observation, not publication.
+`source_and_target_exactly_aligned` plus `post_verify=passed` proves both live OIDs equal
+`published_oid`. `--dry-run` returns `skipped_by_dry_run` and `post_verify=skipped_by_dry_run`;
+it may fetch objects without changing branch refs or FETCH_HEAD. It does not prove delivery.
+An already-aligned recovery returns `not_needed_already_aligned` and performs independent live
+verification. An uncertain push is observed before retry; only exact live equality permits
+`confirmed_after_uncertain`. The expected target gate is a pre-push check, not server-side CAS.
+Divergence, remote drift or a refused non-force push never triggers an automatic repair.
 
 ## Interpretation rules for agents
 

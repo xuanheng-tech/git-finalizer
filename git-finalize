@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.7.0"
+readonly VERSION="1.8.0"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -133,6 +133,8 @@ summary_publish_range=''
 summary_push_target=''
 summary_final_head=''
 summary_final_remote_oid=''
+summary_sync_source_remote=''
+summary_sync_expected_target_oid=''
 summary_retirement_operation=''
 summary_retirement_remote=''
 summary_retirement_branch=''
@@ -199,6 +201,7 @@ render_summary() {
         "$summary_publish_behind" "$summary_publish_commit_count" \
         "$summary_publish_range" "$summary_push_target" \
         "$summary_final_head" "$summary_final_remote_oid" \
+        "$summary_sync_source_remote" "$summary_sync_expected_target_oid" \
         "$summary_retirement_operation" "$summary_retirement_remote" \
         "$summary_retirement_branch" "$summary_retirement_ref" \
         "$summary_retirement_expected_oid" "$summary_retirement_integrated_ref" \
@@ -289,6 +292,8 @@ publish_range = take(values)
 push_target = take(values)
 final_head = take(values)
 final_remote_oid = take(values)
+sync_source_remote = take(values)
+sync_expected_target_oid = take(values)
 retirement_operation = take(values)
 retirement_remote = take(values)
 retirement_branch = take(values)
@@ -414,6 +419,20 @@ elif mode in {"publish_existing_branch", "publish_existing_history"}:
     }
     if mode == "publish_existing_history":
         result["mode_result"]["bootstrap_prerequisite"] = "repo-plan/repo-ensure"
+elif mode == "sync_published_branch":
+    result["mode_result"] = {
+        "interface": "sync-published-branch",
+        "source_remote": sync_source_remote or None,
+        "published_oid": commit_sha or None,
+        "expected_target_oid": sync_expected_target_oid or None,
+        "push_target": push_target or None,
+        "commit_count": optional_integer(publish_commit_count_raw),
+        "post_verify": post_verify,
+        "remote_conclusion": remote_conclusion,
+        "final_remote_oid": final_remote_oid or None,
+        "local_head_unchanged": head_unchanged,
+        "local_upstream_unchanged": head_unchanged and index_unchanged and worktree_unchanged,
+    }
 elif mode == "resume":
     resume_interface = {
         "initial_root": "resume-initial-publish",
@@ -594,6 +613,10 @@ Usage:
     --remote <remote-name> --repo <absolute-repo> [--summary]
   git-finalize --resume-publish <full-head-oid>
     --repo <absolute-repo> [--summary] [--fixture-exceptions <absolute-json-file>]
+  git-finalize --sync-published-branch <full-published-oid>
+    --source-remote <name> --remote <name> --remote-branch <existing-branch>
+    --expected-target-oid <full-oid> --repo <absolute-repo> [--dry-run] [--summary]
+    [--fixture-exceptions <absolute-json-file>]
   git-finalize --publish-existing-branch <full-head-oid>
     --remote <remote-name> --remote-branch <branch-name>
     --repo <absolute-repo> [--summary] [--fixture-exceptions <absolute-json-file>]
@@ -644,6 +667,9 @@ Options:
   --initial-branch-publish       First-publish one existing local history branch.
   --resume-initial-publish <oid> Resume publication of one exact root commit.
   --resume-publish <oid>         Publish existing commits ahead of configured upstream.
+  --sync-published-branch <oid>  Fast-forward an existing branch from a live published source.
+  --source-remote <name>         Configured source remote for sync; local upstream is preserved.
+  --expected-target-oid <oid>    Exact existing target baseline for sync.
   --publish-existing-branch <oid>
                                  First-publish an existing clean branch without a commit.
   --publish-existing-history <oid>
@@ -4926,6 +4952,181 @@ retire_local_branch_ref() {
     summary_next_action='none'
 }
 
+sync_remote_endpoint() {
+    local name=$1 fetch_url push_url
+    sync_error=''
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+        sync_error='sync requires configured remote names'; return 1;
+    }
+    if ! fetch_url=$(git -C "$repo" remote get-url --all "$name" 2>/dev/null) ||
+        ! push_url=$(git -C "$repo" remote get-url --push --all "$name" 2>/dev/null) ||
+        [[ -z "$fetch_url" || "$fetch_url" == *$'\n'* || "$push_url" != "$fetch_url" ]]; then
+        sync_error='sync remote requires one identical fetch/push endpoint'; return 1
+    fi
+    sync_endpoint=$fetch_url
+}
+
+sync_query_ref() {
+    local name=$1 output oid ref extra
+    sync_error=''
+    if ! output=$(git -C "$repo" ls-remote --quiet --refs "$name" "$sync_branch_ref" 2>/dev/null); then
+        sync_error='sync live remote query failed'; return 1
+    fi
+    if [[ -z "$output" || "$output" == *$'\n'* ]]; then
+        sync_error='sync requires one existing source and target branch'; return 1
+    fi
+    IFS=$'\t' read -r oid ref extra <<<"$output"
+    if [[ "$ref" != "$sync_branch_ref" || -n "$extra" ]] ||
+        ! validate_retirement_oid "$oid" 'remote branch OID'; then
+        sync_error='sync remote branch identity is invalid'; return 1
+    fi
+    sync_observed_oid=$oid
+}
+
+sync_local_fingerprint() {
+    git -C "$repo" symbolic-ref --quiet HEAD &&
+        git -C "$repo" rev-parse --verify 'HEAD^{commit}' &&
+        git -C "$repo" for-each-ref --format='%(refname) %(objectname) %(upstream)' refs/heads refs/tags &&
+        git -C "$repo" ls-files --stage
+}
+
+sync_check_local_state() {
+    local current
+    check_resume_clean_state || { sync_error=$resume_target_error; return 1; }
+    if ! current=$(sync_local_fingerprint) || [[ "$current" != "$sync_local_before" ]]; then
+        sync_error='sync local HEAD, branches, tags, index or upstream changed'; return 1
+    fi
+    if ! sync_remote_endpoint "$sync_source_remote" ||
+        [[ "$sync_endpoint" != "$sync_source_endpoint" ]] ||
+        ! sync_remote_endpoint "$remote_arg" || [[ "$sync_endpoint" != "$sync_target_endpoint" ]]; then
+        sync_error='sync configured remote endpoint changed'; return 1
+    fi
+}
+
+sync_check_remote_state() {
+    local expected_target=$1
+    if ! sync_query_ref "$sync_source_remote"; then return 1; fi
+    if [[ "$sync_observed_oid" != "$resume_expected_oid" ]]; then
+        sync_error='sync source branch no longer equals the exact published OID'; return 1
+    fi
+    if ! sync_query_ref "$remote_arg"; then return 1; fi
+    if [[ "$sync_observed_oid" != "$expected_target" ]]; then
+        sync_error='sync target branch changed; inspect before retrying'; return 1
+    fi
+}
+
+sync_published_branch_ref() {
+    local normalized_branch normalized_ref current_head target_before sync_fetch_remote
+    export GIT_OPTIONAL_LOCKS=0
+    paths=()
+    summary_phase='preflight'
+    summary_commit_sha=$resume_expected_oid
+    summary_commit_reused=true
+    summary_commit_result='reused'
+    summary_sync_source_remote=$sync_source_remote
+    summary_sync_expected_target_oid=$sync_expected_target_oid
+    if ! normalize_heads_ref "$remote_branch_arg" '--remote-branch'; then
+        fail "$normalized_ref_error"
+    fi
+    sync_branch_ref=$normalized_ref
+    if ! validate_retirement_oid "$resume_expected_oid" 'published OID' ||
+        ! validate_retirement_oid "$sync_expected_target_oid" 'expected target OID'; then
+        fail "$retirement_validation_error"
+    fi
+    [[ "$sync_source_remote" != "$remote_arg" ]] || fail 'sync source and target remote must differ'
+    sync_remote_endpoint "$sync_source_remote" || fail "$sync_error"
+    sync_source_endpoint=$sync_endpoint
+    sync_remote_endpoint "$remote_arg" || fail "$sync_error"
+    sync_target_endpoint=$sync_endpoint
+    [[ "$sync_source_endpoint" != "$sync_target_endpoint" ]] ||
+        fail 'sync source and target endpoints must differ'
+    check_resume_clean_state || fail "$resume_target_error"
+    sync_local_before=$(sync_local_fingerprint) || fail 'sync requires an attached existing local branch'
+    current_head=$(git -C "$repo" rev-parse --verify 'HEAD^{commit}')
+    summary_head_before=$current_head
+    summary_branch=$(git -C "$repo" branch --show-current)
+    summary_upstream=$(git -C "$repo" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || true)
+    summary_worktree_before_state='clean'
+    summary_push_target="$remote_arg:$sync_branch_ref"
+    printf '\n== Sync an exact already-published branch ==\n'
+    printf 'source: %s:%s\ntarget: %s:%s\npublished OID: %s\n' \
+        "$sync_source_remote" "$sync_branch_ref" "$remote_arg" "$sync_branch_ref" "$resume_expected_oid"
+    summary_phase='remote_preflight'
+    sync_query_ref "$sync_source_remote" || fail "$sync_error"
+    [[ "$sync_observed_oid" == "$resume_expected_oid" ]] ||
+        fail 'sync source branch does not equal the exact published OID'
+    sync_query_ref "$remote_arg" || fail "$sync_error"
+    target_before=$sync_observed_oid
+    if [[ "$target_before" != "$resume_expected_oid" ]]; then
+        [[ "$target_before" == "$sync_expected_target_oid" ]] ||
+            fail 'sync live target differs from expected target OID'
+        for sync_fetch_remote in "$sync_source_remote" "$remote_arg"; do
+            if ! run_git_remote_command 'git fetch --no-tags --no-write-fetch-head --refmap= <remote> <branch>' \
+                git -C "$repo" fetch --no-tags --no-recurse-submodules --no-write-fetch-head --refmap= \
+                    "$sync_fetch_remote" "$sync_branch_ref"; then
+                fail 'sync exact branch fetch failed; no push attempted'
+            fi
+        done
+        sync_check_remote_state "$target_before" || fail "$sync_error"
+        git -C "$repo" merge-base --is-ancestor "$target_before" "$resume_expected_oid" ||
+            fail 'sync target is not an ancestor of the published source; no force or merge is allowed'
+        resume_publish_range="$target_before..$resume_expected_oid"
+        resume_publish_commit_count=$(git -C "$repo" rev-list --count "$resume_publish_range")
+        summary_publish_range=$resume_publish_range
+        summary_publish_commit_count=$resume_publish_commit_count
+        existing_publish_commit_output_override=''
+        branch_publish_remote=$remote_arg
+        load_fixture_exceptions
+        validate_existing_publish_range || fail "$existing_range_error; no sync push attempted"
+        sync_check_local_state || fail "$sync_error"
+        sync_check_remote_state "$target_before" || fail "$sync_error"
+        summary_completed_through='preflight'
+        summary_remote_conclusion='published_source_fast_forward_ready'
+        if ((dry_run == 1)); then
+            printf 'transaction: non-force push %s:%s -> %s; verify both live OIDs; preserve local HEAD/upstream\n' \
+                "$resume_expected_oid" "$sync_branch_ref" "$remote_arg"
+            summary_push_result='skipped_by_dry_run'
+            summary_post_verify='skipped_by_dry_run'
+            summary_status='success'
+            summary_next_action='run_without_dry_run_after_review'
+            return 0
+        fi
+        summary_phase='push'
+        summary_default_failure_status='failed'
+        summary_push_executed=true
+        if run_branch_push false "$remote_arg" "$resume_expected_oid:$sync_branch_ref"; then
+            summary_push_result='succeeded'
+        else
+            summary_push_result='uncertain'
+            # Observe an uncertain remote mutation before deciding whether retry is safe.
+            if ! sync_check_remote_state "$resume_expected_oid"; then
+                fail "$sync_error; sync push outcome is unverified"
+            fi
+            summary_push_result='confirmed_after_uncertain'
+        fi
+    else
+        ((fixture_exceptions_seen == 0)) || fail 'already-aligned sync does not consume fixture exceptions'
+        summary_push_result='not_needed_already_aligned'
+    fi
+    summary_phase='post_verify'
+    summary_post_verify='failed'
+    sync_check_remote_state "$resume_expected_oid" || fail "$sync_error"
+    sync_check_local_state || fail "$sync_error"
+    summary_head_after=$current_head
+    summary_head_unchanged=true
+    summary_index_unchanged=true
+    summary_worktree_unchanged=true
+    summary_worktree_state='clean'
+    summary_final_head=$current_head
+    summary_final_remote_oid=$resume_expected_oid
+    summary_post_verify='passed'
+    summary_completed_through='post_verify'
+    summary_remote_conclusion='source_and_target_exactly_aligned'
+    summary_status='success'
+    summary_next_action='none'
+    printf 'post-verify: both live branch OIDs match; local HEAD/index/branches/tags/upstream unchanged\n'
+}
+
 if ((summary_requested == 1)); then
     if ! python3_available; then
         printf 'ERROR: --summary requires Python 3.11+ on PATH\n' >&2
@@ -4954,6 +5155,12 @@ message=''
 mode_arg=''
 remote_arg=''
 remote_branch_arg=''
+sync_source_remote=''
+sync_expected_target_oid=''
+sync_published_branch=0
+sync_published_seen=0
+sync_source_seen=0
+sync_expected_target_seen=0
 retire_remote_branch_arg=''
 retire_local_branch_arg=''
 integrated_into_arg=''
@@ -5023,6 +5230,28 @@ declare -a allow_large_binary_args=()
 
 while (($# > 0)); do
     case "$1" in
+        --sync-published-branch)
+            (($# >= 2)) || fail '--sync-published-branch requires an OID'
+            ((sync_published_seen == 0)) || fail '--sync-published-branch may be supplied once'
+            sync_published_seen=1
+            sync_published_branch=1
+            resume_expected_oid=$2
+            shift 2
+            ;;
+        --source-remote)
+            (($# >= 2)) || fail '--source-remote requires a remote name'
+            ((sync_source_seen == 0)) || fail '--source-remote may be supplied once'
+            sync_source_seen=1
+            sync_source_remote=$2
+            shift 2
+            ;;
+        --expected-target-oid)
+            (($# >= 2)) || fail '--expected-target-oid requires an OID'
+            ((sync_expected_target_seen == 0)) || fail '--expected-target-oid may be supplied once'
+            sync_expected_target_seen=1
+            sync_expected_target_oid=$2
+            shift 2
+            ;;
         --repo)
             (($# >= 2)) || fail '--repo 缺少参数'
             ((repo_seen == 0)) || fail '--repo 只能指定一次'
@@ -5325,7 +5554,9 @@ if ((mode_seen == 1)); then
         *) fail "--mode 仅支持 commit-only 或 verify-only: $mode_arg" ;;
     esac
 fi
-if ((retire_local_branch == 1)); then
+if ((sync_published_branch == 1)); then
+    summary_mode='sync_published_branch'
+elif ((retire_local_branch == 1)); then
     summary_mode='retire_local_branch'
 elif ((retire_remote_branch == 1)); then
     summary_mode='retire_remote_branch'
@@ -5348,6 +5579,10 @@ elif ((verify_only == 1)); then
 fi
 
 ((repo_seen == 1)) || fail '必须指定 --repo'
+if ((sync_published_branch == 0)); then
+    ((sync_source_seen == 0 && sync_expected_target_seen == 0)) ||
+        fail 'sync-specific parameters require --sync-published-branch'
+fi
 if ((source_review_seen == 1)); then
     ((initial_commit_only == 0 && initial_publish == 0 && initial_branch_publish == 0 &&
         publish_existing_history == 0 &&
@@ -5378,7 +5613,17 @@ if ((commit_only == 1 || verify_only == 1)); then
         resume_existing == 0 && resume_existing_history == 0)) ||
         fail "--mode $mode_arg 不接受其他发布模式"
 fi
-if ((retire_remote_branch == 1 || retire_local_branch == 1)); then
+if ((sync_published_branch == 1)); then
+    ((initial_commit_only == 0 && initial_publish == 0 && initial_branch_publish == 0 &&
+        publish_existing_branch == 0 && publish_existing_history == 0 && resume_existing_history == 0 &&
+        retire_remote_branch == 0 && retire_local_branch == 0 && resume_initial == 0 && resume_existing == 0 &&
+        mode_seen == 0 && message_seen == 0 && snapshot_seen == 0 && source_review_seen == 0)) ||
+        fail 'sync-published-branch cannot be combined with another operation'
+    ((sync_source_seen == 1 && remote_seen == 1 && remote_branch_seen == 1 && sync_expected_target_seen == 1)) ||
+        fail 'sync requires --source-remote, --remote, --remote-branch and --expected-target-oid'
+    ((separator_seen == 0 && ${#input_paths[@]} == 0 && ${#allow_test_fixture_args[@]} == 0 &&
+        ${#allow_large_binary_args[@]} == 0)) || fail 'sync does not accept files or broad content exceptions'
+elif ((retire_remote_branch == 1 || retire_local_branch == 1)); then
     ((retire_remote_branch + retire_local_branch == 1)) ||
         fail 'local/remote retirement 入口只能指定一个'
     ((initial_commit_only == 0 && initial_publish == 0 &&
@@ -5548,7 +5793,7 @@ if ((initial_branch_publish == 1 || publish_existing_branch == 1 ||
         fail '--remote-branch 必须是有效的 branch 名'
 fi
 if ((resume_initial == 0 && resume_existing == 0 && resume_existing_history == 0 &&
-    publish_existing_branch == 0 && publish_existing_history == 0 &&
+    publish_existing_branch == 0 && publish_existing_history == 0 && sync_published_branch == 0 &&
     retire_remote_branch == 0 && retire_local_branch == 0)); then
     if ((verify_only == 0)); then
         [[ -n ${message//[[:space:]]/} ]] || fail 'commit message 不能为空'
@@ -5628,6 +5873,10 @@ if ((verify_only == 1)); then
     export GIT_OPTIONAL_LOCKS=0
 fi
 
+if ((sync_published_branch == 1)); then
+    sync_published_branch_ref
+    exit 0
+fi
 if ((resume_initial == 1)); then
     resume_initial_publish
     exit 0

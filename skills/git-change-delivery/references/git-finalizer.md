@@ -1,5 +1,21 @@
 # Git Finalizer
 
+## 同步已发布分支
+
+双远端同步单独使用 `--sync-published-branch <full-published-oid>`，并提供
+`--source-remote <name> --remote <name> --remote-branch <existing-branch>
+--expected-target-oid <full-oid> --repo <absolute-repo> --summary`。
+两个 remote 必须既有、不同且各自只有相同 fetch/push endpoint；source 和 target 使用同名既有
+branch。live source 必须等于 exact OID，target 必须等于 expected OID 且是 source 的祖先。
+保留现有 commit-range 敏感内容与路径扫描，只做 non-force、`--no-follow-tags` 精确 branch push。
+
+`--dry-run` 展示并验证交易但不 push；可 fetch objects，保持 branch refs、FETCH_HEAD、HEAD、index
+和 upstream。目标已等于 source 的恢复只核验两端 OID，不重复写入。未知 push 结果先读取事实，
+两端精确一致才允许成功；分叉、源变化、目标漂移或本地变化都阻断。pre-push expected-OID
+检查不是 server-side CAS，远端普通 fast-forward gate 和 post-verify 继续生效。不修改 remote/
+upstream，不创建新分支、不 merge/force、不复制 tags 或个人备份，也不替代 Controller 的新代码
+main integration。这些检查不能授予业务授权；遵守用户指定的 remote 可见性和动作范围。
+
 ## 职责、入口与模式门槛
 
 Git Finalizer 只负责适用的本地提交前验证、显式路径暂存、commit，以及由默认或显式发布/恢复接口授权的 fast-forward-safe push 和远端 post-verify；它不实施代码、不运行测试、不审查 diff，也不解决冲突。initial、initial-branch 和 resume 仍是独立的首次发布或恢复接口。

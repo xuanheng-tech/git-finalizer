@@ -39,6 +39,15 @@ section is invented for it.
 - Correct the deployment-health adapter ledger, track custom Claude homes and project instruction
   files, register the independently attested released Skill payload, and ignore only host worktree policy.
 
+## 1.8.0
+
+- Add exact already-published branch synchronization between two existing configured remotes,
+  with explicit source and target OIDs, ancestor checks and the existing history safety scanner.
+- Preserve local checkout/upstream and tags; allow dry-run and verified idempotent recovery,
+  refuse remote drift, unpublished source commits and missing or divergent target branches.
+- Advance the Git Finalizer CLI contract to 7 and ship the matching delivery Skill instructions.
+  Controller integration, native execution permission and authorization boundaries remain in force.
+
 ## 1.7.0
 
 - Consume Controller's provider-neutral `integration-publication-session/v1` instead of opening

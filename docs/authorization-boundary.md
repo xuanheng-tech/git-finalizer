@@ -21,9 +21,15 @@ The approval scope an executor grants should be expressed in these terms.
 | T0 | `read_only` | `verify_only`, `repo_plan` | nothing to approve; no repository or remote state changes |
 | T1 | `local_mutation` | `commit_only`, `initial_commit_only` | repeated commits inside one task, same repository and branch |
 | T1 (gated) | `local_mutation` | `retire_local_branch` | never covered by an ordinary T1 grant: destructive, and requires a Controller-issued plan id plus expected OIDs |
-| T2 | `remote_mutation` | `normal_publish`, `initial_publish`, `initial_branch_publish`, `publish_existing_branch`, `publish_existing_history`, `resume_publish`, `resume_initial_publish`, `resume_existing_history_publish`, `integration_candidate_publish`, `repo_ensure` | push of the task's own commits to the granted remote ref, non-force, re-verified after the fact |
+| T2 | `remote_mutation` | `normal_publish`, `initial_publish`, `initial_branch_publish`, `publish_existing_branch`, `publish_existing_history`, `resume_publish`, `sync_published_branch`, `resume_initial_publish`, `resume_existing_history_publish`, `integration_candidate_publish`, `repo_ensure` | push of the task's own commits to the granted remote ref, non-force, re-verified after the fact |
 | T2 (gated) | `remote_mutation` | `retire_remote_branch` | never covered by an ordinary T2 grant: deletes a remote ref, requires the exact ref plus `--expected-remote-oid`, and re-fetches live state before the compare-and-delete |
 | T3 | `protected_operations` | `force_push`, `protected_branch_mutation`, `default_branch_retirement`, `local_branch_retirement_without_controller_plan`, `tag_mutation`, `semantic_equivalence_retirement` | not grantable: refused by the tool, so no scope expression can authorise them |
+
+`sync_published_branch` is a separately named T2 action: it copies an exact already-published
+OID between granted existing remotes and the same existing branch. Its local `branch` and
+`upstream` remain unchanged, so the grant must bind its source and target fields above. It cannot
+create a protected branch or deliver unpublished local changes; new main integration continues
+through the Controller-leased interface. It grants no authority by itself.
 
 T1 and T2 are separated on purpose. "Commit this" authorises a local commit and does **not** authorise
 a push; the Skill's mode table enforces that mapping, and no tier here collapses the two.
@@ -37,7 +43,7 @@ later command can be checked against it mechanically. Git Finalizer reports the 
 | Grant dimension | Field(s) that identify it at execution time |
 | --- | --- |
 | repository | `repository`, `repository_id`, `worktree_path` |
-| ref and remote | `branch`, `upstream`, and the `--remote` / `--remote-branch` arguments of the chosen interface |
+| ref and remote | `branch`, `upstream`, and the `--remote` / `--remote-branch` arguments; sync also binds `mode_result.source_remote`, `published_oid`, `expected_target_oid` and `push_target` |
 | operation set | `mode` (the interface actually run), plus `commit.created` and `push.executed` in the receipt |
 | task | `task_key`, `authority_key`, `allocation_id` — opaque linkage the Controller mints; `null` for ordinary use and therefore never a source of inference |
 | tool identity | `finalizer_version`, so a grant can be pinned to the build that was reviewed |
