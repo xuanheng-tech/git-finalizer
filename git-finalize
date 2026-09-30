@@ -5083,6 +5083,13 @@ sync_published_branch_ref() {
         summary_completed_through='preflight'
         summary_remote_conclusion='published_source_fast_forward_ready'
         if ((dry_run == 1)); then
+            sync_check_local_state || fail "$sync_error"
+            summary_head_after=$current_head
+            summary_head_unchanged=true
+            summary_index_unchanged=true
+            summary_worktree_unchanged=true
+            summary_worktree_state='clean'
+            summary_final_head=$current_head
             printf 'transaction: non-force push %s:%s -> %s; verify both live OIDs; preserve local HEAD/upstream\n' \
                 "$resume_expected_oid" "$sync_branch_ref" "$remote_arg"
             summary_push_result='skipped_by_dry_run'
