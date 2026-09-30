@@ -39,6 +39,16 @@ section is invented for it.
 - Correct the deployment-health adapter ledger, track custom Claude homes and project instruction
   files, register the independently attested released Skill payload, and ignore only host worktree policy.
 
+## 1.8.1
+
+- Decode JSON strings and keys before checking credential signatures, including SSH keys and
+  escaped values; public-contract prose masking stays bound to its exact schema.
+- Accept exact external sensitive-path reviews for CSS and JSON design token files alongside
+  Python. Preserve content scanning, file/evidence hashes, scope and identity binding in local
+  validation, commit and feature publication. Validate bounded UTF-8 text and strict JSON.
+- Keep private/SSH key path refusal ahead of token-name markers so a mixed path cannot qualify
+  for a source review.
+
 ## 1.8.0
 
 - Add exact already-published branch synchronization between two existing configured remotes,

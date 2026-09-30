@@ -73,6 +73,25 @@ def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
+def reject_json_constant(_value: str) -> None:
+    raise ReviewError("non-finite JSON constant")
+
+
+def validate_source(content: bytes, suffix: str) -> None:
+    source_text = content.decode("utf-8")
+    require("\x00" not in source_text, "review source contains NUL")
+    if suffix == ".py":
+        ast.parse(source_text)
+    elif suffix == ".json":
+        json.loads(
+            source_text,
+            object_pairs_hook=unique_object,
+            parse_constant=reject_json_constant,
+        )
+    # CSS is bounded UTF-8 text. Project checks own its grammar and semantics;
+    # an exact path review never replaces the mandatory secret-content scans.
+
+
 def git(repo: Path, *arguments: str) -> bytes:
     return subprocess.check_output(
         ["git", "--no-optional-locks", "-C", str(repo), *arguments],
@@ -171,7 +190,7 @@ def validate(args: argparse.Namespace) -> list[dict[str, object]]:
             not relative.is_absolute()
             and str(relative) == path
             and ".." not in relative.parts
-            and relative.suffix == ".py"
+            and relative.suffix in {".py", ".css", ".json"}
             and not any(c in path for c in "*?[]\\")
             and path in args.paths
             and path not in seen,
@@ -210,7 +229,7 @@ def validate(args: argparse.Namespace) -> list[dict[str, object]]:
             len(content) <= 1024 * 1024 and digest(content) == expected,
             "review source hash mismatch",
         )
-        ast.parse(content.decode("utf-8"))
+        validate_source(content, relative.suffix)
         receipts.append(
             {
                 "review_id": "sha256:" + digest(raw),
