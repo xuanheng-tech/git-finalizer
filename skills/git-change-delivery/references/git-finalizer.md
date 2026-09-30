@@ -399,13 +399,15 @@ receipt，result 只取 `REMOTE_BRANCH_RETIRED_VERIFIED`、`ALREADY_ABSENT_VERIF
 `RETIREMENT_PREFLIGHT_PASSED`、`RETIREMENT_BLOCKED` 或 `REMOTE_DELETE_UNVERIFIED`；工具不另建
 持久 audit store。
 
-## Reviewed sensitive Python source（0.10.3）
+## Reviewed sensitive source（Python、CSS、JSON；1.7.1）
 
 当任务明确授权审查某个敏感命名的源码文件时，normal、commit-only、verify-only 和
 publish-existing-branch 可显式使用
-`--reviewed-sensitive-source <absolute-json-file>`。它只豁免 exact Python 源码的
-credential/secret/token **路径标记**；`.env`、private/SSH key 路径、非 Python 文件不接受。
+`--reviewed-sensitive-source <absolute-json-file>`。它只豁免 exact `.py`、`.css` 或 `.json` 文件的
+credential/secret/token **路径标记**，包括设计系统中的 `tokens/tokens.css`、`tokens/registry.json`
+或 `dist/tokens.json`；`.env` 和 private/SSH key 路径始终不接受，即使同一路径也包含 token 标记。
 既有 secret 内容扫描仍在工作区、index 和提交后运行，不能组合任何 fixture 内容例外。
+JSON 内容扫描也检查解码后的字符串与键，不能通过 JSON 转义隐藏凭据签名。
 其他 initial/history/resume/integration 接口不消费该 review，保持原有 fail-closed 行为。
 
 先使用 Controller 取得合法 task/writer 和显式 source scope，完成定向业务与 secret 审查；
@@ -438,7 +440,9 @@ credential/secret/token **路径标记**；`.env`、private/SSH key 路径、非
 
 Review 与 evidence 必须是 worktree/Git common directory 外部的 canonical 普通文件、当前 UID
 所有、group/other 不可写、各不超过 64 KiB；不能引用 symlink。Review 不接受未知字段，最多
-16 个 exact source 条目，每个不超过 1 MiB 且能通过 Python AST 解析。JSON 与 evidence 只含
+16 个 exact source 条目，每个不超过 1 MiB，必须为不含 NUL 的 UTF-8 文本。Python 必须通过 AST
+解析；JSON 必须合法，且不能包含重复键或 NaN/Infinity；CSS 的语法与设计语义由项目检查验证。
+Review JSON 与 evidence 只含
 审查结论和非秘密 identity，不记录 secret 值。调用时必须同时传入完全匹配的
 `--repository-id --allocation-id --task-key --authority-key` 和完整显式文件列表。
 
@@ -454,6 +458,11 @@ commit-only 之后首次发布同一 clean feature branch 时，向 `--publish-e
 历史 blob 都必须匹配 review，旧版本不能借当前 review 放行；push 前再次验证 evidence 与
 有效期。此入口不创建新 commit，不接受 `--mode`、`--message` 或 `--dry-run`，不得组合
 fixture 内容例外。其他 existing/history/resume/integration 模式仍不消费此 review。
+
+多文件提交时，`scope_sha256` 和 CLI 文件列表绑定完整提交范围；`reviews` 只列其中被路径规则
+拦截的文件。例如 `tokens/tokens.css`、`tokens/tokens.json`、`tokens/registry.json`、
+`dist/tokens.css` 和 `dist/tokens.json` 需要精确 review，`dist/registry.json` 无此路径标记，
+可以在完整 scope 中但不列入 `reviews`。不要把所有 CSS/JSON 或某个目录加入永久 allowlist。
 
 ## Release 流程边界
 

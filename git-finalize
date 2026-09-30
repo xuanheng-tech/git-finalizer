@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.7.0"
+readonly VERSION="1.7.1"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -677,7 +677,7 @@ Options:
   --allow-test-fixture <path>    Ignore content secret signatures for this exact tests/ file.
   --fixture-exceptions <file>   Exact content reviews; local modes accept backend test assignments only.
   --reviewed-sensitive-source <file>
-                               External exact Python source review; secret scans remain mandatory.
+                               External exact Python/CSS/JSON source review; secret scans remain mandatory.
   --allow-large-binary <path>    Allow this exact binary file above 5 MiB, up to 25 MiB.
   --dry-run                      Commit modes avoid Git mutation/remote; retirement runs live preflight only.
   --summary                      Emit one bounded JSON result instead of phase output.
@@ -938,12 +938,12 @@ sensitive_path_reason() {
         printf '.env 路径'
         return 0
     fi
-    if [[ $path =~ $marker_re ]]; then
-        printf 'credential/secret/token 路径标记'
-        return 0
-    fi
     if [[ $path =~ $key_re ]] || [[ $path =~ $ssh_name_re ]]; then
         printf 'private key/SSH key 路径标记'
+        return 0
+    fi
+    if [[ $path =~ $marker_re ]]; then
+        printf 'credential/secret/token 路径标记'
         return 0
     fi
     return 1
@@ -2420,32 +2420,8 @@ try:
     except ValueError:
         print("NON_SCHEMA")
         sys.exit(0)
-    if not (
-        isinstance(document, dict)
-        and type(document.get("schema_version")) is int
-        and document["schema_version"] == 1
-        and document.get("tool_name") == "worktree-controller"
-        and type(document.get("contract_version")) is int
-        and document["contract_version"] > 0
-        and type(document.get("branch_retirement_execution_version")) is int
-        and document["branch_retirement_execution_version"] == 1
-    ):
-        print("NON_SCHEMA")
-        sys.exit(0)
-    retirement = document.get("branch_retirement_contract")
-    if not isinstance(retirement, dict) or retirement.get("contract") != "branch-retirement/v3":
-        print("NON_SCHEMA")
-        sys.exit(0)
-    declaration = retirement.get("execution_authorization")
-    if not (
-        isinstance(declaration, dict)
-        and declaration.get("contract") == "branch-retirement-execution/v1"
-        and declaration.get("capability") == "branch_retirement_execution_version"
-    ):
-        print("NON_SCHEMA")
-        sys.exit(0)
-    # Typed signature checks are independent of credential-only fixture reviews.
-    # Detector hit reviews select one rule; complete scans retain every other rule.
+    # Decode every JSON string before scanning; quotes and escapes can hide
+    # signatures from the raw-text rules. Contract masking remains schema-bound.
     for name, pattern, verdict in (
         ("private-key-header-v1", private_key, "PRIVATE"),
         ("known-token-v1", known, "KNOWN"),
@@ -2456,7 +2432,32 @@ try:
         ):
             print(verdict)
             sys.exit(0)
-    if only and only != "credential-assignment-v1" or "|credential-assignment-v1|" in excepted:
+    detector = expression(assignment)
+    assignment_enabled = (
+        (not only or only == "credential-assignment-v1")
+        and "|credential-assignment-v1|" not in excepted
+    )
+    retirement = document.get("branch_retirement_contract") if isinstance(document, dict) else None
+    declaration = retirement.get("execution_authorization") if isinstance(retirement, dict) else None
+    qualified_schema = (
+        isinstance(document, dict)
+        and type(document.get("schema_version")) is int
+        and document["schema_version"] == 1
+        and document.get("tool_name") == "worktree-controller"
+        and type(document.get("contract_version")) is int
+        and document["contract_version"] > 0
+        and type(document.get("branch_retirement_execution_version")) is int
+        and document["branch_retirement_execution_version"] == 1
+        and isinstance(retirement, dict)
+        and retirement.get("contract") == "branch-retirement/v3"
+        and isinstance(declaration, dict)
+        and declaration.get("contract") == "branch-retirement-execution/v1"
+        and declaration.get("capability") == "branch_retirement_execution_version"
+    )
+    if not qualified_schema:
+        print("ASSIGNMENT" if assignment_enabled and decoded_assignment(document, detector) else "NON_SCHEMA")
+        sys.exit(0)
+    if not assignment_enabled:
         print("CLEAR")
         sys.exit(0)
     description = (
@@ -2472,7 +2473,6 @@ try:
             match = descriptions[0]
             masked = raw[:match.start()] + b'""' + raw[match.end():]
             declaration["token"] = ""
-    detector = expression(assignment)
     print("ASSIGNMENT" if detector.search(masked) or decoded_assignment(document, detector) else "CLEAR")
 except (OSError, ValueError, TypeError, RecursionError, subprocess.CalledProcessError):
     print("ERROR")

@@ -95,6 +95,16 @@ class ReviewedSourceTests(unittest.TestCase):
         self.file.write_text(json.dumps(self.review) + "\n")
         self.file.chmod(0o600)
 
+    def replace_source(self, path: str, content: bytes) -> None:
+        self.source.unlink()
+        self.path = path
+        self.source = self.repo / path
+        self.source.parent.mkdir(parents=True, exist_ok=True)
+        self.source.write_bytes(content)
+        self.review["scope_sha256"] = sha((path + "\n").encode())
+        self.review["reviews"][0].update(path=path, sha256=sha(content))
+        self.write_review()
+
     def state(self) -> tuple[str, str, str]:
         return (
             self.git("rev-parse", "HEAD"),
@@ -227,6 +237,153 @@ class ReviewedSourceTests(unittest.TestCase):
             ),
         )
         self.assertEqual(self.git("rev-parse", "HEAD"), self.git("rev-parse", "@{u}"))
+
+    def test_design_token_batch_verifies_commits_and_publishes(self) -> None:
+        self.source.unlink()
+        css = b":root { --ds-color-primary: #1362d4; --ds-space-base: 8px; }\n"
+        document = b'{"color":{"primary":{"$value":"#1362d4","$type":"color"}}}\n'
+        registry = b'{"color.primary":{"status":"active","category":"color"}}\n'
+        sources = {
+            "tokens/tokens.css": css,
+            "tokens/tokens.json": document,
+            "tokens/registry.json": registry,
+            "dist/tokens.css": css,
+            "dist/tokens.json": document,
+            "dist/registry.json": registry,
+        }
+        paths = tuple(sorted(sources))
+        template = self.review["reviews"][0]
+        self.review["reviews"] = []
+        for path, content in sources.items():
+            source = self.repo / path
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(content)
+            if path != "dist/registry.json":
+                self.review["reviews"].append(
+                    {**template, "path": path, "sha256": sha(content)}
+                )
+        self.review["scope_sha256"] = sha(("\n".join(paths) + "\n").encode())
+        self.write_review()
+        remote = self.prepare_branch_publication()
+        receipts = []
+        for mode in ("verify-only", "commit-only", "publish-existing-branch"):
+            status, data = self.run_finalizer(mode, paths=paths)
+            self.assertEqual(status, 0, data)
+            receipts.append(data["reviewed_sensitive_sources"])
+            self.assertEqual(len(receipts[-1]), 5)
+            for receipt in receipts[-1]:
+                self.assertEqual(receipt["sha256"], sha(sources[receipt["path"]]))
+                self.assertEqual(receipt["content_scan"], "passed")
+        self.assertEqual(receipts[0], receipts[1])
+        self.assertEqual(receipts[1], receipts[2])
+        self.assertTrue(data["push"]["executed"])
+        self.assertEqual(
+            self.git("rev-parse", "HEAD"),
+            self.git("--git-dir=" + str(remote), "rev-parse", "feature/reviewed-source"),
+        )
+
+    def test_design_json_normal_publication_keeps_remote_verification(self) -> None:
+        self.replace_source("tokens/tokens.json", b'{"color":{"$value":"#1362d4"}}\n')
+        remote = self.base / "remote.git"
+        self.git("init", "-q", "--bare", "--initial-branch=main", str(remote))
+        self.git("remote", "add", "origin", str(remote))
+        self.git("push", "-qu", "origin", "main")
+        status, data = self.run_finalizer(None)
+        self.assertEqual(status, 0, data)
+        self.assertEqual(
+            self.git("rev-parse", "HEAD"),
+            self.git("--git-dir=" + str(remote), "rev-parse", "main"),
+        )
+        self.assertEqual(data["reviewed_sensitive_sources"][0]["content_scan"], "passed")
+
+    def test_design_sources_require_review_and_keep_all_secret_detectors(self) -> None:
+        examples = (
+            "gh" + "p_" + "X" * 32,
+            "-" * 5 + "BEGIN PRIVATE KEY" + "-" * 5,
+            "ssh-" + "rsa " + "X" * 48,
+            "pass" + 'word = "synthetic-blocked-value"',
+        )
+        for suffix in ("css", "json"):
+            with self.subTest(suffix=suffix):
+                safe = (
+                    b":root { --ds-space-base: 8px; }\n"
+                    if suffix == "css" else b'{"spacing":8}\n'
+                )
+                self.replace_source("dist/tokens." + suffix, safe)
+                self.assert_blocked(approved=False)
+                for index, signature in enumerate(examples):
+                    if suffix == "css":
+                        content = ("/* " + signature + " */\n").encode()
+                    else:
+                        value = (
+                            {"pass" + "word": "synthetic-blocked-value"}
+                            if index == 3 else {"note": signature}
+                        )
+                        content = json.dumps(value).encode()
+                    self.source.write_bytes(content)
+                    self.review["reviews"][0]["sha256"] = sha(content)
+                    self.write_review()
+                    data = self.assert_blocked()
+                    self.assertNotIn(signature, json.dumps(data))
+                    self.assertNotEqual(
+                        data["reviewed_sensitive_sources"][0]["content_scan"], "passed"
+                    )
+
+    def test_design_json_escapes_cannot_hide_secret_content(self) -> None:
+        examples = (
+            ("github" + "_pat_" + "X" * 32, b"github_pat_", b"github\\u005fpat_"),
+            ("-----BEGIN " + "PRIVATE KEY-----", b"PRIVATE", b"PRIV\\u0041TE"),
+            ("ssh-" + "ed25519 " + "X" * 48, b"ssh-", b"ss\\u0068-"),
+        )
+        for signature, literal, escaped in examples:
+            with self.subTest(signature=signature[:12]):
+                content = json.dumps({"note": signature}).encode().replace(literal, escaped)
+                self.replace_source("dist/tokens.json", content)
+                self.assert_blocked()
+        content = b'{"pass\\u0077ord":"synthetic-blocked-value"}'
+        self.replace_source("dist/tokens.json", content)
+        self.assert_blocked()
+
+    def test_design_json_decoded_signatures_block_publication_history(self) -> None:
+        content = json.dumps({"note": "ssh-" + "ed25519 " + "X" * 48}).encode()
+        self.replace_source("dist/tokens.json", content)
+        self.prepare_branch_publication()
+        self.commit_fixture()
+        self.assert_publish_blocked()
+
+    def test_design_review_rejects_private_key_env_and_unsupported_paths(self) -> None:
+        for path in (
+            "tokens/private-key.css", "tokens/ssh_key.json",
+            "tokens/.env.json", "dist/tokens.txt",
+        ):
+            with self.subTest(path=path):
+                content = b"{}\n" if path.endswith(".json") else b":root { --color: red; }\n"
+                self.replace_source(path, content)
+                self.assert_blocked()
+
+    def test_design_review_rejects_invalid_text_and_json(self) -> None:
+        examples = (
+            ("css", b"\xff"),
+            ("css", b":root { --color: red; }\x00"),
+            ("json", b"{"),
+            ("json", b'{"color":1,"color":2}'),
+            ("json", b'{"color":NaN}'),
+        )
+        for suffix, content in examples:
+            with self.subTest(suffix=suffix, content=content):
+                self.replace_source("dist/tokens." + suffix, content)
+                self.assert_blocked()
+
+    def test_design_publication_rejects_unreviewed_historical_css(self) -> None:
+        content = b":root { --ds-color-primary: red; }\n"
+        self.replace_source("dist/tokens.css", content)
+        self.prepare_branch_publication()
+        self.source.write_bytes(content + b"/* earlier unreviewed revision */\n")
+        self.commit_fixture()
+        self.source.write_bytes(content)
+        self.commit_fixture()
+        data = self.assert_publish_blocked()
+        self.assertIn("history blob mismatch", json.dumps(data))
 
     def test_publish_missing_review_and_scope_block(self) -> None:
         self.prepare_branch_publication()
