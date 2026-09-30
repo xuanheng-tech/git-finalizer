@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.8.1"
+readonly VERSION="1.8.2"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -700,6 +700,7 @@ Options:
                                  tool_authenticated, human_authenticated_ui, or not_required.
   --ci-verified-at <timestamp>   Optional caller-supplied CI evidence timestamp.
   --snapshot <id>                Bind initial publish to a complete snapshot.
+  --merge-parent <oid>          Verify/commit one resolved two-parent merge locally; no publication.
   --allow-test-fixture <path>    Ignore content secret signatures for this exact tests/ file.
   --fixture-exceptions <file>   Exact content reviews; local modes accept backend test assignments only.
   --reviewed-sensitive-source <file>
@@ -2326,6 +2327,7 @@ validate_resume_expected_head() {
 check_git_operation_state() {
     local git_dir
     local marker
+    local merge_head
 
     git_operation_error=''
     if ! git_dir=$(git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null); then
@@ -2335,10 +2337,37 @@ check_git_operation_state() {
     for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD REBASE_HEAD \
         rebase-apply rebase-merge sequencer BISECT_START; do
         if [[ -e "$git_dir/$marker" || -L "$git_dir/$marker" ]]; then
+            if [[ "$marker" == MERGE_HEAD && -n "$merge_parent_arg" ]]; then
+                [[ -f "$git_dir/$marker" && ! -L "$git_dir/$marker" ]] || {
+                    git_operation_error='--merge-parent requires a regular MERGE_HEAD'; return 1;
+                }
+                cmp -s "$git_dir/$marker" <(printf '%s\n' "$merge_parent_arg") || {
+                    git_operation_error='--merge-parent requires one exact MERGE_HEAD line'; return 1;
+                }
+                merge_head=$(git -C "$repo" rev-parse --verify 'HEAD^{commit}') || return 1
+                [[ "$merge_head" != "$merge_parent_arg" ]] || {
+                    git_operation_error='--merge-parent does not match one exact merge parent'; return 1;
+                }
+                [[ $(git -C "$repo" rev-parse --verify "$merge_parent_arg^{commit}" 2>/dev/null) == "$merge_parent_arg" ]] || {
+                    git_operation_error='--merge-parent is not an existing commit'; return 1;
+                }
+                [[ -z $(git -C "$repo" ls-files --unmerged) ]] || {
+                    git_operation_error='merge conflicts remain unresolved'; return 1;
+                }
+                if [[ -n "$merge_original_head" && "$merge_head" != "$merge_original_head" ]]; then
+                    git_operation_error='HEAD changed during merge validation'; return 1
+                fi
+                merge_original_head=$merge_head
+                continue
+            fi
             git_operation_error='拒绝未完成的 Git 操作'
             return 1
         fi
     done
+    if [[ -n "$merge_parent_arg" && ! -f "$git_dir/MERGE_HEAD" ]]; then
+        git_operation_error='--merge-parent requires a pending two-parent merge'
+        return 1
+    fi
 }
 
 check_resume_clean_state() {
@@ -5182,6 +5211,8 @@ ci_verified_at_arg=''
 resume_expected_oid=''
 resume_cli_option=''
 snapshot_id=''
+merge_parent_arg=''
+merge_original_head=''
 dry_run=0
 commit_only=0
 verify_only=0
@@ -5494,6 +5525,13 @@ while (($# > 0)); do
             snapshot_seen=1
             shift 2
             ;;
+        --merge-parent)
+            (($# >= 2)) || fail '--merge-parent requires a full commit OID'
+            [[ -z "$merge_parent_arg" ]] || fail '--merge-parent may be supplied only once'
+            [[ "$2" =~ ^[0-9a-f]{40}$ ]] || fail '--merge-parent requires a full commit OID'
+            merge_parent_arg=$2
+            shift 2
+            ;;
         --dry-run)
             ((dry_run == 0)) || fail '--dry-run 只能指定一次'
             dry_run=1
@@ -5586,6 +5624,13 @@ elif ((verify_only == 1)); then
 fi
 
 ((repo_seen == 1)) || fail '必须指定 --repo'
+if [[ -n "$merge_parent_arg" ]]; then
+    ((commit_only == 1 || verify_only == 1)) || fail '--merge-parent only supports commit-only or verify-only'
+    ((initial_commit_only == 0 && initial_publish == 0 && initial_branch_publish == 0 &&
+        resume_initial == 0 && resume_existing == 0 && publish_existing_branch == 0 &&
+        publish_existing_history == 0 && resume_existing_history == 0 &&
+        retire_remote_branch == 0 && retire_local_branch == 0 && sync_published_branch == 0)) || fail '--merge-parent cannot be combined with publication modes'
+fi
 if ((sync_published_branch == 0)); then
     ((sync_source_seen == 0 && sync_expected_target_seen == 0)) ||
         fail 'sync-specific parameters require --sync-published-branch'
@@ -6494,11 +6539,11 @@ committed_branch=$(git -C "$repo" symbolic-ref --quiet HEAD) ||
     fail_created_commit 'commit 后 attached branch 发生变化'
 committed_parents=$(git -C "$repo" rev-list --parents -n 1 "$commit_hash") ||
     fail_created_commit '无法读取 commit parents'
-[[ "$committed_parents" == "$commit_hash${commit_head_before:+ $commit_head_before}" ]] ||
+[[ "$committed_parents" == "$commit_hash${commit_head_before:+ $commit_head_before}${merge_parent_arg:+ $merge_parent_arg}" ]] ||
     fail_created_commit 'commit parents 与已验证 HEAD 不一致；未执行 push'
 commit_message=$(git -C "$repo" log -1 --format=%B)
 mapfile -d '' -t committed_paths < <(
-    git -C "$repo" diff-tree --root --no-commit-id --name-only -r --no-renames -z "$commit_hash"
+    git -C "$repo" diff-tree --root --diff-merges=first-parent --no-commit-id --name-only -r --no-renames -z "$commit_hash"
 )
 for path in "${committed_paths[@]}"; do
     if [[ -z ${allowed_paths[$path]+present} ]]; then
@@ -6542,7 +6587,7 @@ fi
 printf 'commit hash: %s\n' "$commit_hash"
 printf 'commit message: %q\n' "$commit_message"
 printf 'changed files:\n'
-git -C "$repo" diff-tree --root --no-commit-id --name-status -r --no-renames "$commit_hash"
+git -C "$repo" diff-tree --root --diff-merges=first-parent --no-commit-id --name-status -r --no-renames "$commit_hash"
 
 if ((commit_only == 1 || initial_commit_only == 1)); then
     if ((initial_commit_only == 1)); then

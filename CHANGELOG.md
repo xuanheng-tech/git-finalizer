@@ -39,6 +39,12 @@ section is invented for it.
 - Correct the deployment-health adapter ledger, track custom Claude homes and project instruction
   files, register the independently attested released Skill payload, and ignore only host worktree policy.
 
+## 1.8.2
+
+- Allow explicit local verification and completion of one resolved two-parent merge with
+  `--merge-parent`. Preserve pending-operation refusal by default, exact file and content guards,
+  both parent identities and reviewed-tree verification; publication modes remain unavailable.
+
 ## 1.8.1
 
 - Decode JSON strings and keys before checking credential signatures, including SSH keys and

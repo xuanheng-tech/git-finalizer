@@ -117,6 +117,13 @@ verify-only 要求已有 commit 的 attached local branch，但不要求 upstrea
 
 ### Commit only
 
+冲突由调用方在获授权的 source checkout 中处理。非空、已解决的双亲 merge 可显式使用
+`--merge-parent <full-oid>`，且只接受 `--mode verify-only` 或 `--mode commit-only`；默认继续拒绝
+未完成的 Git 操作。此参数要求普通文件 `MERGE_HEAD` 中只有一个精确 OID、index 无未解决项，
+没有其它进行中的 Git 操作，并保留显式文件范围、敏感内容、原 HEAD、双亲与 index tree 核验。
+verify-only 保持 HEAD/index/worktree/merge identity；commit-only 只产生本地 merge commit。
+它不解决冲突，也不允许同时发布；之后使用原有首次发布或 resume 入口与 Controller 集成。
+
 ```bash
 $HOME/bin/git-finalize \
   --summary \

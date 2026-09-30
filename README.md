@@ -9,12 +9,21 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.8.1**.
+Current source version: **1.8.2**.
 
-当前版本：`1.8.1`
+当前版本：`1.8.2`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
+
+## Completing an already reviewed merge locally
+
+After the caller resolves conflicts, `--merge-parent <full-oid>` lets `--mode verify-only`
+or `--mode commit-only` inspect one non-empty, resolved two-parent merge. It requires one regular
+`MERGE_HEAD` matching the exact parent, no unmerged index entries or other pending Git operations,
+and the usual explicit file scope and content checks. Verification preserves Git state; commit
+checks the original HEAD, both parents and reviewed index tree. It never publishes or resolves
+conflicts. Missing/multiple/drifted parents, unknown staged files and hook drift still fail closed.
 
 ## Synchronizing two existing remotes
 
