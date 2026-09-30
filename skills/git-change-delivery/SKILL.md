@@ -70,6 +70,7 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 | 已授权本地 commit，未授权或暂不适合 push | `--mode commit-only` | 创建一个本地 commit；不访问远端 |
 | unborn 仓库仅授权本地 root commit，远端未授权或目标有歧义 | `--initial-commit-only` | 创建一个本地 root commit；不配置或访问远端 |
 | 已明确授权 commit 和 push，且任务已达到交付状态 | 默认模式（不传 `--mode`） | commit、push、远端 post-verify |
+| 已明确授权同步两个现有远端的同名既有分支，source 已发布 | `--sync-published-branch <full-published-oid> --source-remote <name> --remote <name> --remote-branch <branch> --expected-target-oid <full-oid> --repo <absolute-repo>` | 不创建 commit；检查 live source、target ancestry 和历史安全，non-force 精确同步并核验两端；保持本地 HEAD/upstream |
 | 已存在普通 local commits，已明确授权继续 push | `--resume-publish <full-head-oid> --repo <absolute-repo>` | 不创建 commit；发布 configured upstream 并远端 post-verify |
 | 已存在 clean feature branch、无 upstream、远端同名 branch 不存在，已明确授权首次发布 | `--publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>` | 不创建 commit；non-force 首次发布、设置 upstream 并远端 post-verify |
 | 已有 local history，目标是经 repo-plan/repo-ensure 验证的全空 Gitea repository | `--publish-existing-history <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>` | 不创建 commit；全 remote refs 空检查、normal first push、远端 post-verify |
@@ -93,6 +94,12 @@ $HOME/bin/git-finalize --summary --retire-remote-branch <branch> --remote <name>
 $HOME/bin/git-finalize --summary --retire-local-branch <branch> --remote <name> --integrated-into <branch> --expected-local-oid <full-oid> --expected-integrated-oid <full-oid> --retirement-plan-id <sha256> --repo <absolute-repo> --dry-run
 ```
 
+- 已授权双远端同步使用 `--sync-published-branch`，不临时改 upstream、remote 或 Controller policy。
+  两端既有同名 branch 必须存在，live source 等于完整已发布 OID，target 等于 expected OID 并是
+  source 的祖先；复用既有历史安全扫描。`--dry-run` 不 push。目标已精确对齐时只核验，不重推。
+  本地 checkout 可保持另一 clean attached branch。此入口只同步已发布代码，不替代新代码的
+  Controller integration，也不发布 tags、其它 branch 或备份 remote。目标 pre-push 检查不是
+  server-side CAS；分叉或漂移停止依赖动作，未知 push 结果先核验后恢复，不 force/merge 修复。
 - 三种模式共用适用于各自执行边界的本地提交前检查；`verify-only` 不实际运行 commit hooks、签名或索引写入，因此不得声称验证了这些能力。
 - `commit-only` 不要求 upstream，不执行 fetch、push、远端验证或其他远端操作。
 - `initial-commit-only` 只接受 attached unborn branch 和空 index，创建一个本地 root commit，
@@ -190,7 +197,8 @@ blocked
 - `not_run`：没有实际执行会创建 commit 或接触远端的 Finalizer 操作。只读任务、没有授权的修改任务和用户明确禁止发布的任务使用此状态；`verify-only` 不构成 Git finalization。
 - `local_commit_created`：Git Finalizer 已成功创建本地 commit，但没有执行或没有授权执行 push。这是 `commit-only` 的正常成功终态，不得称为“已发布”。
 - `remote_pushed`：push 确已成功，但当前执行没有完成实时远端 OID 核验。只有工具证据明确支持这一实际状态时才使用；不得为了凑状态主动跳过核验，也不得升级成 `remote_verified` 或声称完整发布成功。
-- `remote_verified`：push 成功，且 Git Finalizer 已完成实时远端核验，满足 `HEAD = upstream = remote OID`。这是完整远端发布成功终态。
+- `remote_verified`：push 成功，且 Git Finalizer 已完成实时远端核验，满足 `HEAD = upstream = remote OID`。这是完整远端发布成功终态。对 `--sync-published-branch`，以 exact published OID = live source =
+  live target 且 `post_verify=passed` 为证据，本地 HEAD/upstream 保持原值；已对齐恢复不要求重推。
 - `blocked`：Finalizer preflight 或执行被阻断。必须报告阻断阶段；如果阻断前已经创建本地 commit，正文还必须报告：
 
 ```text

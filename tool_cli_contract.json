@@ -288,6 +288,36 @@
     },
     {
       "flags": [
+        "--sync-published-branch",
+        "--source-remote",
+        "--remote",
+        "--remote-branch",
+        "--expected-target-oid",
+        "--repo",
+        "--dry-run",
+        "--fixture-exceptions",
+        "--summary"
+      ],
+      "name": "sync_published_branch",
+      "operation_class": "remote_mutation",
+      "preconditions": [
+        "exact_live_already_published_source_oid",
+        "same_existing_branch_on_distinct_configured_remotes",
+        "unique_identical_fetch_push_endpoint_per_remote",
+        "expected_target_oid_or_exact_source_for_recovery",
+        "target_is_source_ancestor",
+        "clean_attached_checkout",
+        "existing_commit_range_safety",
+        "unchanged_local_head_index_branches_tags_upstream"
+      ],
+      "result_statuses": [
+        "success",
+        "blocked",
+        "failed"
+      ]
+    },
+    {
+      "flags": [
         "--publish-existing-branch",
         "--remote",
         "--remote-branch",
@@ -456,7 +486,7 @@
       ]
     }
   ],
-  "contract_version": 6,
+  "contract_version": 7,
   "exit_codes": {
     "0": "success or verification passed",
     "1": "blocked, failed verification, or Finalizer preflight refusal",
@@ -487,5 +517,5 @@
   ],
   "schema_version": 1,
   "tool_name": "git-finalizer",
-  "tool_version": "1.7.1"
+  "tool_version": "1.8.1"
 }

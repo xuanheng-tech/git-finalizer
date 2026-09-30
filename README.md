@@ -9,12 +9,28 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.7.1**.
+Current source version: **1.8.1**.
 
-当前版本：`1.7.1`
+当前版本：`1.8.1`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
+
+## Synchronizing two existing remotes
+
+`--sync-published-branch <full-published-oid>` copies one already-published branch by a normal,
+non-force push. Supply `--source-remote`, `--remote`, the same `--remote-branch` on both existing
+remotes, and `--expected-target-oid`. Both remotes must have one identical fetch/push endpoint;
+the live source must equal the exact OID and the target must be its ancestor. The existing commit
+range safety scan still runs. `--dry-run` validates the complete transaction without pushing.
+
+The checkout can stay on another clean attached branch: HEAD, index, local branches, tags and
+upstream stay unchanged. No branch is created, merged, deleted or force-pushed. A target already
+at the source OID is verified without another push, including recovery after an uncertain outcome.
+Source/target drift blocks the action. The pre-push expected-target check is not a server-side CAS;
+the server's ordinary non-force check and independent post-verification remain mandatory. A
+concurrent change requires fresh observation, never an automatic merge or history rewrite.
+This interface grants no authorization and does not replace Controller integration of new code.
 
 ## Why it exists
 
