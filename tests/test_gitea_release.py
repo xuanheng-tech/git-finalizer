@@ -37,6 +37,13 @@ class GiteaReleaseTests(unittest.TestCase):
         self.redirect_url: str | None = None
         self.foreign_authorization: str | None = None
         self.foreign_downloads = 0
+        self.fixture_value = "synthetic-fixture"
+        self.advertised_base: str | None = None
+        self.download_path = "/synthetic/example/releases/download/v1.6.0/"
+        self.advertised_path: str | None = None
+        self.uploaded_name: str | None = None
+        self.uploaded_size_offset = 0
+        self.download_authorizations: list[str | None] = []
         fixture = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -59,15 +66,16 @@ class GiteaReleaseTests(unittest.TestCase):
                     if fixture.extra_asset:
                         listing.append({"name": "unexpected.txt"})
                     self.send(200, listing)
-                elif path.startswith("/download/"):
+                elif path.startswith(fixture.download_path):
                     fixture.downloads += 1
+                    fixture.download_authorizations.append(self.headers.get("Authorization"))
                     if fixture.redirect_url:
                         self.send_response(302)
                         self.send_header("Location", fixture.redirect_url)
                         self.send_header("Content-Length", "0")
                         self.end_headers()
                     else:
-                        name = urllib.parse.unquote(path.removeprefix("/download/"))
+                        name = urllib.parse.unquote(path.removeprefix(fixture.download_path))
                         self.send(200, b"corrupted" if fixture.corrupt else fixture.assets[name])
                 else:
                     self.send(404, {})
@@ -78,7 +86,11 @@ class GiteaReleaseTests(unittest.TestCase):
                     query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
                     name = query["name"][0]
                     fixture.assets[name] = body
-                    self.send(201, {"name": name, "browser_download_url": fixture.url + "/download/" + name})
+                    base = fixture.advertised_base or fixture.url
+                    path = fixture.advertised_path or fixture.download_path
+                    self.send(201, {"id": len(fixture.assets), "name": fixture.uploaded_name or name,
+                                    "size": len(body) + fixture.uploaded_size_offset,
+                                    "browser_download_url": base + path + name})
                 else:
                     self.send(201, {"id": 1})
 
@@ -101,7 +113,7 @@ class GiteaReleaseTests(unittest.TestCase):
         return subprocess.run(
             [sys.executable, "-B", "-"], input=script, cwd=self.root,
             env={"PATH": os.defpath, "GITEA_API_URL": self.url + "/api/v1",
-                 "GITEA_REPOSITORY": "synthetic/example", "GITEA_TOKEN": "synthetic-fixture",
+                 "GITEA_REPOSITORY": "synthetic/example", "GITEA_TOKEN": self.fixture_value,
                  "RELEASE_TAG": "v1.6.0", "RELEASE_SHA": "a" * 40},
             text=True, capture_output=True, timeout=15,
         )
@@ -118,6 +130,37 @@ class GiteaReleaseTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.published)
         self.assertIn("draft release retained", result.stderr)
+
+    def test_advertised_alias_is_not_used_for_authenticated_downloads(self) -> None:
+        self.advertised_base = "http://0.0.0.0:3000"
+        result = self.publish()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.downloads, 2)
+        self.assertEqual(self.download_authorizations, [f"token {self.fixture_value}"] * 2)
+        self.assertTrue(self.published)
+
+    def test_unexpected_uploaded_identity_retains_the_draft(self) -> None:
+        self.uploaded_name = "unexpected.txt"
+        result = self.publish()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.downloads, 0)
+        self.assertFalse(self.published)
+
+    def test_unexpected_uploaded_size_retains_the_draft(self) -> None:
+        self.uploaded_size_offset = 1
+        result = self.publish()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.downloads, 0)
+        self.assertFalse(self.published)
+
+    def test_attachment_url_cannot_change_the_authenticated_download_route(self) -> None:
+        self.advertised_base = "http://127.0.0.1:1"
+        self.advertised_path = "/attachments/"
+        result = self.publish()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.downloads, 2)
+        self.assertEqual(self.download_authorizations, [f"token {self.fixture_value}"] * 2)
+        self.assertTrue(self.published)
 
     def test_unexpected_remote_asset_retains_the_draft(self) -> None:
         self.extra_asset = True

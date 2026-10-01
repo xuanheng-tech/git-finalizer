@@ -13,6 +13,10 @@ section is invented for it.
 
 ## Unreleased
 
+- Build authenticated Gitea asset download routes from the configured API origin, while checking
+  the uploaded asset name and size. UI/attachment aliases cannot direct authenticated requests;
+  mismatched metadata and corrupt bytes remain blocked, and redirects still strip foreign credentials.
+
 - Review Controller CLI 43 for published integration-branch retirement while retaining plan schema 1,
   execution protocol v1, storage layout 4 and the existing capability requirements. Unreviewed CLI
   contracts and missing capabilities still fail the deployment health gate.
