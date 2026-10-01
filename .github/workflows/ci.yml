@@ -31,7 +31,7 @@ jobs:
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
         with:
           just-version: "1.21.0"
-          github-token: ""
+          github-token: ${{ github.token }}
       - name: Ensure shellcheck
         run: command -v shellcheck || (sudo apt-get update -y && sudo apt-get install -y --no-install-recommends shellcheck)
       - name: Lint shell scripts

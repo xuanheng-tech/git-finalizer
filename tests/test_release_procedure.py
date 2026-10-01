@@ -228,6 +228,18 @@ class ReleaseProcedureTests(unittest.TestCase):
                         f"{relative} has a mis-indented step header: {line!r}",
                     )
 
+    def test_just_setup_uses_only_the_correct_hosts_credential_authority(self) -> None:
+        for relative in (".github/workflows/ci.yml", ".github/workflows/release.yml",
+                         ".gitea/workflows/quality.yml", ".gitea/workflows/release.yml"):
+            with self.subTest(workflow=relative):
+                text = (ROOT / relative).read_text(encoding="utf-8")
+                setup = text.split("uses: extractions/setup-just@", 1)[1].split("- name:", 1)[0]
+                if relative.startswith(".github/"):
+                    self.assertIn("github-token: ${{ github.token }}", setup)
+                else:
+                    self.assertIn('github-token: ""', setup)
+                    self.assertNotIn("github.token", setup)
+
     def test_checkouts_fetch_the_tags_the_gates_read(self) -> None:
         """A depth-1 checkout has no tags, and the contract gate reads them."""
         for relative in (

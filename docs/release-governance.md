@@ -128,6 +128,9 @@ sort order, or runner image), not something to paper over by publishing one host
   workflows may not approve pull requests.
 - No repository secrets are used or required: each platform injects its own token
   (`GITHUB_TOKEN` / `GITEA_TOKEN`). Adding a secret to make a release work is a design smell here.
+  GitHub's pinned `setup-just` uses the built-in `github.token` for GitHub release metadata,
+  avoiding shared-IP anonymous API limits. Gitea keeps that input empty so its platform token is
+  never forwarded to GitHub. Action pins, build-tool versions and job permissions stay the same.
 - What `main` actually requires, measured when `v1.5.0` was released: one required status context,
   `check` — the single `ci.yml` job, which runs `just lint` and `just check` inside itself — with
   `strict` on. There is no separate required `lint` context, no required pull-request review, no
@@ -313,6 +316,7 @@ record.
 | `v1.8.6` | GitHub | `17d15bf343e64e06840b520b7b3509ba0ec4f3cd` | `762188cade263a862b8a1dd1b352f2ebd9c1471c` | `0f3161b42c3140b10dd5dd7dad158c84dc3ea8487969cb129e0f8c5f2ac2069d` | 195192 |
 | `v1.8.7` | GitHub | `96bbd0f1add33f817b10ea0fa1fc03f12a02a5f8` | `6ab2c2b04625dcbfbc0876a47ea8efacc347153f` | `d08e678d03047a13c4930d26abad9864d132489bf14ed849d31ef7b7fd8772d2` | 196087 |
 | `v1.8.8` | GitHub | `16778ab07b051981c8e294dd23eff2a6c7c8e81c` | `e290125fa40263a79da43a53504aafd4e6d09f39` | `5325706c8d049f5097547f89c954090e8bbac23a9ef5c3cf2d09548f8a168542` | 196457 |
+| `v1.8.9` | GitHub | `54d2f7f80bfb0392bea79561311551c7528cd3b6` | `8149d8e5dbf804a70f0cab1df94c728c08d61df9` | `23ed4bf2459568f7fc3b1705358be26ecf18dcf24611bd5eaadfe1d0e5116f33` | 196825 |
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
