@@ -22,10 +22,10 @@
       "snapshot-runner"
     ]
   },
-  "public_cli_contract_sha256": "3d9a557ec5f3e10d8812dec99f29bffd3b7373f9562fa4eb4447fabc78238c8a",
+  "public_cli_contract_sha256": "020caca4ba62457e0f247e150fe549ab3ae46616c1760bd6ee399992341fc9d2",
   "schema_version": 2,
   "skill_contract_version": 2,
   "tool_commit": "@release",
   "tool_name": "snapshot-runner",
-  "tool_version": "2.4.1"
+  "tool_version": "2.5.0"
 }
