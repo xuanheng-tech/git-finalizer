@@ -13,38 +13,16 @@ section is invented for it.
 
 ## Unreleased
 
-- Build authenticated Gitea asset download routes from the configured API origin, while checking
-  the uploaded asset name and size. UI/attachment aliases cannot direct authenticated requests;
-  mismatched metadata and corrupt bytes remain blocked, and redirects still strip foreign credentials.
+## 1.8.11
 
-- Review Controller CLI 43 for published integration-branch retirement while retaining plan schema 1,
-  execution protocol v1, storage layout 4 and the existing capability requirements. Unreviewed CLI
-  contracts and missing capabilities still fail the deployment health gate.
-- Restore owner write permission on validated, owned read-only subdirectories
-  during registered temporary-directory cleanup.
-- Allow explicit cleanup of owned FIFOs inside pytest subtrees of registered task
-  directories, even when the task prefix is not a fixture name. Keep other FIFO
-  locations and special files blocked before deletion.
-- `tool-skill-sync doctor` accepts a Claude skills directory that links each shared personal Skill
-  and warns when Claude-synced skills live inside the shared root, instead of requiring one
-  whole-root link.
-- Replace the mirrored Controller retirement digest with public verification, single-use CAS
-  authorization and completion. Recover interrupted requests without duplicate deletion, preserve
-  completion failures, and attest legacy already-absent refs through the producer.
-- Bind a created commit to the reviewed index tree, original branch and parent. Preserve hooks and
-  report commits created by a failing hook instead of retrying or publishing unreviewed content.
-- Refuse pending Git operations and scan earlier unpublished commits in normal and initial-branch
-  delivery. Share content signatures between worktree and blob checks and recognize JSON keys.
-- Resolve Python from `PATH`, validate its minimum version, and disable interactive Git credential
-  prompts. Redact conflicting bootstrap remotes and keep integration hook diagnostics out of JSON.
-- Handle Gitea organization pagination and malformed URLs/timeouts without misclassifying membership
-  or leaking credentials.
-- Validate release tags before writes, preserve unknown output/staging files, reject archive links,
-  duplicate members and duplicate checksum entries, and verify uploaded Gitea bytes before publication.
-- Remove unused CI interpreter installs and record the actual build environment; require annotated
-  release tags and a clean checkout. Make Renovate configuration independent of private presets.
-- Correct the deployment-health adapter ledger, track custom Claude homes and project instruction
-  files, register the independently attested released Skill payload, and ignore only host worktree policy.
+- Derive authenticated Gitea asset verification routes from the configured API origin and exact
+  repository/tag/file identity. Check uploaded names and sizes, keep corrupt uploads in draft, and
+  strip authentication on foreign redirects; UI and attachment aliases cannot select request targets.
+- Clarify that the executing agent performs routine review, verification and acceptance. Authorized
+  Full Access execution needs no additional confirmation; required native and independent approvals
+  remain enforced. Ship the updated Skill payload and matching manifest pins.
+- Support explicitly verified GitHub + Gitea mirrors in release records, require mirrored tags on
+  both hosts, and document recovery of the same verified Gitea draft without changing published tags.
 
 ## 1.8.10
 
