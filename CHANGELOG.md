@@ -42,6 +42,14 @@ section is invented for it.
 - Correct the deployment-health adapter ledger, track custom Claude homes and project instruction
   files, register the independently attested released Skill payload, and ignore only host worktree policy.
 
+## 1.8.9
+
+- Rewrite links to omitted documentation in packaged Markdown to the corresponding public release
+  tag, preserving local checkout links, anchors and the existing artifact file set. Reject missing
+  or escaping documentation targets before writing an artifact.
+- Give `just check` one PASS/SKIP/FAIL summary, including optional real-Controller retirement and
+  individual unit-test skip reasons. Failed or empty required test groups remain nonzero.
+
 ## 1.8.8
 
 - Report the exact Controller retirement receipt identifier in `--summary` after verified

@@ -12,6 +12,21 @@ finalizer=$project_root/git-finalize
 tmp_root=$(mktemp -d /tmp/git-finalizer-phase01.XXXXXX)
 current_case='startup'
 passed=0
+current_group='core shell integration'
+
+report_group() {
+    local status=$1 group=$2 reason=${3:-}
+    printf '%s | %s' "$status" "$group"
+    [[ -z $reason ]] || printf ' | %s' "$reason"
+    printf '\n'
+    if [[ -n ${GF_TEST_GROUP_RESULTS:-} ]]; then
+        python3 -B -c '
+import json, sys
+with open(sys.argv[1], "a", encoding="utf-8") as output:
+    output.write(json.dumps(dict(status=sys.argv[2], group=sys.argv[3], reason=sys.argv[4])) + "\n")
+' "$GF_TEST_GROUP_RESULTS" "$status" "$group" "$reason"
+    fi
+}
 
 cleanup() {
     rm -rf -- "$tmp_root"
@@ -20,6 +35,7 @@ cleanup() {
 report_error() {
     local status=$?
     printf 'not ok - %s\n' "$current_case" >&2
+    report_group FAIL "$current_group" "exit $status: $current_case"
     exit "$status"
 }
 
@@ -2047,14 +2063,28 @@ run_case 'release version and public modes remain aligned' test_release_contract
 
 printf 'all %s integration tests passed\n' "$passed"
 
-bash "$project_root/tests/test_initial_branch_publish.sh"
-bash "$project_root/tests/test_publish_existing_branch.sh"
-bash "$project_root/tests/test_publish_existing_history.sh"
-bash "$project_root/tests/test_resume_initial_publish.sh"
-bash "$project_root/tests/test_resume_publish.sh"
-bash "$project_root/tests/test_summary.sh"
-bash "$project_root/tests/test_retire_remote_branch.sh"
-bash "$project_root/tests/test_retire_local_branch.sh"
-bash "$project_root/tests/test_retire_branch_real_controller.sh"
-bash "$project_root/tests/test_standalone_operations.sh"
-bash "$project_root/tests/test_integration_boundaries.sh"
+report_group PASS "$current_group" "$passed cases executed"
+
+run_suite() {
+    local file=$1
+    current_group=${file%.sh}
+    current_case=$current_group
+    bash "$project_root/tests/$file"
+    report_group PASS "$current_group"
+}
+
+run_suite test_initial_branch_publish.sh
+run_suite test_publish_existing_branch.sh
+run_suite test_publish_existing_history.sh
+run_suite test_resume_initial_publish.sh
+run_suite test_resume_publish.sh
+run_suite test_summary.sh
+run_suite test_retire_remote_branch.sh
+run_suite test_retire_local_branch.sh
+if command -v worktree-controller >/dev/null 2>&1; then
+    run_suite test_retire_branch_real_controller.sh
+else
+    report_group SKIP test_retire_branch_real_controller 'worktree-controller unavailable on PATH'
+fi
+run_suite test_standalone_operations.sh
+run_suite test_integration_boundaries.sh

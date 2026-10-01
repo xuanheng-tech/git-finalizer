@@ -47,19 +47,17 @@ Small, unscheduled, each one a real gap rather than a polish item.
 - Both jobs compare downloaded assets with pre-upload digests. Gitea does so while the release is
   still a draft and checks the asset inventory before making it public. The transport regressions
   use a disposable local HTTP fixture; a real hosted release remains a separately authorised test.
-- The `docs/...` links in the shipped `README.md` resolve in the repository, not inside the tarball,
-  because `docs/` is not part of the package. Either outcome is fine, but choosing it changes the
-  artifact file set, so it belongs to a version batch.
+- The packaged Markdown files link to documentation at the corresponding public release tag.
+  `docs/` remains outside the package and source-checkout links remain relative; the artifact file
+  set stays unchanged.
 - The jobs record the actual Python/Git/tar/gzip/locale. Both quality jobs now exercise a verified
   source-built release installation on Python 3.11 and 3.12 with optional tools and personal
   configuration absent. Different runner images can still produce different bytes; the cross-host
   comparison remains the acceptance gate when moving a release between hosts.
-- `just check` runs the same commands on both hosts but not always the same set of suites: a few
-  groups are gated on an optional integration being installed on `PATH` and report themselves as
-  skipped rather than failing. That is intended, but it means a green check on one host is not
-  proof that the other executed the same number of groups, so read the skipped-group counts in the
-  job log instead of assuming parity. Making that comparison mechanical (a recorded expected count
-  per host) needs a decision about which host owns which expectation.
+- `just check` ends with one PASS/SKIP/FAIL table and skip reasons on both hosts. Real-Controller
+  retirement is optional when the Controller is absent from `PATH`; unit-test skips are also
+  listed individually. Green checks prove the reported executed groups passed, not cross-host
+  coverage parity. Mandatory host-specific expectations still need an explicit owner decision.
 
 ## 4. Dependency automation (Renovate)
 

@@ -134,7 +134,24 @@ def preflight(version_tag: str) -> str:
     return version
 
 
-def stage(stage_root: Path) -> None:
+def packaged_markdown(text: str, version_tag: str) -> str:
+    """Keep source links local while making omitted documentation reachable in a bundle."""
+    tag_version(version_tag)
+
+    def replace(match: re.Match[str]) -> str:
+        relative = match.group(1)
+        path = PurePosixPath(relative)
+        source = ROOT / relative
+        if (".." in path.parts or path.as_posix() != relative or not source.is_file()
+                or not source.resolve().is_relative_to(ROOT)):
+            raise ReleaseError(f"packaged documentation link has no safe source file: {relative}")
+        return (f"](https://github.com/xuanheng-tech/git-finalizer/blob/{version_tag}/"
+                f"{relative}{match.group(2) or ''})")
+
+    return re.sub(r"\]\((docs/[^\s)#?]+)([?#][^\s)]*)?\)", replace, text)
+
+
+def stage(stage_root: Path, version_tag: str) -> None:
     stage_root.mkdir(parents=True, exist_ok=True)
     for relative in sorted(package_paths()):
         path = PurePosixPath(relative)
@@ -145,7 +162,11 @@ def stage(stage_root: Path) -> None:
             raise ReleaseError(f"packaged file is missing: {relative}")
         target = stage_root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
+        if relative in METADATA_FILES and source.suffix == ".md":
+            target.write_text(packaged_markdown(source.read_text(encoding="utf-8"), version_tag),
+                              encoding="utf-8")
+        else:
+            shutil.copyfile(source, target)
         target.chmod(stat.S_IMODE(source.stat().st_mode) & 0o755)
     # Directory modes must not depend on the builder's umask, or two hosts produce
     # different bytes from the same commit.
@@ -210,7 +231,7 @@ def build(version_tag: str, dist: Path | None = None, staging: Path | None = Non
     artifact = dist_root / f"{package}.tar.gz"
     with tempfile.TemporaryDirectory(prefix="git-finalizer-build-") as temporary:
         stage_root = staging or Path(temporary) / "stage"
-        stage(stage_root / package)
+        stage(stage_root / package, version_tag)
         timestamp = commit_timestamp()
         built_bytes = tar_bytes(stage_root, package, timestamp)
         if built_bytes != tar_bytes(stage_root, package, timestamp):

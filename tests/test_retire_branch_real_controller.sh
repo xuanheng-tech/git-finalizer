@@ -3,7 +3,7 @@
 # End-to-end retirement against the REAL installed Worktree Controller public
 # contract. The controller itself plans, revalidates, records receipts, and
 # reports status; this suite never reimplements controller digests. It skips
-# with explicit ok lines when the controller entry point is unavailable.
+# with explicit SKIP lines when the controller entry point is unavailable.
 
 set -Eeuo pipefail
 
@@ -207,7 +207,7 @@ run_case() {
     current_case=$1
     shift
     if ! controller_available; then
-        printf 'ok - %s (skipped: worktree-controller unavailable)\n' "$current_case"
+        printf 'SKIP | %s | worktree-controller unavailable on PATH\n' "$current_case"
         skipped=$((skipped + 1))
         return
     fi

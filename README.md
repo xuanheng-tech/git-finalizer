@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.8.8**.
+Current source version: **1.8.9**.
 
-当前版本：`1.8.8`
+当前版本：`1.8.9`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
@@ -141,8 +141,9 @@ export PATH="$HOME/.local/bin:$PATH"
 git-finalize --version
 ```
 
-The bundle ships the CLI, its companions and the shared Skill. The `docs/…` links elsewhere in this
-README resolve in the source repository; they are not inside the unpacked bundle.
+The bundle ships the CLI, its companions and the shared Skill. During packaging, `docs/…` links in
+the shipped Markdown files become public source links pinned to the release tag. The documentation
+stays outside the tarball; checkout links remain relative.
 
 From a checkout:
 
@@ -327,6 +328,11 @@ just check        # shell suites, unit tests, Skill validation, contract check
 just lint         # shellcheck over the bash entrypoint, scripts and test harness
 bash tests/run.sh # shell test suites alone
 ```
+
+`just check` ends with a PASS/SKIP/FAIL table, including reasons for each skipped group or unit test.
+Optional real-Controller retirement tests are reported as SKIP when `worktree-controller` is absent
+from `PATH`. A green check proves the listed executed groups passed; it does not imply skipped
+integrations ran. Any executed group failure keeps the check nonzero and stops later groups.
 
 Contributing guidance, including the hash-bound file rules you must respect when changing the
 contract or the Skill payload: [CONTRIBUTING.md](CONTRIBUTING.md).

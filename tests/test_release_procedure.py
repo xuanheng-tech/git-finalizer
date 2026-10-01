@@ -164,6 +164,44 @@ class ReleaseProcedureTests(unittest.TestCase):
         ):
             self.assertIn(required, members)
 
+    def test_bundle_documentation_links_are_pinned_without_changing_source(self) -> None:
+        repository = self.fixture()
+        originals = {name: (repository / name).read_text(encoding="utf-8")
+                     for name in ("README.md", "CONTRIBUTING.md")}
+        readme = repository / "README.md"
+        readme.write_text(originals["README.md"] + "\n[Anchor](docs/agent-contract.md#scope)\n",
+                          encoding="utf-8")
+        originals["README.md"] = readme.read_text(encoding="utf-8")
+        result = run_script("build", repository)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with tarfile.open(repository / "dist" / f"{PACKAGE}.tar.gz", "r:gz") as archive:
+            for name, original in originals.items():
+                with self.subTest(file=name):
+                    stream = archive.extractfile(f"{PACKAGE}/{name}")
+                    self.assertIsNotNone(stream)
+                    packaged = stream.read().decode("utf-8")
+                    links = re.findall(r"\]\((docs/[^)]+)\)", original)
+                    self.assertTrue(links)
+                    expected = original
+                    for target in links:
+                        expected = expected.replace(f"]({target})", f"](https://github.com/"
+                                                    f"xuanheng-tech/git-finalizer/blob/{RELEASE_TAG}/{target})")
+                    self.assertEqual(packaged, expected)
+                    self.assertEqual((repository / name).read_text(encoding="utf-8"), original)
+                    self.assertNotIn("](docs/", packaged)
+
+    def test_packaging_rejects_missing_or_escaping_documentation(self) -> None:
+        repository = self.fixture()
+        readme = repository / "README.md"
+        original = readme.read_text(encoding="utf-8")
+        for target in ("docs/missing.md", "docs/../LICENSE"):
+            with self.subTest(target=target):
+                readme.write_text(original + f"\n[Broken]({target})\n", encoding="utf-8")
+                result = run_script("build", repository)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("packaged documentation link has no safe source file", result.stderr)
+                self.assertFalse((repository / "dist" / f"{PACKAGE}.tar.gz").exists())
+
     def test_ci_workflows_are_well_formed_and_gate_lint_and_checks(self) -> None:
         import re as _re
 
