@@ -13,6 +13,9 @@ section is invented for it.
 
 ## Unreleased
 
+- Restore built-in GitHub authentication for the pinned `setup-just` metadata request in GitHub
+  quality and release jobs. Keep Gitea's cross-host download unauthenticated and retain existing
+  permissions, action pins and build-tool versions.
 - Review Controller CLI 43 for published integration-branch retirement while retaining plan schema 1,
   execution protocol v1, storage layout 4 and the existing capability requirements. Unreviewed CLI
   contracts and missing capabilities still fail the deployment health gate.
