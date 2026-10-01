@@ -13,9 +13,6 @@ section is invented for it.
 
 ## Unreleased
 
-- Restore built-in GitHub authentication for the pinned `setup-just` metadata request in GitHub
-  quality and release jobs. Keep Gitea's cross-host download unauthenticated and retain existing
-  permissions, action pins and build-tool versions.
 - Review Controller CLI 43 for published integration-branch retirement while retaining plan schema 1,
   execution protocol v1, storage layout 4 and the existing capability requirements. Unreviewed CLI
   contracts and missing capabilities still fail the deployment health gate.
@@ -44,6 +41,16 @@ section is invented for it.
   release tags and a clean checkout. Make Renovate configuration independent of private presets.
 - Correct the deployment-health adapter ledger, track custom Claude homes and project instruction
   files, register the independently attested released Skill payload, and ignore only host worktree policy.
+
+## 1.8.10
+
+- Add `just release-check` as the mandatory pre-tag maintainer gate: run lint and the full checks
+  with real Controller retirement integration required. Missing, skipped, duplicated or failed
+  Controller results fail preparation; ordinary and hosted checks retain standalone SKIP behavior.
+- Restore built-in GitHub authentication for the pinned `setup-just` metadata request in quality
+  and release jobs. Keep Gitea's cross-host download unauthenticated and retain existing permissions,
+  action pins and build-tool versions.
+- Ship the Snapshot Runner 2.5.1 pairing manifest with the unchanged CLI and Skill payload contracts.
 
 ## 1.8.9
 

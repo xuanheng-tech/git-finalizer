@@ -4,6 +4,11 @@ default:
 check:
     python3 -B scripts/check.py
 
+# Mandatory maintainer gate before creating a release tag.
+release-check:
+    just lint
+    python3 -B scripts/check.py --require-controller
+
 toolchain-check source_root="..":
     ./tool-skill-sync --source-root "{{source_root}}" --source-repo git-finalizer="$PWD" check --source-only context-loader
     ./tool-skill-sync --source-root "{{source_root}}" --source-repo git-finalizer="$PWD" check --source-only snapshot-runner

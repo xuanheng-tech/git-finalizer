@@ -16,7 +16,7 @@ supported-version policy.
 | Governed daily delivery and the historical release record | **Gitea** `xuanheng-tech/git-finalizer` (the ten releases `v0.4.0` – `v1.4.0` were published here; `v1.5.0` onward is GitHub) |
 | Production installation on this machine | `tool-skill-sync` bundles built from the canonical source repository — it does **not** consume a release artifact from either host |
 
-One release authority per version: **a version is published on exactly one host**. Publishing the
+One release authority per version: **by default a version is published on exactly one host**. Publishing the
 same tag on both hosts is a deliberate mirroring act, not a default, and it requires the digest
 comparison in [Cross-host parity](#cross-host-parity). A published version is never rewritten, so
 releases are forward-only — that is a rule this project follows, and no workflow here replaces a
@@ -45,7 +45,14 @@ Both hosts evaluate a release workflow **from the tree of the pushed tag's commi
   Both hosts run the same gates before publishing. Gitea verifies while the release is still a draft;
   GitHub verifies after publication. Existing records survive failed verification.
 
-Both run, in this order and on both hosts: `preflight` → `just lint` → `just check` → `build` →
+Before tag creation, the maintainer runs `just release-check` in the clean candidate checkout.
+It runs lint and all existing checks with `--require-controller`: the real Controller retirement
+suite must report exactly one executed PASS. Missing, skipped, duplicate or failed Controller
+results are fatal. Record the installed Controller version and contract with the candidate evidence.
+Hosted checks keep Controller optional so a standalone runner still reports its absence as SKIP;
+hosted green checks do not substitute for the mandatory maintainer gate.
+
+Both hosted jobs run, in this order and on both hosts: `preflight` → `just lint` → `just check` → `build` →
 `verify` → release-notes extraction → publish. A tag whose version batch disagrees fails at
 `preflight` before anything is published.
 
@@ -109,9 +116,9 @@ Known-good anchor: the published `v1.4.0` artifact — `ae1d29683ca36a911993eb13
 `scripts/release.py` (which first shipped in `v1.5.0`, so it is run *against* the `v1.4.0` tree
 rather than checked out with it) under `umask` 022, 002 and 077.
 
-No version has been published on **both** hosts yet — `v1.4.0` is Gitea-only and `v1.5.0` is
-GitHub-only — so cross-host byte equality for one and the same version is still expected, not yet
-proven. What `v1.5.0` did prove is host independence of the recipe: the digest the GitHub runner
+Cross-host equality is established for a version only when both hosts independently build that
+same candidate and the downloaded release assets match. What `v1.5.0` proved was host independence
+of the recipe: the digest the GitHub runner
 built and published equals, byte for byte, the digest `scripts/release.py selfcheck` produced
 locally from the same commit (see the release record below), on different machines with different
 images. When the same version is ever published on both hosts, the two `git-finalizer-<version>.tar.gz`
@@ -162,6 +169,7 @@ source repository rather than the release artifact.
    git fetch --all --tags --prune
    git log --oneline -3 github/main   # or origin/main, the branch being tagged
    git status --porcelain=v1          # must be empty in the checkout used for tagging
+   just release-check                # real Controller suite must execute and pass
    python3 -B scripts/release.py preflight "v$VERSION"    # exact new tag name
    python3 -B scripts/release.py selfcheck "v$VERSION"    # record digest from this clean candidate
    python3 -B scripts/release.py publication-status "v$VERSION" \

@@ -13,6 +13,9 @@ the release notes themselves by `scripts/changelog.py extract <tag>` in the rele
 fails before publishing if the section is missing. Every gate reads the working tree, so they must be
 run in a clean checkout of the commit being tagged. See README "Development and releases" and
 `docs/release-governance.md` for the authoritative list.
+Before creating a release tag, run `just release-check` from that clean candidate: lint and the
+full check runner must pass with the real Controller suite executed. Hosted `just check` retains
+its optional Controller SKIP behavior and does not replace this maintainer gate.
 
 Tool/Skill changes also require the source-only manifest check. Deployment closes only after the
 installed `tool-skill-sync doctor --repo <checkout> --summary` passes the relevant components.

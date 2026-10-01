@@ -45,6 +45,43 @@ class CheckReportingTests(unittest.TestCase):
                                     cwd=root, capture_output=True, text=True, check=False)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("Summary: 5 PASS, 0 SKIP, 0 FAIL", result.stdout)
+            required = subprocess.run(
+                [sys.executable, "-I", "-B", str(scripts / "check.py"), "--require-controller"],
+                cwd=root, capture_output=True, text=True, check=False)
+            self.assertNotEqual(required.returncode, 0, required.stdout + required.stderr)
+            self.assertIn("FAIL | required real-Controller integration", required.stdout)
+
+    def test_release_gate_requires_one_executed_controller_result(self) -> None:
+        controller = "test_retire_branch_real_controller"
+        cases = (
+            ([], 0, False),
+            (["SKIP"], 0, False),
+            (["FAIL"], 0, False),
+            (["PASS", "PASS"], 0, False),
+            (["PASS"], 7, False),
+            (["PASS"], 0, True),
+        )
+        for statuses, exit_code, expected in cases:
+            with self.subTest(statuses=statuses, exit_code=exit_code):
+                groups = [{"status": status, "group": controller,
+                           "reason": "fixture unavailable" if status == "SKIP" else ""}
+                          for status in statuses]
+
+                def run(command, **kwargs):
+                    record = Path(kwargs["env"]["GF_TEST_GROUP_RESULTS"])
+                    record.write_text("".join(json.dumps(group) + "\n" for group in groups))
+                    return subprocess.CompletedProcess(command, exit_code)
+
+                results: list[dict[str, str]] = []
+                with patch.object(subprocess, "run", side_effect=run):
+                    with redirect_stdout(io.StringIO()):
+                        passed = CHECK["shell_groups"](results, require_controller=True)
+                self.assertEqual(passed, expected)
+                if not expected:
+                    self.assertIn("FAIL", [result["status"] for result in results])
+                if statuses == ["SKIP"]:
+                    self.assertEqual(results[0], groups[0])
+                    self.assertIn("fixture unavailable", results[-1]["reason"])
 
     def run_units(self, cases: list[unittest.TestCase]) -> tuple[bool, list[dict[str, str]], str]:
         results: list[dict[str, str]] = []

@@ -2,6 +2,7 @@
 """Run the existing check groups and distinguish execution, skips and failures."""
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from pathlib import Path
@@ -40,7 +41,7 @@ def unit_group(results: list[dict[str, str]], name: str, directory: Path) -> boo
     return status != "FAIL"
 
 
-def shell_groups(results: list[dict[str, str]]) -> bool:
+def shell_groups(results: list[dict[str, str]], *, require_controller: bool = False) -> bool:
     with tempfile.TemporaryDirectory(prefix="git-finalizer-check-") as temporary:
         record = Path(temporary) / "shell-groups.jsonl"
         environment = dict(os.environ, GF_TEST_GROUP_RESULTS=str(record))
@@ -49,6 +50,14 @@ def shell_groups(results: list[dict[str, str]]) -> bool:
         groups = [json.loads(line) for line in record.read_text(encoding="utf-8").splitlines()] \
             if record.exists() else []
         results.extend(groups)
+        if require_controller:
+            controller = [group for group in groups
+                          if group["group"] == "test_retire_branch_real_controller"]
+            if len(controller) != 1 or controller[0]["status"] != "PASS":
+                reason = ("expected exactly one executed PASS result" if len(controller) != 1
+                          else f"{controller[0]['status']}: {controller[0]['reason']}")
+                report(results, "FAIL", "required real-Controller integration", reason)
+                return False
         if code != 0 or not groups:
             if not any(group["status"] == "FAIL" for group in groups):
                 report(results, "FAIL", "shell integrations", f"exit {code}; incomplete results")
@@ -67,11 +76,15 @@ def summary(results: list[dict[str, str]]) -> None:
           flush=True)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--require-controller", action="store_true",
+                        help="require real Controller retirement tests to execute and pass")
+    arguments = parser.parse_args(argv)
     results: list[dict[str, str]] = []
     python = sys.executable
     groups = (
-        lambda: shell_groups(results),
+        lambda: shell_groups(results, require_controller=arguments.require_controller),
         lambda: unit_group(results, "Python tests", ROOT / "tests"),
         lambda: command_group(results, "Skill validation", [python, "-B",
                               "skills/git-change-delivery/quick_validate.py", "skills/git-change-delivery"]),

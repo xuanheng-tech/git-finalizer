@@ -57,7 +57,8 @@ Small, unscheduled, each one a real gap rather than a polish item.
 - `just check` ends with one PASS/SKIP/FAIL table and skip reasons on both hosts. Real-Controller
   retirement is optional when the Controller is absent from `PATH`; unit-test skips are also
   listed individually. Green checks prove the reported executed groups passed, not cross-host
-  coverage parity. Mandatory host-specific expectations still need an explicit owner decision.
+  coverage parity. Before tag creation, `just release-check` requires the real-Controller suite to
+  execute and pass in the clean candidate checkout. Hosted checks remain standalone and optional.
 
 ## 4. Dependency automation (Renovate)
 

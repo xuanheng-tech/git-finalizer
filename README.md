@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.8.9**.
+Current source version: **1.8.10**.
 
-当前版本：`1.8.9`
+当前版本：`1.8.10`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
@@ -326,6 +326,7 @@ precise blockers and zero mutation in that environment.
 ```bash
 just check        # shell suites, unit tests, Skill validation, contract check
 just lint         # shellcheck over the bash entrypoint, scripts and test harness
+just release-check # required before tagging; lint and checks with real Controller integration
 bash tests/run.sh # shell test suites alone
 ```
 
@@ -333,6 +334,10 @@ bash tests/run.sh # shell test suites alone
 Optional real-Controller retirement tests are reported as SKIP when `worktree-controller` is absent
 from `PATH`. A green check proves the listed executed groups passed; it does not imply skipped
 integrations ran. Any executed group failure keeps the check nonzero and stops later groups.
+Before creating a release tag, maintainers run `just release-check` in the clean candidate checkout.
+It requires exactly one executed PASS result from the real-Controller retirement suite; missing,
+skipped, duplicated or failed results stop release preparation. Ordinary and hosted `just check`
+keep the standalone contract and optional SKIP behavior.
 
 Contributing guidance, including the hash-bound file rules you must respect when changing the
 contract or the Skill payload: [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -363,7 +368,9 @@ the explicit host and reports whether to prepare, inspect an interrupted tag/dra
 existing release. It requires the existing authorised `gh` client; core CLI use does not. Recovery
 states and the independent source-digest check are in the release runbook below.
 
-**A version is published on exactly one host.** GitHub is the public distribution entry
+**By default a version is published on exactly one host.** An explicitly authorised mirror uses the same
+candidate and annotated tag, independent builds and verified cross-host digest equality.
+GitHub is the public distribution entry
 (release notes, tarball, checksums); Gitea is the governed delivery remote and holds the
 `v0.4.0` – `v1.4.0` release record. Trigger rules, permissions, cross-host artifact parity, and the
 step-by-step first-public-release runbook are in
