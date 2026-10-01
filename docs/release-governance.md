@@ -13,7 +13,7 @@ supported-version policy.
 | Who authorises a release | The executor checks explicit task authority: a continuing grant may include normal tags, Releases and activation within existing channels and visibility; a commit/push-only grant does not, see [authorization-boundary.md](authorization-boundary.md) |
 | Build recipe and verification gates | `scripts/release.py` — the only implementation, shared by both hosts |
 | Public distribution for outside users | **GitHub** `xuanheng-tech/git-finalizer` (releases, release notes, artifacts, checksums) |
-| Governed daily delivery and the historical release record | **Gitea** `xuanheng-tech/git-finalizer` (the ten releases `v0.4.0` – `v1.4.0` were published here; `v1.5.0` onward is GitHub) |
+| Governed daily delivery and the historical release record | **Gitea** `xuanheng-tech/git-finalizer` (the ten releases `v0.4.0` – `v1.4.0` were published here; `v1.5.0` onward uses GitHub, with deliberate mirrors recorded below) |
 | Production installation on this machine | `tool-skill-sync` bundles built from the canonical source repository — it does **not** consume a release artifact from either host |
 
 One release authority per version: **by default a version is published on exactly one host**. Publishing the
@@ -258,6 +258,13 @@ recheck immediately before an external mutation and preserve a changed/unknown r
 | `published_verified` | Record the existing publication; no publication retry is needed. |
 | `published_incomplete`, `conflict`, `unavailable` | Preserve tag, Release and assets; investigate before any dependent mutation. Fix code/bytes in the next version. |
 
+For a retained Gitea draft, its supported API may complete only missing assets after exact tag,
+candidate, notes and existing-asset verification. Use a fresh rebuild of that candidate and compare
+its digest against the independent runner's pre-upload build record. Download through the configured
+API origin's repository/tag/asset route; UI and attachment aliases cannot choose an authenticated
+request target. Re-download both assets, check the exact inventory and publish the same draft only
+after verification. Never overwrite an existing asset or change the tag to recover it.
+
 - Workflow failure before publication: retry a transient failed run for the same candidate. A code
   change belongs to a new commit and new version; the existing tag stays on its original candidate.
 - A re-run of a job that already published will not quietly republish: GitHub's create call refuses a
@@ -296,13 +303,14 @@ digest is only comparable once the two hosts are known to run the same tools —
 
 ## Release record
 
-One row per published version, because the one-host rule is only auditable if the host each version
-went out on is written down. Every identifier here is measured rather than remembered: the candidate
+One row per published version. The Host column names its single host or an explicitly verified
+`GitHub + Gitea` mirror; a mirror row requires the same candidate, tag object, artifact digest and
+size on both hosts. Every identifier here is measured rather than remembered: the candidate
 commit is `git rev-parse 'vX.Y.Z^{commit}'`, the tag object is `git rev-parse vX.Y.Z`, and each
-digest comes from the tarball as served by the host named in that row.
+digest comes from the tarball as served by every host named in that row.
 `tests/test_public_docs.py` re-derives the two Git columns from the repository's own refs, so a row
 that drifts from the tags fails the contract gate. A row whose tag is absent is accepted only when it
-belongs to the *other* host — exactly the exemption the one-host rule implies. Production activation
+belongs solely to the *other* host; a mirrored row requires the tag on each host. Production activation
 is tracked by `tool-skill-sync` on the maintainer machine and is deliberately **not** part of this
 record.
 
@@ -325,6 +333,16 @@ record.
 | `v1.8.7` | GitHub | `96bbd0f1add33f817b10ea0fa1fc03f12a02a5f8` | `6ab2c2b04625dcbfbc0876a47ea8efacc347153f` | `d08e678d03047a13c4930d26abad9864d132489bf14ed849d31ef7b7fd8772d2` | 196087 |
 | `v1.8.8` | GitHub | `16778ab07b051981c8e294dd23eff2a6c7c8e81c` | `e290125fa40263a79da43a53504aafd4e6d09f39` | `5325706c8d049f5097547f89c954090e8bbac23a9ef5c3cf2d09548f8a168542` | 196457 |
 | `v1.8.9` | GitHub | `54d2f7f80bfb0392bea79561311551c7528cd3b6` | `8149d8e5dbf804a70f0cab1df94c728c08d61df9` | `23ed4bf2459568f7fc3b1705358be26ecf18dcf24611bd5eaadfe1d0e5116f33` | 196825 |
+| `v1.8.10` | GitHub + Gitea | `63abbdb7e2322de2c129fc710d65a6a035c2071f` | `42ff19c71c54ec4ff623a35bf1c4268e2bf2f3fc` | `b0d25177680fa29b07b9e2cffe09e50a74788c9189efcc74d45cccd49d607f3b` | 197289 |
+
+`v1.8.10` is a deliberate mirror. GitHub run `36883946683` published release `401104963`;
+Gitea run `851` independently built and verified the same candidate and digest. Its publication
+step retained draft `129` after an API/UI download-origin mismatch. Recovery kept checksum asset
+`27`, added the missing archive from a fresh rebuild matching that runner's digest, re-downloaded
+both assets and published the same draft through the Gitea API. Both served tarballs match the row;
+both served `SHA256SUMS.txt` files are 94 bytes with SHA-256
+`433ac4e8b748e876b44e3ba33625878ec2abc7a842d612f0d2811242b894f08a`.
+The workflow routing correction is in `Unreleased`; the original tag and GitHub publication stay fixed.
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
