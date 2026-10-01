@@ -13,6 +13,9 @@ section is invented for it.
 
 ## Unreleased
 
+- Review Controller CLI 43 for published integration-branch retirement while retaining plan schema 1,
+  execution protocol v1, storage layout 4 and the existing capability requirements. Unreviewed CLI
+  contracts and missing capabilities still fail the deployment health gate.
 - Restore owner write permission on validated, owned read-only subdirectories
   during registered temporary-directory cleanup.
 - Allow explicit cleanup of owned FIFOs inside pytest subtrees of registered task
