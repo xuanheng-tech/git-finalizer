@@ -296,13 +296,14 @@ digest is only comparable once the two hosts are known to run the same tools —
 
 ## Release record
 
-One row per published version, because the one-host rule is only auditable if the host each version
-went out on is written down. Every identifier here is measured rather than remembered: the candidate
+One row per published version. The Host column names its single host or an explicitly verified
+`GitHub + Gitea` mirror; a mirror row requires the same candidate, tag object, artifact digest and
+size on both hosts. Every identifier here is measured rather than remembered: the candidate
 commit is `git rev-parse 'vX.Y.Z^{commit}'`, the tag object is `git rev-parse vX.Y.Z`, and each
-digest comes from the tarball as served by the host named in that row.
+digest comes from the tarball as served by every host named in that row.
 `tests/test_public_docs.py` re-derives the two Git columns from the repository's own refs, so a row
 that drifts from the tags fails the contract gate. A row whose tag is absent is accepted only when it
-belongs to the *other* host — exactly the exemption the one-host rule implies. Production activation
+belongs solely to the *other* host; a mirrored row requires the tag on either host. Production activation
 is tracked by `tool-skill-sync` on the maintainer machine and is deliberately **not** part of this
 record.
 

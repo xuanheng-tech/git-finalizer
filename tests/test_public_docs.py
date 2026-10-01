@@ -159,18 +159,20 @@ class PublicDocumentationTests(unittest.TestCase):
             with self.subTest(version=tag):
                 self.assertNotIn(tag, seen, f"{tag} is recorded twice")
                 seen.add(tag)
+                self.assertIn(
+                    host, ("GitHub", "Gitea", "GitHub + Gitea"),
+                    "release record host column drifted",
+                )
                 if tag not in tags:
-                    # The one-host rule means a published tag can live on exactly one host, so a
-                    # checkout of the other host cannot see it; a missing tag on its own host does
-                    # not.
-                    self.assertNotEqual(
-                        host == "GitHub",
-                        from_github,
+                    # Only a single-host release can be absent from the other host. A mirrored
+                    # release must be visible from either checkout.
+                    self.assertNotIn(
+                        "GitHub" if from_github else "Gitea",
+                        host.split(" + "),
                         f"{tag} is recorded for {host}, which is the host this checkout came from, "
                         "yet the tag is absent",
                     )
                     continue
-                self.assertIn(host, ("GitHub", "Gitea"), "release record host column drifted")
                 self.assertEqual(
                     git_output("rev-parse", tag),
                     tag_object.strip("`"),
