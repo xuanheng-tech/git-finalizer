@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.8.4"
+readonly VERSION="1.8.5"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -2675,6 +2675,7 @@ validate_existing_publish_range() {
     local -a commit_oids=()
     local -a tree_entries=()
     declare -A publish_paths=()
+    declare -A reviewed_fixture_paths_seen=()
 
     existing_range_error=''
     history_large_binary_overrides=()
@@ -2783,7 +2784,10 @@ validate_existing_publish_range() {
                 return 1
             fi
             excepted_detectors=${history_fixture_rules[$path:$object_oid]-}
+            # Earlier ordinary revisions still receive an unmasked scan.
+            # Once a reviewed fixture appears, retain exact later-blob guards.
             if [[ -n ${history_fixture_paths[$path]+present} &&
+                -n ${reviewed_fixture_paths_seen[$path]+present} &&
                 -z "$excepted_detectors" ]]; then
                 existing_range_error="fixture exception path/blob identity mismatch: $(printf '%q' "$path")"
                 return 1
@@ -2791,6 +2795,9 @@ validate_existing_publish_range() {
             if reason=$(staged_content_reason "$object_oid" "$excepted_detectors"); then
                 existing_range_error="拒绝待发布敏感文件 $(printf '%q' "$path"): $reason"
                 return 1
+            fi
+            if [[ -n "$excepted_detectors" ]]; then
+                reviewed_fixture_paths_seen["$path"]=1
             fi
             for detector in private-key-header-v1 known-token-v1 credential-assignment-v1; do
                 fixture_key=$path:$object_oid:$detector

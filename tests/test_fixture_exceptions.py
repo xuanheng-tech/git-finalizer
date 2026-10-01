@@ -181,6 +181,23 @@ class FixtureExceptionTests(unittest.TestCase):
     def test_exact_resume_from_empty_remote(self) -> None:
         self.assert_exact_pass(MODES[1])
 
+    def seed_earlier_fixture(self, content: str) -> None:
+        self.git("switch", "-qc", "feature/earlier-fixture", self.root_oid)
+        (self.repo / "tests").mkdir(exist_ok=True)
+        (self.repo / self.path).write_text(content)
+        self.commit()
+        (self.repo / self.path).write_text(SYNTHETIC)
+        self.commit()
+
+    def test_earlier_clear_revision_does_not_need_a_fixture_exception(self) -> None:
+        self.seed_earlier_fixture("Earlier ordinary test source\n")
+        first = self.assert_exact_pass(MODES[0])
+        self.assertEqual(first, self.assert_exact_pass(MODES[1]))
+
+    def test_earlier_sensitive_revision_requires_its_own_exact_review(self) -> None:
+        self.seed_earlier_fixture(SYNTHETIC + "UNREVIEWED EARLIER BODY\n")
+        self.assert_blocked_both()
+
     def test_no_exception_and_one_byte_mutation_block_both(self) -> None:
         self.assert_blocked_both(approved=False)
         with (self.repo / self.path).open("a") as stream:

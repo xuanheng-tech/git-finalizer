@@ -55,9 +55,16 @@ this stack do — forces a fresh human decision for every step of a normal task,
 this document exists to remove.
 
 Release-side actions are not in this table because Git Finalizer does not perform them: creating a tag,
-publishing a release, and activating production are separate authorised acts with their own procedure
-in [release-governance.md](release-governance.md). Tag mutation is listed under T3 precisely so no
-executor mistakes "push allowed" for "release allowed".
+publishing a release, and activating production have their own procedure in
+[release-governance.md](release-governance.md). A continuing task grant may explicitly include
+these acts within named repositories, existing channels and visibility; that grant remains valid
+through ordinary delivery retries. A commit/push-only grant does not include them. Tag mutation
+remains refused by this CLI even when the executor is authorised to use the release workflow.
+
+`verify-only` preserves repository state but needs a writable temporary directory for its
+isolated candidate object store. A filesystem sandbox that denies those writes can block this
+read-only mode. Use the executor's authorised native channel; never weaken its permissions or
+skip candidate scanning to turn that refusal into a success.
 
 ## Where the remaining blocker lives
 

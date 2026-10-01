@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.8.4**.
+Current source version: **1.8.5**.
 
-当前版本：`1.8.4`
+当前版本：`1.8.5`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
