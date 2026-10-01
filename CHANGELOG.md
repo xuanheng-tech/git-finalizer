@@ -42,6 +42,15 @@ section is invented for it.
 - Correct the deployment-health adapter ledger, track custom Claude homes and project instruction
   files, register the independently attested released Skill payload, and ignore only host worktree policy.
 
+## 1.8.8
+
+- Report the exact Controller retirement receipt identifier in `--summary` after verified
+  completion, including idempotent replay and legacy already-absent recovery. Stop computing a
+  second identifier from the plan and expected OID.
+- Validate receipt plan, operation, branch and expected commit identities before claiming
+  completion. Preflight and incomplete operations no longer report a fabricated receipt.
+- Retain the current CLI contract and the public authorization/completion protocol.
+
 ## 1.8.7
 
 - Exercise the verified release-bundle installation on Python 3.11 and 3.12 with no optional

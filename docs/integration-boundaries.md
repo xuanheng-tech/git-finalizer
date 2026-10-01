@@ -35,6 +35,8 @@ Git Finalizer（GF）核心只依赖 GNU bash、Git、GNU utilities 与 `PATH` �
   仍存在时通过公开 abandon 重新授权，已缺失时只完成原授权。已完成操作返回幂等结果；receipt
   与重新出现的 ref 矛盾时拒绝。无未完成授权的旧消费者通过公开 record 登记 `ATTEST_ABSENT`，
   provenance 为 `CONTROLLER_OBSERVED`，不伪装为授权 CAS。
+- `mode_result.retirement_receipt_id` 只来自已核验的 Controller 正式凭据；首次完成、
+  幂等重查和旧消费者的已缺失引用恢复均保留该编号，不复制生产方的编号算法。
 - plan-only CLI 输入不变；缺少 Controller 或任一 required public retirement protocols 时 fail
   closed，不回退到私有文件核验。仅 legacy namespace 的仓库仍保留迁移 blocker，迁移归 producer。
 - Snapshot Runner 与 Gitea 的知识只到“对端已发布合同 + 形状”一层：GF 固定 Snapshot Runner README

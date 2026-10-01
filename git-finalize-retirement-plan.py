@@ -22,7 +22,7 @@ import tempfile
 import uuid
 
 # GF-INTEGRATION-ADAPTER: worktree-controller-retirement (single site)
-VERSION = "1.8.7"
+VERSION = "1.8.8"
 BRANCH_RETIREMENT_CAPABILITY = "branch_retirement_version"
 PLAN_ID_RE = re.compile(r"[0-9a-f]{64}")
 OID_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
@@ -257,7 +257,24 @@ def reported_result(arguments: argparse.Namespace, grant: dict | None, outcome: 
     }
 
 
-def settle(arguments: argparse.Namespace, grant: dict | None, outcome: str) -> None:
+def receipt_identifier(arguments: argparse.Namespace, decision: dict) -> str:
+    receipt = object_value(decision.get("receipt"), "retirement receipt")
+    expected = {
+        "plan_id": arguments.plan_id,
+        "operation": arguments.operation,
+        "branch": arguments.branch,
+        "expected_oid": arguments.expected_oid,
+        "expected_integrated_oid": arguments.expected_integrated_oid,
+    }
+    if any(receipt.get(key) != value for key, value in expected.items()):
+        fail("Controller retirement receipt identity differs")
+    identifier = receipt.get("receipt_id")
+    if not isinstance(identifier, str) or PLAN_ID_RE.fullmatch(identifier) is None:
+        fail("Controller retirement receipt identifier is unreadable")
+    return identifier
+
+
+def settle(arguments: argparse.Namespace, grant: dict | None, outcome: str) -> str | None:
     result = reported_result(arguments, grant, outcome)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", prefix="git-finalizer-retirement-result-") as handle:
         json.dump(result, handle)
@@ -279,6 +296,9 @@ def settle(arguments: argparse.Namespace, grant: dict | None, outcome: str) -> N
                         else "RETIREMENT_EXECUTION_ABORTED")
             if decision.get("code") != expected:
                 fail(f"Controller retirement completion is unverified; authorization_id={identifier}")
+    if outcome == "REF_STILL_PRESENT":
+        return None
+    return receipt_identifier(arguments, decision)
 
 
 def execute(arguments: argparse.Namespace, *, recovered: bool = False, progress: dict | None = None) -> dict:
@@ -294,11 +314,18 @@ def execute(arguments: argparse.Namespace, *, recovered: bool = False, progress:
     grant = decision.get("authorization")
     if (decision.get("code") == "RETIREMENT_OPERATION_COMPLETE" and grant is None
             and before is None and decision.get("blockers") == []):
+        verified = controller_call(
+            arguments.repo, "branch-retirement-verify", "--plan-id", arguments.plan_id,
+            "--operation", arguments.operation,
+        )
+        if verified.get("code") != "RETIREMENT_OPERATION_COMPLETE" or verified.get("blockers") != []:
+            fail("Controller retirement receipt cannot be reverified")
+        progress["receipt_id"] = receipt_identifier(arguments, verified)
         progress["controller_complete"] = True
         return progress
     if (decision.get("code") == "RETIREMENT_BLOCKED" and grant is None and before is None
             and decision.get("blockers") == ["ABSENT_UNATTESTED"]):
-        settle(arguments, None, "REF_ALREADY_ABSENT")
+        progress["receipt_id"] = settle(arguments, None, "REF_ALREADY_ABSENT")
         progress["controller_complete"] = True
         return progress
     if decision.get("code") != "RETIREMENT_AUTHORIZED":
@@ -361,7 +388,7 @@ def execute(arguments: argparse.Namespace, *, recovered: bool = False, progress:
     if arguments.operation == "remote":
         if git_run(arguments.repo, "fetch", "--prune", "--no-tags", arguments.remote).returncode != 0:
             fail(f"retirement tracking observation failed; authorization_id={identifier}")
-    settle(arguments, grant, outcome)
+    progress["receipt_id"] = settle(arguments, grant, outcome)
     progress["controller_complete"] = True
     return progress
 

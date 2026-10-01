@@ -190,9 +190,15 @@ def main() -> None:
                 raise ValueError("fixture absence observation refused")
             provenance = "CONTROLLER_OBSERVED"
             response_code = "BRANCH_RETIREMENT_RESULT_RECORDED"
-        write(receipt_path, {"schema_version": 1, "plan_id": arguments.plan_id,
-                             "operation": operation, "provenance": provenance})
-        emit({"code": response_code})
+        receipt = {
+            "schema_version": 1, "plan_id": arguments.plan_id,
+            "operation": operation, "provenance": provenance,
+            "receipt_id": hashlib.sha256(f"fixture-receipt/{arguments.plan_id}/{operation}".encode()).hexdigest(),
+            "branch": plan["branch"], "expected_oid": plan["expected_oid"],
+            "expected_integrated_oid": plan["expected_integrated_oid"],
+        }
+        write(receipt_path, receipt)
+        emit({"code": response_code, "receipt": receipt})
     raise ValueError("unknown fixture operation")
 
 

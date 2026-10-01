@@ -297,17 +297,28 @@ test_partial_completion_and_idempotent_resume() {
         'local result lost plan binding'
     assert_equal 'true' "$(summary_field "$local_output" mode_result.local_absent_after)" \
         'local absence was not verified'
+    local receipt_root
+    receipt_root=$(git -C "$test_repo" rev-parse --path-format=absolute --git-common-dir)/worktree-controller/v1/branch-retirement-receipts
+    assert_equal "$(summary_field "$receipt_root/$plan_id-local.json" receipt_id)" \
+        "$(summary_field "$local_output" mode_result.retirement_receipt_id)" \
+        'local summary did not retain the producer receipt identity'
 
     expect_success "$remote_output" remote_retire_command --summary
     git --git-dir="$test_remote" show-ref --verify --quiet "refs/heads/$feature_branch" &&
         fail_assertion 'remote continuation left remote feature ref present'
     assert_equal 'REMOTE_BRANCH_RETIRED_VERIFIED' \
         "$(summary_field "$remote_output" mode_result.result)" 'remote result is wrong'
+    assert_equal "$(summary_field "$receipt_root/$plan_id-remote.json" receipt_id)" \
+        "$(summary_field "$remote_output" mode_result.retirement_receipt_id)" \
+        'remote summary did not retain the producer receipt identity'
 
     expect_success "$repeated" local_retire_command --summary
     assert_equal 'ALREADY_ABSENT_VERIFIED' \
         "$(summary_field "$repeated" mode_result.result)" \
         'repeated local retirement was not idempotent'
+    assert_equal "$(summary_field "$local_output" mode_result.retirement_receipt_id)" \
+        "$(summary_field "$repeated" mode_result.retirement_receipt_id)" \
+        'idempotent summary changed the producer receipt identity'
 }
 
 test_remote_then_local_completion_is_independent() {

@@ -247,6 +247,9 @@ test_retirement_completion_and_idempotent_recovery() {
     [[ -f $receipt_file ]] || fail_assertion 'controller record did not persist the receipt'
     assert_equal 'AUTHORIZED_EXECUTION' \
         "$(summary_field "$receipt_file" provenance)" 'completion lost authorized provenance'
+    assert_equal "$(summary_field "$receipt_file" receipt_id)" \
+        "$(summary_field "$out" mode_result.retirement_receipt_id)" \
+        'summary receipt does not identify the real Controller receipt'
     expect_success "$case_dir/executions.json" worktree-controller branch-retirement-executions \
         --repo "$test_repo" --action list --json
     assert_equal '[]' "$(summary_field "$case_dir/executions.json" decision.authorizations)" \
@@ -261,6 +264,9 @@ test_retirement_completion_and_idempotent_recovery() {
         "$(summary_field "$case_dir/replay.json" mode_result.result)" 'completed recovery was not idempotent'
     assert_equal 'False' "$(summary_field "$case_dir/replay.json" mode_result.expected_oid_lease_bound)" \
         'completed recovery claimed another CAS'
+    assert_equal "$(summary_field "$receipt_file" receipt_id)" \
+        "$(summary_field "$case_dir/replay.json" mode_result.retirement_receipt_id)" \
+        'idempotent summary changed the real Controller receipt identity'
 }
 
 test_remote_authorization_and_local_continuation() {

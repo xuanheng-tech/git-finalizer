@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.8.7"
+readonly VERSION="1.8.8"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -155,6 +155,7 @@ summary_retirement_tags_unchanged=false
 summary_retirement_remote_tracking_absent=false
 summary_retirement_local_absent_after=''
 summary_retirement_plan_id=''
+summary_retirement_receipt_id=''
 declare -a summary_warnings=()
 declare -a summary_fixture_exceptions=()
 declare -a summary_source_reviews=()
@@ -213,6 +214,7 @@ render_summary() {
         "$summary_retirement_lease_bound" "$summary_retirement_tags_unchanged" \
         "$summary_retirement_remote_tracking_absent" \
         "$summary_retirement_local_absent_after" "$summary_retirement_plan_id" \
+        "$summary_retirement_receipt_id" \
         "$(printf '%s\n' "${summary_fixture_exceptions[@]}")" \
         "$(printf '%s\n' "${summary_source_reviews[@]}")" \
         "${summary_warnings[@]}" <<'PY'
@@ -314,6 +316,7 @@ retirement_tags_unchanged = boolean(take(values))
 retirement_remote_tracking_absent = boolean(take(values))
 retirement_local_absent_after_raw = take(values)
 retirement_plan_id = take(values)
+retirement_receipt_id = take(values)
 fixture_exceptions = [json.loads(line) for line in take(values).splitlines() if line]
 source_reviews = [json.loads(line) for line in take(values).splitlines() if line]
 
@@ -528,13 +531,8 @@ elif mode in {"retire_local_branch", "retire_remote_branch"}:
         "tags_unchanged": retirement_tags_unchanged,
         "result": retirement_result,
     }
-    if retirement_plan_id:
-        receipt_material = ":".join(
-            (retirement_plan_id, operation_name, retirement_expected_oid)
-        )
-        result["mode_result"]["retirement_receipt_id"] = __import__("hashlib").sha256(
-            receipt_material.encode()
-        ).hexdigest()
+    if retirement_receipt_id:
+        result["mode_result"]["retirement_receipt_id"] = retirement_receipt_id
 else:
     result["mode_result"] = {"post_verify": post_verify}
 if resume_required:
@@ -3997,6 +3995,7 @@ run_retirement_plan_delete() {
     local operation=$1
     local output
     local attempted
+    local receipt_id
     local completed=1
 
     retirement_controller_error=''
@@ -4021,14 +4020,19 @@ if sys.argv[1] == "1" and value["controller_complete"] is not True:
 attempted = value.get("mutation_attempted")
 if type(attempted) is not bool:
     raise ValueError("invalid mutation result")
-print(str(attempted).lower())
+receipt_id = value.get("receipt_id")
+if sys.argv[1] == "1" and (not isinstance(receipt_id, str) or not receipt_id):
+    raise ValueError("completion receipt is missing")
+print(str(attempted).lower() + "\t" + (receipt_id or ""))
 ' "$completed" 2>/dev/null); then
         if ((completed == 1)); then
             retirement_controller_error='Controller retirement completion 结果无法验证'
             return 1
         fi
     else
+        IFS=$'\t' read -r attempted receipt_id <<<"$attempted"
         summary_retirement_lease_bound=$attempted
+        summary_retirement_receipt_id=$receipt_id
         if [[ "$operation" == remote ]]; then
             summary_push_executed=$attempted
         fi

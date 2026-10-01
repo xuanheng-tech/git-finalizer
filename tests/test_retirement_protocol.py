@@ -64,6 +64,11 @@ class RetirementProtocolTests(unittest.TestCase):
         self.calls: list[str] = []
         self.results: list[dict] = []
         self.completion_code = "RETIREMENT_EXECUTION_COMPLETE"
+        self.receipt = {
+            "receipt_id": "9" * 64, "plan_id": self.arguments.plan_id,
+            "operation": "local", "branch": self.arguments.branch,
+            "expected_oid": self.oid, "expected_integrated_oid": self.oid,
+        }
 
     def git(self, *arguments: str) -> str:
         result = subprocess.run(
@@ -102,7 +107,7 @@ class RetirementProtocolTests(unittest.TestCase):
             self.results.append(document)
             self.assertEqual(document["ref"], self.grant["ref"])
             self.assertEqual(document["expected_oid"], self.oid)
-            return {"code": self.completion_code}
+            return {"code": self.completion_code, "receipt": self.receipt}
         raise AssertionError(f"unexpected public command: {command}")
 
     def blocked(self, operation) -> str:
@@ -118,6 +123,7 @@ class RetirementProtocolTests(unittest.TestCase):
         self.assertFalse(self.present())
         self.assertTrue(result["mutation_attempted"])
         self.assertTrue(result["controller_complete"])
+        self.assertEqual(result["receipt_id"], self.receipt["receipt_id"])
         self.assertEqual(self.results[0]["outcome"], "REF_REMOVED_AT_EXPECTED_OID")
         self.assertEqual(self.calls, ["branch-retirement-authorize", "branch-retirement-complete"])
 
@@ -204,15 +210,56 @@ class RetirementProtocolTests(unittest.TestCase):
                     calls.append(command)
                     if command == "branch-retirement-authorize":
                         return {"code": code, "blockers": blockers, "authorization": None}
+                    if command == "branch-retirement-verify":
+                        return {"code": "RETIREMENT_OPERATION_COMPLETE", "blockers": [],
+                                "receipt": self.receipt}
                     self.assertEqual(command, "branch-retirement-record")
                     result = json.loads(Path(arguments[arguments.index("--result-file") + 1]).read_text())
                     self.assertEqual(result["kind"], "ATTEST_ABSENT")
-                    return {"code": "BRANCH_RETIREMENT_RESULT_RECORDED"}
+                    return {"code": "BRANCH_RETIREMENT_RESULT_RECORDED", "receipt": self.receipt}
 
                 with mock.patch.object(self.protocol, "controller_call", side_effect=controller):
                     result = self.protocol.execute(self.arguments)
                 self.assertFalse(result["mutation_attempted"])
-                self.assertEqual(len(calls), 1 if not blockers else 2)
+                self.assertEqual(result["receipt_id"], self.receipt["receipt_id"])
+                self.assertEqual(len(calls), 2)
+
+    def test_completed_receipt_must_match_the_requested_identity(self) -> None:
+        self.git("update-ref", "-d", self.grant["ref"], self.oid)
+        for field, value in (
+            ("receipt_id", None), ("receipt_id", "not-an-identifier"),
+            ("plan_id", "3" * 64), ("operation", "remote"),
+            ("branch", "feat/other"), ("expected_oid", "3" * 40),
+            ("expected_integrated_oid", "4" * 40),
+        ):
+            with self.subTest(field=field, value=value), mock.patch.dict(self.receipt, {field: value}):
+                def controller(repo: Path, command: str, *arguments: str) -> dict:
+                    if command == "branch-retirement-authorize":
+                        return {"code": "RETIREMENT_OPERATION_COMPLETE", "blockers": [],
+                                "authorization": None}
+                    self.assertEqual(command, "branch-retirement-verify")
+                    return {"code": "RETIREMENT_OPERATION_COMPLETE", "blockers": [],
+                            "receipt": self.receipt}
+
+                with mock.patch.object(self.protocol, "controller_call", side_effect=controller), \
+                     mock.patch.object(self.protocol, "git_run", wraps=self.protocol.git_run) as git_run:
+                    progress = {"mutation_attempted": False, "controller_complete": False,
+                                "authorization_id": None}
+                    self.blocked(lambda: self.protocol.execute(self.arguments, progress=progress))
+                self.assertFalse(progress["controller_complete"])
+                self.assertNotIn("receipt_id", progress)
+                self.assertFalse(any(call.kwargs.get("mutation") for call in git_run.call_args_list))
+
+    def test_completion_without_a_receipt_does_not_claim_success(self) -> None:
+        self.receipt.clear()
+        progress = {"mutation_attempted": False, "controller_complete": False,
+                    "authorization_id": None}
+        with mock.patch.object(self.protocol, "controller_call", side_effect=self.controller):
+            self.blocked(lambda: self.protocol.execute(self.arguments, progress=progress))
+        self.assertFalse(self.present())
+        self.assertTrue(progress["mutation_attempted"])
+        self.assertFalse(progress["controller_complete"])
+        self.assertNotIn("receipt_id", progress)
 
     def test_failed_local_cas_is_aborted_in_controller(self) -> None:
         original = self.protocol.git_run
