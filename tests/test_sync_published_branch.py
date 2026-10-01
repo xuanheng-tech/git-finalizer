@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -116,6 +117,88 @@ sys.exit(result.returncode)
         self.assertFalse(self.log.exists())
         self.assertEqual(self.target_oid(), self.base)
         return result
+
+    def prepare_reviewed_history(self) -> None:
+        marker = "-" * 5 + "BEGIN PRIVATE KEY" + "-" * 5
+        self.old_changelog = "# Changelog\n\n## Older\n\n- Reject `" + marker + "` literals.\n"
+        self.old_reasons = (
+            'BODY_REFUSAL_REASONS = {\n'
+            '    "content contains credential": "content is refused by policy",\n'
+            '}\n'
+        )
+        self.commit("CHANGELOG.md", self.old_changelog)
+        self.base = self.commit("reasons.py", self.old_reasons)
+        self.git("fetch", "-q", "--no-tags", str(self.repo), self.base, cwd=self.target)
+        self.git("update-ref", "refs/heads/master", self.base, cwd=self.target)
+        self.git("update-ref", "refs/remotes/mirror/master", self.base)
+        self.commit("CHANGELOG.md", "## Newer\n\n- Ordinary update.\n\n" + self.old_changelog)
+        self.tip = self.commit("reasons.py", self.old_reasons + "\nORDINARY_CHANGE = True\n")
+        self.publish_review_source()
+
+    def publish_review_source(self) -> None:
+        self.git("fetch", "-q", "--no-tags", str(self.repo), self.tip, cwd=self.source)
+        self.git("update-ref", "refs/heads/master", self.tip, cwd=self.source)
+        self.git("update-ref", "refs/remotes/source/master", self.tip)
+        self.env.update({"SYNC_BASE": self.base, "SYNC_TIP": self.tip})
+
+    def exact_history_review(self) -> Path:
+        entries = []
+        for path, detector in (
+            ("CHANGELOG.md", "private-key-header-v1"),
+            ("reasons.py", "credential-assignment-v1"),
+        ):
+            entries.append({
+                "path": path,
+                "blob_oid": self.git("rev-parse", self.tip + ":" + path),
+                "sha256": hashlib.sha256((self.repo / path).read_bytes()).hexdigest(),
+                "detector": detector,
+                "reason": "Synthetic inherited header or refusal prose reviewed against mirror baseline",
+            })
+        review = self.root / "review.json"
+        review.write_text(json.dumps({
+            "schema_version": 1,
+            "repository": {
+                "root_commit": self.git("rev-list", "--max-parents=0", self.tip),
+                "remote_url_sha256": hashlib.sha256(str(self.target).encode()).hexdigest(),
+            },
+            "exceptions": entries,
+        }), encoding="utf-8")
+        return review
+
+    def test_sync_reviews_inherited_literals_against_target_baseline(self) -> None:
+        self.prepare_reviewed_history()
+        before = self.git("for-each-ref", "--format=%(refname) %(objectname) %(upstream)", "refs/heads", "refs/tags")
+        status, result = self.run_sync("--fixture-exceptions", str(self.exact_history_review()))
+        self.assertEqual(status, 0, result)
+        self.assertEqual(self.target_oid(), self.tip)
+        self.assertTrue(result["mode_result"]["local_head_unchanged"])
+        self.assertTrue(result["mode_result"]["local_upstream_unchanged"])
+        self.assertEqual(self.git("for-each-ref", "--format=%(refname) %(objectname) %(upstream)", "refs/heads", "refs/tags"), before)
+        self.assertEqual(len(result["fixture_exceptions"]), 2)
+
+    def test_reviewed_history_dry_run_does_not_push(self) -> None:
+        self.prepare_reviewed_history()
+        status, result = self.run_sync("--dry-run", "--fixture-exceptions", str(self.exact_history_review()))
+        self.assertEqual(status, 0, result)
+        self.assertEqual(len(result["fixture_exceptions"]), 2)
+        self.assertFalse(result["push"]["executed"])
+        self.assertFalse(self.log.exists())
+        self.assertEqual(self.target_oid(), self.base)
+
+    def test_exact_review_does_not_allow_new_quoted_header(self) -> None:
+        self.prepare_reviewed_history()
+        self.tip = self.commit("CHANGELOG.md", self.old_changelog + self.old_changelog)
+        self.publish_review_source()
+        result = self.assert_blocked("--fixture-exceptions", str(self.exact_history_review()))
+        self.assertIn("fixture exception", result["reason"])
+
+    def test_exact_review_does_not_allow_changed_refusal_prose(self) -> None:
+        self.prepare_reviewed_history()
+        self.tip = self.commit("reasons.py", self.old_reasons.replace(
+            "content is refused by policy", "content has changed refusal prose"))
+        self.publish_review_source()
+        result = self.assert_blocked("--fixture-exceptions", str(self.exact_history_review()))
+        self.assertIn("fixture exception", result["reason"])
 
     def test_sync_published_master_preserves_checkout_upstream_and_tags(self) -> None:
         self.git("config", "push.followTags", "true")

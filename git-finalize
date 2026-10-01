@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.8.5"
+readonly VERSION="1.8.6"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -5022,6 +5022,7 @@ sync_published_branch_ref() {
         summary_publish_commit_count=$resume_publish_commit_count
         existing_publish_commit_output_override=''
         branch_publish_remote=$remote_arg
+        normal_upstream_hash=$target_before
         load_fixture_exceptions
         validate_existing_publish_range || fail "$existing_range_error; no sync push attempted"
         sync_check_local_state || fail "$sync_error"

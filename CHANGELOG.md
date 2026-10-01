@@ -42,6 +42,12 @@ section is invented for it.
 - Correct the deployment-health adapter ledger, track custom Claude homes and project instruction
   files, register the independently attested released Skill payload, and ignore only host worktree policy.
 
+## 1.8.6
+
+- Bind exact historical-content reviews in published-branch synchronization to the verified
+  target branch baseline. Preserve inherited quoted changelog headers and Python refusal prose
+  without allowing new header examples or changed refusal literals; dry-run uses the same checks.
+
 ## 1.8.5
 
 - Scan ordinary earlier revisions of an exactly reviewed test fixture without applying its
