@@ -20,7 +20,7 @@ from typing import Any
 
 
 # GF-INTEGRATION-ADAPTER: gitea-repository-bootstrap (single site: API surface)
-VERSION = "1.8.6"
+VERSION = "1.8.7"
 SUMMARY_SCHEMA_VERSION = 1
 NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 PLAN_DECISIONS = frozenset(

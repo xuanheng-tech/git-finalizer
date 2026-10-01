@@ -1,7 +1,7 @@
 # Maintenance backlog
 
-Remaining integration debt and operational gates, each with its actual prerequisite. Implementation
-fixes completed in this branch are recorded under Unreleased in the Changelog. The boundaries for
+Remaining integration debt and operational gates, each with its actual prerequisite. Versioned
+implementation changes are recorded in the Changelog. The boundaries for
 sibling changes, production activation and artifact contracts are in [release-governance.md](release-governance.md) and
 [integration-boundaries.md](integration-boundaries.md).
 
@@ -23,8 +23,9 @@ actual Skill payload tree.
 Publication and production activation are separate authorised actions. A source branch or a published
 artifact does not establish which bytes a maintainer currently runs.
 
-- Requires: explicit authorisation for each activation, then `tool-skill-sync install
-  --activate-production` from the canonical source repository — never from a release artifact.
+- Requires: explicit task authority covering activation, including a still-valid continuing grant,
+  then `tool-skill-sync install --activate-production` from the canonical source repository using
+  an explicit published `--source-ref` when parallel candidates exist — never from a release artifact.
 - Afterwards: check the `CURRENT`/`PREVIOUS` pointers, the live canonical payload digest, and
   `tool-skill-sync check`; a payload that a released ref carries must already be listed in
   `RELEASED_CANONICAL_SKILL_SHA256`, otherwise the next activation treats its own released state as
@@ -34,9 +35,10 @@ artifact does not establish which bytes a maintainer currently runs.
 
 Small, unscheduled, each one a real gap rather than a polish item.
 
-- `preflight` accepts a tag that already exists, so double publication is stopped only by the person
-  running the runbook. A mechanical guard has to decide which host to ask, because a checkout of one
-  host cannot see a tag published only on the other.
+- GitHub preparation now has a read-only `publication-status` guard with an explicit remote,
+  paginated draft visibility and asset/source-digest checks. The runbook recovers existing records
+  without recreating tags or Releases. It is an observation, not an atomic publication lock, and
+  does not inspect Gitea; Gitea keeps its existing workflow lookup and draft verification guards.
 - Nothing lets a third party *cryptographically* trace a published tarball back to its source commit:
   packaged manifests carry the literal `tool_commit: "@release"` by design and there are no build
   attestations. The bridge that does exist is reproducible construction — build from the tag and
@@ -48,9 +50,10 @@ Small, unscheduled, each one a real gap rather than a polish item.
 - The `docs/...` links in the shipped `README.md` resolve in the repository, not inside the tarball,
   because `docs/` is not part of the package. Either outcome is fine, but choosing it changes the
   artifact file set, so it belongs to a version batch.
-- The jobs record the actual Python/Git/tar/gzip/locale and no longer install an unused interpreter.
-  Different runner images can still produce different bytes; the cross-host comparison remains
-  the acceptance gate when moving a release between hosts.
+- The jobs record the actual Python/Git/tar/gzip/locale. Both quality jobs now exercise a verified
+  source-built release installation on Python 3.11 and 3.12 with optional tools and personal
+  configuration absent. Different runner images can still produce different bytes; the cross-host
+  comparison remains the acceptance gate when moving a release between hosts.
 - `just check` runs the same commands on both hosts but not always the same set of suites: a few
   groups are gated on an optional integration being installed on `PATH` and report themselves as
   skipped rather than failing. That is intended, but it means a green check on one host is not

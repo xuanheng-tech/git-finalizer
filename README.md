@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.8.6**.
+Current source version: **1.8.7**.
 
-当前版本：`1.8.6`
+当前版本：`1.8.7`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
@@ -102,7 +102,8 @@ Local verify-only and commit-only modes do not accept these Python prose reviews
   `integration_publication_execution_version` 1 and the public locked stdio session.
 - Python **3.11 or newer**, with the standard library only. The entrypoint resolves `python3` from
   `PATH` once and uses that interpreter for every companion and JSON summary. Verified baseline:
-  **Python 3.12**; no Debian-specific interpreter path is required.
+  **Python 3.11 and 3.12**, including installation from the release bundle with no optional tools
+  or personal configuration; no Debian-specific interpreter path is required.
 - Run as an ordinary user. Git Finalizer has no privilege escalation and no daemon, database or
   plugin framework.
 - Nothing else. No remote hosting service, no Worktree Controller, no Snapshot Runner, no Context
@@ -165,6 +166,9 @@ git-finalize --mode verify-only --repo /absolute/path/to/repo -- src/app.py test
 Verification checks the candidate after Git's clean filters and encoding conversion, including
 its content signatures and binary size. Its temporary object store is isolated from the repository
 and removed when the check finishes; hooks and commit signing remain outside verification.
+If that temporary directory is unavailable, verification reports the missing temporary-write
+precondition and preserves repository state. Use an executor-authorised writable temporary
+directory or native channel; permission refusal must not be bypassed.
 
 `--resume-publish` accepts the same exact `--reviewed-sensitive-source` review and Controller
 linkage used for a retained commit, with its reviewed scope after `--`. The review is revalidated
@@ -343,7 +347,15 @@ installation contract, and publishes the artifact with `SHA256SUMS.txt`.
 `just check` deliberately needs only Bash, Git, Python and `just`, so a clean clone runs the
 contract gate without extra tooling; `just lint` (shellcheck) is a separate CI step. Both hosts —
 Gitea Actions (`.gitea/workflows/`) and GitHub Actions (`.github/workflows/`) — run the same gates
-and the same build recipe through `scripts/release.py`.
+and the same build recipe through `scripts/release.py`. Each quality job also runs
+`tests/test_clean_install.py` with Python 3.11 and 3.12, a restricted `PATH` and an empty user
+configuration. It installs only the CLI and companions from a verified source-built bundle,
+checks commit/publish/resume, and distinguishes unavailable temporary storage from filter failure.
+
+Before a GitHub release, `scripts/release.py publication-status <tag> --remote github` observes
+the explicit host and reports whether to prepare, inspect an interrupted tag/draft, or verify an
+existing release. It requires the existing authorised `gh` client; core CLI use does not. Recovery
+states and the independent source-digest check are in the release runbook below.
 
 **A version is published on exactly one host.** GitHub is the public distribution entry
 (release notes, tarball, checksums); Gitea is the governed delivery remote and holds the

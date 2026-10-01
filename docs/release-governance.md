@@ -36,20 +36,22 @@ Both hosts evaluate a release workflow **from the tree of the pushed tag's commi
   `v1.6.0.1`, both of which `preflight` rejects. Pushing one buys a red release run for a version
   that will never ship, and the tag then stays. Release tags are `vX.Y.Z` and nothing else.
 - Publication mechanics differ, and with them the post-publish guarantee:
-  - Gitea: `GET` the tag's release first and refuse if one exists → `POST` draft → upload assets
-    from `dist/` → `PATCH {"draft":false}` → prints `published_release=<tag> assets=<n>`. It does
-    **not** re-download what it published.
+  - Gitea: `GET` the tag's release first and refuse if one exists → `POST` draft → upload and
+    re-download each asset, checking its pre-upload digest and the exact inventory →
+    `PATCH {"draft":false}` → prints `published_release=<tag> assets=<n>`.
+    Failed verification retains the draft.
   - GitHub: `gh release create` publishes immediately with both assets attached, then a following
     step re-downloads the assets and verifies them.
-  Both hosts run the same gates before publishing; only GitHub verifies the bytes after publication.
-  That asymmetry is a standing item in [maintenance-backlog.md](maintenance-backlog.md).
+  Both hosts run the same gates before publishing. Gitea verifies while the release is still a draft;
+  GitHub verifies after publication. Existing records survive failed verification.
 
 Both run, in this order and on both hosts: `preflight` → `just lint` → `just check` → `build` →
 `verify` → release-notes extraction → publish. A tag whose version batch disagrees fails at
 `preflight` before anything is published.
 
-Every one of those steps reads the **working tree**, not the tag object: nothing in
-`scripts/release.py` inspects `git status` or compares a file against `HEAD`. The release jobs are
+Every build/version gate reads the **working tree**, not the tag object: those gates do not
+inspect `git status` or compare a file against `HEAD`. The separate `publication-status` command
+observes remote tag and Release identity; it does not establish checkout cleanliness. The release jobs are
 safe because they check out the tag commit and assert `HEAD` equals it before running anything, so a
 manual run has to happen in a clean checkout of the commit being tagged.
 
@@ -136,8 +138,8 @@ sort order, or runner image), not something to paper over by publishing one host
 ## Runbook: first public GitHub release
 
 The heading is history: this began as the first-public-release runbook and is now the runbook for
-every release. Do not execute any of this as part of a maintenance change; it is a deliberate release
-action.
+every release. Tag publication and activation require task authority that covers those actions;
+a continuing automatic-delivery grant may supply it. Source maintenance alone is not a release.
 Production activation on the maintainer machine is a **separate** authorised step that follows a
 successful release, and it uses `tool-skill-sync install --activate-production` from the canonical
 source repository rather than the release artifact.
@@ -158,10 +160,23 @@ source repository rather than the release artifact.
    git log --oneline -3 github/main   # or origin/main, the branch being tagged
    git status --porcelain=v1          # must be empty in the checkout used for tagging
    python3 -B scripts/release.py preflight "v$VERSION"    # exact new tag name
-   python3 -B scripts/release.py selfcheck "v$VERSION"    # two builds inside one temporary
-                                                            # directory; writes nothing into
-                                                            # the checkout
+   python3 -B scripts/release.py selfcheck "v$VERSION"    # record digest from this clean candidate
+   python3 -B scripts/release.py publication-status "v$VERSION" \
+     --remote github --candidate "$(git rev-parse HEAD)" \
+     --expected-sha256 '<digest-from-selfcheck>'
    ```
+
+   Run these gates in a fresh clean checkout with normal Git checkout modes. Continue to new tag
+   creation only for `state=unpublished`; every other state follows the recovery table below.
+   The explicit `github` remote must have one identical, credential-free fetch/push endpoint on
+   github.com (HTTPS or Git SSH). Observation uses the existing authorised `gh` client and makes
+   no tag, ref, Release or asset changes. This guard observes GitHub only and does not replace
+   either workflow's concurrency control or Gitea's pre-create lookup.
+
+   GitHub's by-tag endpoint documents published Releases. A 404 therefore requires a complete
+   paginated listing with draft visibility before absence can be established. Read access alone,
+   authentication/transport failures and malformed metadata produce a blocker, not `unpublished`.
+   See the [GitHub Releases API](https://docs.github.com/en/rest/releases/releases).
 
 4. Announce nothing before the tag exists; the tag is the release trigger.
 5. Record the release decision in the release request: candidate SHA, the `preflight` line it
@@ -218,15 +233,30 @@ Accept the release only when all of these hold:
 
 ### If it fails
 
-- Workflow failure: fix forward with a normal commit and re-run the job. The tag may stay.
+Re-run `publication-status` with the same tag, candidate and independent clean-build digest before
+retrying an external action. Its exit code is 0 for an observed state and 2 for blocked observation;
+0 alone is not permission to create a tag or Release. The observation is not an atomic lock, so
+recheck immediately before an external mutation and preserve a changed/unknown result.
+
+| Observed state | Recovery |
+| --- | --- |
+| `unpublished` | After the clean candidate gates, create the new annotated tag through the supported workflow. |
+| `tagged_unpublished` | Inspect the existing workflow run; retry that run only when it can safely build/publish the same candidate. Keep the tag. |
+| `draft_incomplete` | Inspect the existing draft and its uploaded bytes. Resume it only through a supported, authorised recovery path; do not create another Release or overwrite assets. |
+| `published_assets_verified` | Compare against `selfcheck` from a fresh checkout of the exact candidate; a downloaded checksum alone is not source proof. |
+| `published_verified` | Record the existing publication; no publication retry is needed. |
+| `published_incomplete`, `conflict`, `unavailable` | Preserve tag, Release and assets; investigate before any dependent mutation. Fix code/bytes in the next version. |
+
+- Workflow failure before publication: retry a transient failed run for the same candidate. A code
+  change belongs to a new commit and new version; the existing tag stays on its original candidate.
 - A re-run of a job that already published will not quietly republish: GitHub's create call refuses a
   second release for the same tag, and Gitea refuses earlier still at its pre-create lookup. Both
   release jobs group concurrency by tag, so two runs for one tag cannot overlap. Read the existing
   release object before assuming the publication is broken — usually it is fine and only the job went
   red.
-- Wrong bytes or wrong assets attached: delete **the release object** (`gh release delete "v$VERSION"
-  --repo … --cleanup-history` is history cleanup of a *release*, never of the repository) and
-  republish after the fix.
+- Wrong published bytes or assets: preserve the observed publication and ship a corrected new
+  version. Retraction of an existing public Release is an incident with separate authority; this
+  maintenance runbook never deletes or recreates it.
 - **Never**: force-push a tag, move/delete-and-recreate a published tag, rewrite history, or edit a
   released `CHANGELOG.md` section. Published versions are immutable; corrections land in the next
   version's section.

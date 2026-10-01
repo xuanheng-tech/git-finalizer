@@ -39,3 +39,11 @@ jobs:
 
       - name: Run project checks
         run: just check
+
+      - name: Verify clean release installation on supported Python versions
+        run: |
+          set -euo pipefail
+          for GF_TEST_PYTHON in 3.11 3.12; do
+            uv run --no-project --no-config --python "$GF_TEST_PYTHON" \
+              python -B -m unittest discover -s tests -p 'test_clean_install.py' -v
+          done

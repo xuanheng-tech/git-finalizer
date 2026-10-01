@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.8.6"
+readonly VERSION="1.8.7"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -1315,6 +1315,7 @@ verify_local_candidate() {
     local command_status
     local whitespace_output
     local candidate_count=0
+    local candidate_temp_checked=0
     local candidate_result verdict size binary digest filtered_oid raw_oid reason candidate_rules
     declare -A candidate_paths=()
 
@@ -1371,6 +1372,22 @@ verify_local_candidate() {
 
         # Check the blob Git would stage, including clean filters and encoding.
         if [[ -f "$absolute_path" && ! -L "$absolute_path" ]]; then
+            if ((candidate_temp_checked == 0)); then
+                if ! "$PYTHON3_EXECUTABLE" -B - <<'PY'
+import tempfile
+from pathlib import Path
+
+try:
+    with tempfile.TemporaryDirectory(prefix="gf-candidate-probe-") as directory:
+        (Path(directory) / "write-test").touch()
+except OSError:
+    raise SystemExit(1)
+PY
+                then
+                    fail 'candidate object temporary directory is unavailable; validation requires temporary writes; use an executor-authorized writable temporary directory or native channel; no add, commit or push'
+                fi
+                candidate_temp_checked=1
+            fi
             candidate_rules=''
             if [[ -n ${history_fixture_paths[$path]+present} ]]; then
                 raw_oid=$(git -C "$repo" hash-object --no-filters -- "$path") ||

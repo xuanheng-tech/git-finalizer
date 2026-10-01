@@ -63,8 +63,13 @@ remains refused by this CLI even when the executor is authorised to use the rele
 
 `verify-only` preserves repository state but needs a writable temporary directory for its
 isolated candidate object store. A filesystem sandbox that denies those writes can block this
-read-only mode. Use the executor's authorised native channel; never weaken its permissions or
-skip candidate scanning to turn that refusal into a success.
+read-only mode. The `candidate object temporary directory is unavailable` blocker identifies this
+precondition before isolated candidate-object scanning; filter failures retain their existing
+blocker. Use an
+executor-authorised writable temporary directory or native channel; never weaken its permissions or
+skip candidate scanning to turn that refusal into a success. A writable `TMPDIR` can select the
+normal Python temporary location, but Python may fall back to other locations when it is unusable.
+This temporary-store check belongs to verify-only; commit-only retains its existing staging checks.
 
 ## Where the remaining blocker lives
 

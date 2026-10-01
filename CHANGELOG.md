@@ -42,6 +42,18 @@ section is invented for it.
 - Correct the deployment-health adapter ledger, track custom Claude homes and project instruction
   files, register the independently attested released Skill payload, and ignore only host worktree policy.
 
+## 1.8.7
+
+- Exercise the verified release-bundle installation on Python 3.11 and 3.12 with no optional
+  integrations or personal configuration; cover core publication, same-commit resume and failure
+  state preservation in both hosts' quality jobs.
+- Diagnose unavailable temporary storage before verify-only candidate scanning, keeping clean-filter
+  failures separate and preserving repository state and executor permissions.
+- Add read-only GitHub `publication-status` inspection for an explicit existing remote: distinguish
+  unpublished, interrupted tag, draft, verified publication and unknown/conflicting state. Check
+  paginated drafts, annotated tag identity, exact asset inventory and independent source digests;
+  recovery preserves existing tags and Releases.
+
 ## 1.8.6
 
 - Bind exact historical-content reviews in published-branch synchronization to the verified
