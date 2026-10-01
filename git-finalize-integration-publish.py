@@ -17,7 +17,7 @@ import time
 from typing import Any, Iterator, NoReturn, Sequence
 import uuid
 
-VERSION = "1.8.2"
+VERSION = "1.8.3"
 OID = re.compile(r"[0-9a-f]{40}")
 SAFE_REMOTE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 PROTOCOL = "integration-publication-session/v1"

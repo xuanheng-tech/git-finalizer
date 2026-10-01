@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import json
 import os
@@ -19,7 +21,7 @@ import tomllib
 from typing import Any, Sequence
 
 
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 SCHEMA_VERSION = 1
 TOOL_SKILL_MANIFEST_SCHEMA_VERSION = 2
 SKILL_NAME = "git-change-delivery"
@@ -61,6 +63,8 @@ RELEASED_CANONICAL_SKILL_SHA256 = frozenset(
         "0c82bceb12edde749aa6deddab25acb4ec083aeea92a37970ec64179ef92726b",
         # Payload independently attested by the next published tag.
         "943ebf4e56ae344cf88ab3dc579d5e497663b052c8ccbade5c42f1f52b5efa93",
+        # Published canonical payload at commit 67e3e6c.
+        "288d3126d9459913714aa2e3934773111b2d4430fb73a8385fd33511807a823c",
     }
 )
 
@@ -117,6 +121,29 @@ def require_owned_directory(path: Path, *, create: bool = False) -> None:
         raise SyncError(f"directory is missing or unsafe: {path}")
     if path.stat().st_uid != os.getuid():
         raise SyncError(f"directory is not owned by current user: {path}")
+
+
+@contextmanager
+def deployment_lock(*roots: Path):
+    """Serialize installers through the same persistent locks, including rollback."""
+    descriptors = []
+    try:
+        for root in sorted({path.absolute() for path in roots}):
+            require_owned_directory(root, create=True)
+            descriptor = os.open(
+                root / ".tool-skill-sync.lock",
+                os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC,
+                0o600,
+            )
+            descriptors.append(descriptor)
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+                raise SyncError("unsafe deployment lock")
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
 
 
 def tree_sha256(root: Path, relative_paths: Sequence[str]) -> str:
@@ -249,11 +276,11 @@ class Sources:
         return False if tool in self.source_refs else git_dirty(self.repo(tool))
 
     def source_bytes(self, tool: str, relative: str) -> bytes:
-        if relative not in {"pyproject.toml", "tool_cli_contract.json"}:
-            raise SyncError("pinned source reads are limited to package metadata and contract")
         repo = self.repo(tool)
         if tool not in self.source_refs:
             return (repo / relative).read_bytes()
+        if relative not in {"pyproject.toml", "tool_cli_contract.json"}:
+            raise SyncError("pinned source reads are limited to package metadata and contract")
         oid = self.source_refs[tool]
         if not FULL_GIT_OID.fullmatch(oid):
             raise SyncError("source-ref requires a full commit OID")
@@ -652,6 +679,7 @@ def check_tool_deployment(
     tool: str,
     agents_root: Path,
     bin_dir: Path | None,
+    hooks_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Validate the source contract and the installed production state together.
 
@@ -668,6 +696,7 @@ def check_tool_deployment(
     errors = list(checked["errors"])
     binary: dict[str, Any] = {"version": None, "sha256": None, "entries": {}}
     drift = "unknown"
+    verification: dict[str, Any] = {}
     try:
         manifest = read_json(sources.manifest_path(tool))
         entrypoints = validate_install_targets(manifest)
@@ -683,8 +712,16 @@ def check_tool_deployment(
             errors.append(
                 f"installed production state drifts from the canonical release: {drift}"
             )
-    except SyncError as exc:
+        verification = verify_installed_tool_bytes(
+            sources, tool, manifest, entrypoints, bin_dir,
+            hooks_dir or agents_root / "hooks",
+        )
+        if verification.get("binary_content_drift"):
+            raise SyncError("installed executable/sidecar bytes differ from source")
+    except (OSError, ValueError, KeyError, SyncError) as exc:
         errors.append(str(exc))
+        if drift == "none":
+            drift = "binary_only"
 
     result = dict(checked)
     result["source_contract_status"] = source_status
@@ -694,9 +731,35 @@ def check_tool_deployment(
     result["installed_skill_sha256"] = installed_skill_sha
     result["installed_compatibility_skill_sha256"] = installed_compatibility_sha
     result["installed_drift"] = drift
+    result.update(verification)
     result["errors"] = errors
-    result["status"] = "PASS" if source_status == "PASS" and drift == "none" else "FAIL"
+    result["status"] = "PASS" if not errors and source_status == "PASS" and drift == "none" else "FAIL"
     return result
+
+
+def verify_installed_tool_bytes(
+    sources: Sources, tool: str, manifest: dict[str, Any],
+    entrypoints: Sequence[str], bin_dir: Path | None, hooks_dir: Path,
+) -> dict[str, Any]:
+    """One read-only artifact check shared by check and doctor."""
+    executable = manifest["executable"]
+    if executable["kind"] == "python_console_scripts":
+        installation = python_tool_installation(entrypoints, bin_dir)
+        return {"artifact_verification": verify_installed_record(Path(installation["root"]))}
+    first = resolve_entry(entrypoints[0], bin_dir)
+    if first is None:
+        raise SyncError(f"entrypoint is missing: {entrypoints[0]}")
+    live_bin = bin_dir or first.parent
+    drift = []
+    for relative, target in executable["production_targets"].items():
+        parts = Path(target).parts
+        if parts[0] not in {"bin", "hooks"}:
+            raise SyncError(f"unsupported production target: {target}")
+        root = live_bin if parts[0] == "bin" else hooks_dir
+        live = root.joinpath(*parts[1:])
+        if not live.is_file() or sha256_file(live) != sha256_bytes(sources.source_bytes(tool, relative)):
+            drift.append(str(live))
+    return {"binary_content_drift": drift}
 
 
 UV_EXECUTABLE = "uv"
@@ -1929,6 +1992,22 @@ def install(
     bin_dir: Path | None = None,
     hooks_dir: Path | None = None,
 ) -> dict[str, Any]:
+    roots = [install_root]
+    if activate_production and agents_root is not None:
+        roots.append(agents_root / "skills")
+    with deployment_lock(*roots):
+        return _install_unlocked(
+            sources, tool, install_root, allow_dirty_source=allow_dirty_source,
+            activate_production=activate_production, agents_root=agents_root,
+            bin_dir=bin_dir, hooks_dir=hooks_dir,
+        )
+
+
+def _install_unlocked(
+    sources: Sources, tool: str, install_root: Path, *, allow_dirty_source: bool,
+    activate_production: bool = False, agents_root: Path | None = None,
+    bin_dir: Path | None = None, hooks_dir: Path | None = None,
+) -> dict[str, Any]:
     require_owned_directory(install_root, create=True)
     bundles_root = install_root / "bundles"
     state_root = install_root / "tools" / tool
@@ -2031,6 +2110,21 @@ def rollback(
     activate_production: bool = False,
     agents_root: Path | None = None,
     bin_dir: Path | None = None,
+    hooks_dir: Path | None = None,
+) -> dict[str, Any]:
+    roots = [install_root]
+    if activate_production and agents_root is not None:
+        roots.append(agents_root / "skills")
+    with deployment_lock(*roots):
+        return _rollback_unlocked(
+            tool, install_root, activate_production=activate_production,
+            agents_root=agents_root, bin_dir=bin_dir, hooks_dir=hooks_dir,
+        )
+
+
+def _rollback_unlocked(
+    tool: str, install_root: Path, *, activate_production: bool = False,
+    agents_root: Path | None = None, bin_dir: Path | None = None,
     hooks_dir: Path | None = None,
 ) -> dict[str, Any]:
     bundles_root = install_root / "bundles"
@@ -2252,6 +2346,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                         args.tool,
                         args.agents_root.resolve(),
                         args.bin_dir,
+                        args.hooks_dir.resolve(),
                     )
                 )
                 print(canonical_json(output).decode(), end="")

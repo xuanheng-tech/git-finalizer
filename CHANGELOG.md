@@ -42,6 +42,24 @@ section is invented for it.
 - Correct the deployment-health adapter ledger, track custom Claude homes and project instruction
   files, register the independently attested released Skill payload, and ignore only host worktree policy.
 
+## 1.8.3
+
+- Share one scanner across worktree, index and history blobs; malformed JSON, duplicate keys and
+  non-finite constants cannot hide escaped sensitive signatures or assignments.
+- Verify Git clean-filter and encoding-converted candidate content and binary size in an isolated
+  temporary object store, preserving repository state.
+- Recover reviewed source commits with configured-upstream resume publication, rechecking exact
+  HEAD and historical blobs. Revalidate explicit 5–25 MiB binary exceptions in existing publication
+  and resume modes, including root content checks.
+- Permit cleanup of already-published paths now ignored while continuing to inspect every earlier
+  unpublished addition. Accept complete merge-parent OIDs for SHA-1 and SHA-256 repositories.
+- Serialize production installers and rollback through shared locks; standalone Skill installation
+  restores the complete previous pair on failure and preserves verified rescue if restoration fails.
+- Share installed artifact verification between `tool-skill-sync check` and `doctor`; equal version
+  output cannot hide source/sidecar byte drift or installed Python RECORD drift.
+- Resolve actual tool entrypoints in the shared Skill, supporting standard local-bin installations
+  across agent vendors without changing native execution or publication authority.
+
 ## 1.8.2
 
 - Allow explicit local verification and completion of one resolved two-parent merge with

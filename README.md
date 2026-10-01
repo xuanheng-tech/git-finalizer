@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.8.2**.
+Current source version: **1.8.3**.
 
-当前版本：`1.8.2`
+当前版本：`1.8.3`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
@@ -24,6 +24,7 @@ or `--mode commit-only` inspect one non-empty, resolved two-parent merge. It req
 and the usual explicit file scope and content checks. Verification preserves Git state; commit
 checks the original HEAD, both parents and reviewed index tree. It never publishes or resolves
 conflicts. Missing/multiple/drifted parents, unknown staged files and hook drift still fail closed.
+Both SHA-1 and SHA-256 repositories require their own complete parent OID.
 
 ## Synchronizing two existing remotes
 
@@ -81,6 +82,8 @@ schema, independent of filename or whitespace. Only its unique fixed description
 other raw and decoded assignments remain checked. Decoded known-token, private-key and SSH-key
 signatures are checked separately from credential-assignment reviews in both worktree and blob
 scans. Fully escaped sensitive keys remain checked, and classifier failure refuses the candidate.
+Duplicate keys, non-finite constants and malformed JSON containers do not disable scanning of
+escaped string literals. Worktree, index and history checks use the same scanner.
 
 Python prose reviews are limited to already-published literal refusal-reason pairs in module-level
 `*_REASONS` dictionaries. The full raw key/value pair must be preserved, with only whitespace and a
@@ -155,6 +158,17 @@ mutation; requires no upstream):
 git-finalize --mode verify-only --repo /absolute/path/to/repo -- src/app.py tests/test_app.py
 ```
 
+Verification checks the candidate after Git's clean filters and encoding conversion, including
+its content signatures and binary size. Its temporary object store is isolated from the repository
+and removed when the check finishes; hooks and commit signing remain outside verification.
+
+`--resume-publish` accepts the same exact `--reviewed-sensitive-source` review and Controller
+linkage used for a retained commit, with its reviewed scope after `--`. The review is revalidated
+against HEAD and every unpublished revision must contain that same reviewed blob. Existing
+branch/history publication and resume modes also accept explicit `--allow-large-binary <path>`:
+only the exact regular HEAD blob above 5 MiB and at most 25 MiB is approved. Other historical
+blobs, unused exceptions and content signatures still block. These interfaces reuse commits.
+
 Local commit only, no remote access at all:
 
 ```bash
@@ -205,7 +219,7 @@ object with `status`, `final_phase` and `next_action` even when the run is block
 The complete per-mode preconditions, guarantees and recovery rules are in
 [docs/cli-guide.zh.md](docs/cli-guide.zh.md) (中文) and in
 [`tool_cli_contract.json`](tool_cli_contract.json), which is the machine-readable public CLI
-contract (`contract_version` 4).
+contract (`contract_version` 7).
 
 ## Agent and automation usage
 

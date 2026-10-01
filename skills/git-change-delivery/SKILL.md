@@ -81,17 +81,17 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 | 明确要求规划或确保一个空 Gitea repository | `--repo-plan` / `--repo-ensure` | 与 publication 分离；仅显式 ensure 可创建 repository，绝不 commit/push |
 
 ```bash
-$HOME/bin/git-finalize --summary --mode verify-only --repo <absolute-repo> -- <repo-relative-file>...
-$HOME/bin/git-finalize --summary --mode commit-only --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
-$HOME/bin/git-finalize --summary --initial-commit-only --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
-$HOME/bin/git-finalize --summary --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
-$HOME/bin/git-finalize --summary --resume-publish <full-head-oid> --repo <absolute-repo>
-$HOME/bin/git-finalize --summary --publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
-$HOME/bin/git-finalize --summary --publish-existing-history <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
-$HOME/bin/git-finalize --summary --resume-existing-history-publish <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
-$HOME/bin/git-finalize --summary --publish-integration-candidate <candidate-oid> --repo <candidate-worktree> --lease-id <uuid> --run-id <run>
-$HOME/bin/git-finalize --summary --retire-remote-branch <branch> --remote <name> --integrated-into <branch> --expected-remote-oid <full-oid> --repo <absolute-repo> --dry-run
-$HOME/bin/git-finalize --summary --retire-local-branch <branch> --remote <name> --integrated-into <branch> --expected-local-oid <full-oid> --expected-integrated-oid <full-oid> --retirement-plan-id <sha256> --repo <absolute-repo> --dry-run
+/absolute/path/to/git-finalize --summary --mode verify-only --repo <absolute-repo> -- <repo-relative-file>...
+/absolute/path/to/git-finalize --summary --mode commit-only --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
+/absolute/path/to/git-finalize --summary --initial-commit-only --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
+/absolute/path/to/git-finalize --summary --repo <absolute-repo> --message <commit-message> -- <repo-relative-file>...
+/absolute/path/to/git-finalize --summary --resume-publish <full-head-oid> --repo <absolute-repo>
+/absolute/path/to/git-finalize --summary --publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
+/absolute/path/to/git-finalize --summary --publish-existing-history <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
+/absolute/path/to/git-finalize --summary --resume-existing-history-publish <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>
+/absolute/path/to/git-finalize --summary --publish-integration-candidate <candidate-oid> --repo <candidate-worktree> --lease-id <uuid> --run-id <run>
+/absolute/path/to/git-finalize --summary --retire-remote-branch <branch> --remote <name> --integrated-into <branch> --expected-remote-oid <full-oid> --repo <absolute-repo> --dry-run
+/absolute/path/to/git-finalize --summary --retire-local-branch <branch> --remote <name> --integrated-into <branch> --expected-local-oid <full-oid> --expected-integrated-oid <full-oid> --retirement-plan-id <sha256> --repo <absolute-repo> --dry-run
 ```
 
 - 已授权双远端同步使用 `--sync-published-branch`，不临时改 upstream、remote 或 Controller policy。
@@ -105,11 +105,16 @@ $HOME/bin/git-finalize --summary --retire-local-branch <branch> --remote <name> 
 - `initial-commit-only` 只接受 attached unborn branch 和空 index，创建一个本地 root commit，
   不配置或访问 remote；它不接受 `--snapshot` 或其他 publish mode。
 - `verify-only` 不修改 HEAD、index、worktree、refs 或 Git 配置，也不要求 upstream。
+  它在独立临时对象库中核对 Git clean-filter/encoding 转换后的候选内容与大小，结束即清理；
+  不把 raw 文件通过扫描等同于将进入提交的 blob 通过扫描。
 - 三种提交生命周期模式中只有默认模式执行 commit 后的 push 和远端 post-verify；显式
   resume 接口也可发布既有 commit，但不创建 commit。
 - 普通 attached branch 的既有 commits 使用 `--resume-publish`；它要求 clean index/worktree、
   configured upstream、`ahead >= 1`、`behind = 0`，只做 non-force、`--no-follow-tags` 的精确
   branch push 和远端 post-verify。root commit 继续使用 `--resume-initial-publish`。
+  原提交使用路径复核时，恢复入口重传 exact source review、完整 Controller linkage 与精确
+  scope；历史 blob 必须匹配复核的 HEAD blob。明确大二进制例外可在 publication/resume
+  时重传，仍受 exact HEAD blob 与 25 MiB 上限约束。
 - clean attached feature branch 尚无 upstream 且 explicit 同名 remote branch 不存在时，使用
   `--publish-existing-branch`；它绑定完整 HEAD OID，不创建 commit，拒绝受保护分支和任何既有
   upstream，并在 non-force 首次 push 后验证 upstream、remote OID 与 `0/0`。
@@ -313,7 +318,10 @@ commit、push、stash、reset、restore 或 clean；最终回复应简短报告 
 
 ### Git Finalizer 原生执行边界（强制）
 
-- 所有执行器通过同一个 `$HOME/bin/git-finalize` 绝对入口调用同一套参数合同，使用精确仓库工作目录和完整命令。
+- 先用 `command -v git-finalize` 和 `realpath -e` 只读解析当前安装入口，再将实际绝对路径
+  写入完整执行命令。文中的 `/absolute/path/to/git-finalize` 是该路径的占位符；兼容
+  `$HOME/.local/bin`、`$HOME/bin` 和其他已验证安装位置。所有执行器使用同一个已解析入口、
+  相同参数合同和精确仓库工作目录。
 - 原生审批与 OS 权限决定命令是否能执行；CLI 不检查或推断执行器私有会话状态。不得伪造审批、切换权限配置、使用 root 或额外宿主代理绕过边界。
 - 完整 Finalizer 生命周期由一次调用完成，不拆分为原始 Git 写命令。任何可能写入 index、
   commit、ref 或 remote 的 Finalizer 接口，都从一开始通过执行器已有的原生权限请求与原生审核通道

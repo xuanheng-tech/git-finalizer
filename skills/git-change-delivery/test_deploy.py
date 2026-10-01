@@ -8,8 +8,10 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import deploy
 import quick_validate
@@ -221,6 +223,68 @@ class SkillDeploymentTest(unittest.TestCase):
             sum(line.startswith("unchanged ") for line in stdout.splitlines()),
             len(deploy.MANAGED_FILES) + 1,
         )
+
+    def test_failed_upgrade_restores_the_complete_pair_and_can_retry(self) -> None:
+        self.populate_live()
+        before = {path: (path.read_bytes(), stat.S_IMODE(path.stat().st_mode))
+                  for root in (self.live, self.compatibility_live)
+                  for path in root.rglob("*") if path.is_file()}
+        previous_tree = deploy.payload_tree_digest(self.live)
+        for name in ("SKILL.md", "references/git-finalizer.md"):
+            with (self.source / name).open("a") as stream:
+                stream.write("\nSynthetic documented upgrade.\n")
+        original = deploy.install_one
+        calls = 0
+        def fail_third(*args):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                raise OSError("synthetic third-file install failure")
+            return original(*args)
+        with mock.patch.object(deploy, "RELEASED_CANONICAL_SKILL_SHA256", frozenset({previous_tree})):
+            with mock.patch.object(deploy, "install_one", side_effect=fail_third):
+                status, _stdout, stderr = self.run_main("install")
+            self.assertEqual(status, 2, stderr)
+            for path, expected in before.items():
+                self.assertEqual((path.read_bytes(), stat.S_IMODE(path.stat().st_mode)), expected)
+            status, _stdout, stderr = self.run_main("install")
+            self.assertEqual(status, 0, stderr)
+
+    def test_failed_first_install_removes_partial_payloads(self) -> None:
+        with mock.patch.object(deploy, "install_one", side_effect=OSError("synthetic write failure")):
+            status, _stdout, stderr = self.run_main("install")
+        self.assertEqual(status, 2, stderr)
+        self.assertFalse(self.live.exists())
+        self.assertFalse(self.compatibility_live.exists())
+
+    def test_restore_failure_preserves_the_verified_backup(self) -> None:
+        self.populate_live()
+        with mock.patch.object(deploy, "install_one", side_effect=OSError("synthetic install failure")), \
+             mock.patch.object(deploy.sync, "restore_production_pair", side_effect=OSError("synthetic restore failure")):
+            status, _stdout, stderr = self.run_main("install")
+        self.assertEqual(status, 2, stderr)
+        recovery = list(self.skills_root.glob(".skill-install-*.recovery"))
+        self.assertEqual(len(recovery), 1)
+        receipt = list((recovery[0] / "backups").iterdir())
+        self.assertEqual(len(receipt), 1)
+        verified = deploy.sync.verify_production_backup(receipt[0])
+        self.assertEqual(len(verified["entries"]), len(deploy.MANAGED_FILES) + 1)
+
+    def test_standalone_install_waits_for_the_shared_sync_transaction_lock(self) -> None:
+        command = [sys.executable, "-B", str(VERSIONED_SOURCE / "deploy.py"), "install",
+                   "--source-dir", str(self.source), "--live-dir", str(self.live),
+                   "--compatibility-source-dir", str(self.compatibility_source),
+                   "--compatibility-live-dir", str(self.compatibility_live)]
+        with deploy.sync.deployment_lock(self.skills_root):
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.addCleanup(lambda: process.kill() if process.poll() is None else None)
+            with self.assertRaises(subprocess.TimeoutExpired):
+                process.wait(timeout=0.3)
+            self.assertFalse(self.live.exists())
+        _stdout, stderr = process.communicate(timeout=30)
+        self.assertEqual(process.returncode, 0, stderr)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(deploy.check(self.source, self.live, self.compatibility_source, self.compatibility_live))
 
     def test_install_upgrades_live_at_released_canonical_tree(self) -> None:
         self.populate_live()

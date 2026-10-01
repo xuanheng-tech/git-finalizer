@@ -47,6 +47,7 @@ class SkillSyncTests(unittest.TestCase):
         self.hooks_dir.mkdir()
         self._build_sources()
         self._build_installed_pair()
+        self._uv_tool_layout(TOOLS["snapshot-runner"][0])
         self.sources = sync.Sources(self.sources_root)
 
     def tearDown(self) -> None:
@@ -323,7 +324,7 @@ class SkillSyncTests(unittest.TestCase):
 
     def _deployment(self, tool: str = "snapshot-runner") -> dict[str, object]:
         return sync.check_tool_deployment(
-            self.sources, tool, self.agents_root, self.bin_dir
+            self.sources, tool, self.agents_root, self.bin_dir, self.hooks_dir
         )
 
     def _rewrite_entry(self, entrypoint: str, version: str) -> None:
@@ -354,6 +355,26 @@ class SkillSyncTests(unittest.TestCase):
         self.assertEqual(report["installed_drift"], "binary_only")
         self.assertEqual(report["installed_binary_version"], "9.9.9")
         self.assertTrue(any("binary_only" in error for error in report["errors"]))
+
+    def test_check_detects_same_version_runtime_drift(self) -> None:
+        module = self.root / "uvtools/snapshot-runner/lib/python3.12/site-packages/snapshot_runner/__init__.py"
+        module.write_text(module.read_text() + "unreviewed_runtime_change = True\n")
+        report = self._deployment()
+        self.assertEqual(report["installed_binary_version"], TOOLS["snapshot-runner"][0])
+        self.assertEqual(report["status"], "FAIL")
+        self.assertEqual(report["installed_drift"], "binary_only")
+
+    def test_check_detects_same_version_source_and_sidecar_drift(self) -> None:
+        self._install_production("git-finalizer")
+        for name in ("git-finalize", "git-finalize-snapshot-verify.py"):
+            target = self.bin_dir / name
+            before = target.read_bytes()
+            target.write_bytes(before + b"# unreviewed same-version change\n")
+            report = self._deployment("git-finalizer")
+            self.assertEqual(report["installed_binary_version"], TOOLS["git-finalizer"][0])
+            self.assertEqual(report["status"], "FAIL")
+            self.assertIn(str(target), report["binary_content_drift"])
+            target.write_bytes(before)
 
     def test_check_deployment_detects_missing_primary_entrypoint(self) -> None:
         (self.bin_dir / "snapshot-runner").unlink()

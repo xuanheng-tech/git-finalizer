@@ -77,7 +77,9 @@ git-finalize \
 
 verify-only 要求已有 commit 的 attached branch，但不要求 upstream。它复用路径规范化、已有
 staged scope、冲突、敏感路径与内容、大文件及例外范围检查，并以只读方式确认 HEAD 到当前
-worktree 的候选 diff 非空、ignored 文件不会进入候选范围且 whitespace 检查通过。它不运行
+worktree 的候选 diff 非空、ignored 文件不会进入候选范围且 whitespace 检查通过。
+提交前还在独立临时对象库中核对 Git clean-filter/encoding 转换后的内容与二进制大小，
+退出即清理临时对象，不写仓库对象库或 index。它不运行
 `git add`、commit hooks、`git commit` 或任何远端命令，也不执行 config、tag 或 ref 写操作；
 因此不验证 commit message、author/签名、hook 结果、index 实际写入能力、远端状态或
 fast-forward 条件。
@@ -145,7 +147,9 @@ git-finalize \
 ```
 
 `--resume-publish` 严格从当前 branch 的唯一 configured upstream 推导 push 目标，不接受
-`--remote`、message、文件列表或其他 mode。它要求 ahead 至少为 1、behind 为 0，并对待发布
+`--remote`、message 或其他 mode。只有使用 `--reviewed-sensitive-source` 时，才接受 `--` 后
+的精确复核 scope，并要求完整 Controller linkage；HEAD 复核身份和每个历史 blob 都会
+重新核对。它要求 ahead 至少为 1、behind 为 0，并对待发布
 range 中每一个 commit（包括最终 tree 已删除的中间内容）执行 whitespace、敏感路径与内容、
 ignored 文件、大二进制及异常对象检查；随后仅执行显式 branch refspec 的 non-force、
 `--no-follow-tags` push。post-verify 要求远端目标等于原 HEAD、ahead/behind 为 `0/0`、工作区与
@@ -387,6 +391,11 @@ upstream commit 已可解析。Upstream target 配置与 resolved upstream commi
 若显式路径已经作为删除暂存，而工作树中的同名本地副本已被忽略，工具会保留该 staged deletion，不会重新添加或提交本地副本。
 
 默认拒绝超过 5 MiB 的明显二进制文件。确需保留原始图片等文件时，可重复使用 `--allow-large-binary <exact-path>`，但该路径必须同时出现在 `--` 后的显式文件范围内，必须是普通文件，工作树与 staged blob 都必须大于 5 MiB 且不超过 25 MiB。该参数只放行精确文件的大小检查，不放行敏感路径、credential / secret 内容检查、staged scope、远端状态或快进检查；超过 25 MiB 仍会拒绝。
+
+existing branch/history publication 与 resume 模式也接受这一参数；它们不创建 commit，
+例外绑定规范路径的普通 HEAD blob，仍要求大于 5 MiB、至多 25 MiB。待发布历史中其它
+blob 不获得例外，未匹配范围的例外也拒绝。清理已发布且现在 ignored 的删除路径不会误报，
+更早的待发布新增 blob 继续扫描。
 
 例如：
 

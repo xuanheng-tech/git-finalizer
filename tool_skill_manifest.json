@@ -3,7 +3,7 @@
     "owner": "git-finalizer",
     "path": "skills/git-change-delivery/SKILL.md"
   },
-  "canonical_skill_sha256": "288d3126d9459913714aa2e3934773111b2d4430fb73a8385fd33511807a823c",
+  "canonical_skill_sha256": "a4a09f48d7bdcc2a1e1de2647ab1797f2ee85a87512ef69abc04d8475cb8ae45",
   "compatibility_skill": {
     "name": "three-tool-git-workflow",
     "path": "skills/three-tool-git-workflow/SKILL.md",
@@ -25,10 +25,12 @@
       "tool-skill-sync",
       "tooling/tool_skill_sync.py",
       "tooling/tool_temp_dir.py",
-      "tooling/workflow_health.py"
+      "tooling/workflow_health.py",
+      "git-finalize-content-scan.py"
     ],
     "production_targets": {
       "git-finalize": "bin/git-finalize",
+      "git-finalize-content-scan.py": "bin/git-finalize-content-scan.py",
       "git-finalize-integration-publish.py": "bin/git-finalize-integration-publish.py",
       "git-finalize-repo-bootstrap.py": "bin/git-finalize-repo-bootstrap.py",
       "git-finalize-retirement-plan.py": "bin/git-finalize-retirement-plan.py",
@@ -46,10 +48,10 @@
       "git-finalize"
     ]
   },
-  "public_cli_contract_sha256": "8d95b4dc2d48384a40b6bb5c2c0fc9e1dead3e9f1e1883262359e03279037f71",
+  "public_cli_contract_sha256": "d798fe86330b78d1de1bfaa6eca4e7bcceea800d13e03a9fe39c0eb42cfbc6d2",
   "schema_version": 2,
   "skill_contract_version": 2,
   "tool_commit": "@release",
   "tool_name": "git-finalizer",
-  "tool_version": "1.8.2"
+  "tool_version": "1.8.3"
 }

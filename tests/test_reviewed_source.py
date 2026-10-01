@@ -136,6 +136,7 @@ class ReviewedSourceTests(unittest.TestCase):
             "source-review",
         ]
         existing_branch = mode == "publish-existing-branch"
+        recovering = mode == "resume-publish"
         if existing_branch:
             command += [
                 "--publish-existing-branch",
@@ -145,14 +146,16 @@ class ReviewedSourceTests(unittest.TestCase):
                 "--remote-branch",
                 "feature/reviewed-source",
             ]
+        elif recovering:
+            command += ["--resume-publish", before[0]]
         elif mode is not None:
             command += ["--mode", mode]
-        if mode != "verify-only" and not existing_branch:
+        if mode != "verify-only" and not existing_branch and not recovering:
             command += ["--message", "Review synthetic source"]
         if approved:
             command += ["--reviewed-sensitive-source", str(self.file)]
         command += list(extra)
-        if not existing_branch or approved or paths is not None:
+        if (not existing_branch and not recovering) or approved or paths is not None:
             command += ["--", *(paths or (self.path,))]
         result = subprocess.run(
             command,
@@ -162,9 +165,9 @@ class ReviewedSourceTests(unittest.TestCase):
             timeout=30,
         )
         data = json.loads(result.stdout)
-        if mode is not None and not existing_branch:
+        if mode is not None and not existing_branch and not recovering:
             self.assertFalse(data["push"]["executed"])
-        if mode == "verify-only" or existing_branch:
+        if mode == "verify-only" or existing_branch or recovering:
             self.assertEqual(before, self.state())
         return result.returncode, data
 
@@ -217,6 +220,38 @@ class ReviewedSourceTests(unittest.TestCase):
 
     def test_missing_review_blocks(self) -> None:
         self.assert_blocked(approved=False)
+
+    def test_reviewed_source_recovers_after_a_failed_normal_push(self) -> None:
+        remote = self.prepare_branch_publication()
+        self.git("push", "-qu", "origin", "feature/reviewed-source")
+        hook = remote / "hooks/pre-receive"
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o700)
+        status, data = self.run_finalizer(None)
+        self.assertNotEqual(status, 0, data)
+        self.assertTrue(data["commit"]["created"], data)
+        head = self.git("rev-parse", "HEAD")
+        hook.unlink()
+        status, data = self.run_finalizer("resume-publish")
+        self.assertEqual(status, 0, data)
+        self.assertFalse(data["commit"]["created"])
+        self.assertTrue(data["push"]["executed"])
+        self.assertEqual(data["mode_result"]["post_verify"], "passed")
+        self.assertEqual(data["reviewed_sensitive_sources"][0]["content_scan"], "passed")
+        self.assertEqual(self.git("rev-parse", "HEAD"), head)
+        self.assertEqual(self.git("ls-remote", "origin", "refs/heads/feature/reviewed-source").split()[0], head)
+
+    def test_resume_source_review_cannot_approve_an_older_different_blob(self) -> None:
+        self.prepare_branch_publication()
+        self.git("push", "-qu", "origin", "feature/reviewed-source")
+        self.source.write_text('def role():\n    return "unreviewed old source"\n')
+        self.commit_fixture()
+        self.source.write_text('def role():\n    return "production"\n')
+        self.commit_fixture()
+        status, data = self.run_finalizer("resume-publish")
+        self.assertNotEqual(status, 0, data)
+        self.assertIn("history blob mismatch", data["reason"])
+        self.assertFalse(data["push"]["executed"])
 
     def test_commit_review_publishes_same_exact_existing_branch(self) -> None:
         remote = self.prepare_branch_publication()

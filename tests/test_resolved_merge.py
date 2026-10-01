@@ -12,6 +12,7 @@ FINALIZER = Path(__file__).resolve().parents[1] / "git-finalize"
 
 
 class ResolvedMergeTests(unittest.TestCase):
+    object_format = "sha1"
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="gf-resolved-merge-")
         self.addCleanup(self.temporary.cleanup)
@@ -21,7 +22,7 @@ class ResolvedMergeTests(unittest.TestCase):
             "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_TERMINAL_PROMPT": "0", "TMPDIR": str(self.repo),
         }
-        self.git("init", "-q", "--initial-branch=main")
+        self.git("init", "-q", "--initial-branch=main", "--object-format=" + self.object_format)
         self.git("config", "user.name", "Synthetic Merge Reviewer")
         self.git("config", "user.email", "merge@example.invalid")
         self.git("config", "commit.gpgsign", "false")
@@ -154,7 +155,7 @@ class ResolvedMergeTests(unittest.TestCase):
         blob = self.git("rev-parse", f"{self.base}:f.txt")
         subprocess.run(
             ["git", "-C", str(self.repo), "update-index", "--index-info"],
-            input=f"0 {'0' * 40}\tf.txt\n100644 {blob} 1\tf.txt\n",
+            input=f"0 {'0' * len(blob)}\tf.txt\n100644 {blob} 1\tf.txt\n",
             text=True, env=self.env, check=True, timeout=10,
         )
         self.blocked_unchanged()
@@ -177,6 +178,10 @@ class ResolvedMergeTests(unittest.TestCase):
         self.assertEqual(data["status"], "failed", data)
         self.assertTrue(data["commit"]["created"], data)
         self.assertNotEqual(self.git("rev-parse", "HEAD"), self.head)
+
+
+class ResolvedMergeSHA256Tests(ResolvedMergeTests):
+    object_format = "sha256"
 
 
 if __name__ == "__main__":

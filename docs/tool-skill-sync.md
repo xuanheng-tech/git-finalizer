@@ -59,6 +59,9 @@ compatibility shim 的独立 SHA-256 由 ToolSkillManifest v2 绑定，并随 bu
 `binary_only`、`skill_only` 或 `incompatible`。`check` 对 schema、tool/version、entrypoints、Skill
 和 CLI hashes、install target 及 toolchain contract version fail closed，不静默修复；它同时校验
 canonical source contract 与已安装生产状态，`--source-only` 仅在无安装的构建环境跳过后者。
+`check` 与 `doctor` 共用同一只读文件校验：源码工具的全部 executable/sidecar 必须与
+canonical 字节一致，Python console scripts 的 runtime 必须匹配已安装 wheel `RECORD`。
+仅版本输出一致不能证明安装完整；这两条检查都不安装或修复文件。
 
 `upgrade` 是 `python_console_scripts` 工具的唯一生产升级入口，用于消除手工 `uv tool install`
 造成的 CLI 中断与符号链接修复。它先读取现有 uv receipt，保留 `UV_TOOL_BIN_DIR`、index 列表和
@@ -97,6 +100,10 @@ scripts 的版本并保留其稳定入口，对 Git Finalizer 同步安装 execu
 Skill Sync。入口改名时必须已有验证过的旧 bundle；先验证新入口，再移除内容与旧 bundle 完全匹配的退役文件。安装前保存新旧 target 集合的并集，任一写入、验证或 `KeyboardInterrupt` 都恢复
 旧 pair；成功后才更新 managed `CURRENT` 与 production `PREVIOUS`。`rollback
 --activate-production` 同步恢复完整 pair，禁止只回退 Skill。
+
+install/rollback 在整个读旧状态、备份、替换、验证与指针更新期间持有部署锁。production
+事务与 standalone `skills/git-change-delivery/deploy.py install` 共用 Skill 根目录锁；
+后者也复用 pair 备份/恢复实现，文件中途写入失败会恢复全部旧 payload 与权限后才能重试。
 
 production Skill 写入受 trusted-state gate 约束，与 `deploy.py install` 共用同一判定语义
 （payload tree digest 公式与 accepted registry 由测试锁定一致）：任一激活写入前，installed

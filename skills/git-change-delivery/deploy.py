@@ -16,6 +16,12 @@ import quick_validate
 
 
 SOURCE_DIR = Path(__file__).resolve().parent
+# This source-only installer shares the owner's transaction implementation.
+sys.path.insert(0, str(SOURCE_DIR.parents[1]))
+try:
+    from tooling import tool_skill_sync as sync
+finally:
+    sys.path.pop(0)
 LIVE_DIR = Path.home() / ".agents" / "skills" / "git-change-delivery"
 COMPATIBILITY_SKILL_NAME = "three-tool-git-workflow"
 COMPATIBILITY_SOURCE_DIR = SOURCE_DIR.parent / COMPATIBILITY_SKILL_NAME
@@ -56,6 +62,8 @@ RELEASED_CANONICAL_SKILL_SHA256 = frozenset(
         "0c82bceb12edde749aa6deddab25acb4ec083aeea92a37970ec64179ef92726b",
         # 1.6.0 released canonical payload (tag v1.6.0).
         "943ebf4e56ae344cf88ab3dc579d5e497663b052c8ccbade5c42f1f52b5efa93",
+        # Published canonical payload at commit 67e3e6c.
+        "288d3126d9459913714aa2e3934773111b2d4430fb73a8385fd33511807a823c",
     }
 )
 
@@ -413,6 +421,14 @@ def install(
     compatibility_source_dir: Path = COMPATIBILITY_SOURCE_DIR,
     compatibility_live_dir: Path = COMPATIBILITY_LIVE_DIR,
 ) -> None:
+    with sync.deployment_lock(live_dir.parent, compatibility_live_dir.parent):
+        _install_locked(source_dir, live_dir, compatibility_source_dir, compatibility_live_dir)
+
+
+def _install_locked(
+    source_dir: Path, live_dir: Path,
+    compatibility_source_dir: Path, compatibility_live_dir: Path,
+) -> None:
     validate_source(source_dir)
     validate_compatibility_source(compatibility_source_dir)
     validate_live_container(live_dir, allow_missing=True)
@@ -424,22 +440,39 @@ def install(
     parent = live_dir.parent
     if parent.is_symlink() or not parent.is_dir() or parent.stat().st_uid != os.getuid():
         raise DeploymentError(f"live Skill parent is not a safe owned directory: {parent}")
-    ensure_live_directory(live_dir)
-    for name in sorted(EXPECTED_LIVE_DIRS):
-        ensure_live_directory(live_dir / name)
-    for name, target_mode in MANAGED_FILES.items():
-        print(install_one(source_dir / name, live_dir / name, target_mode))
-    ensure_live_directory(compatibility_live_dir)
-    for name, target_mode in COMPATIBILITY_FILES.items():
-        print(
-            install_one(
-                compatibility_source_dir / name,
-                compatibility_live_dir / name,
-                target_mode,
-            )
-        )
-    if not check(source_dir, live_dir, compatibility_source_dir, compatibility_live_dir):
-        raise DeploymentError("post-install source/live check failed")
+    targets = [*(live_dir / name for name in MANAGED_FILES),
+               *(compatibility_live_dir / name for name in COMPATIBILITY_FILES)]
+    directories = [live_dir, *(live_dir / name for name in sorted(EXPECTED_LIVE_DIRS)), compatibility_live_dir]
+    directory_modes = {path: mode(path) if path.exists() else None for path in directories}
+    with tempfile.TemporaryDirectory(prefix=".skill-install-", dir=parent) as temporary:
+        backup = sync.capture_production_pair("git-finalizer", targets, Path(temporary))
+        try:
+            ensure_live_directory(live_dir)
+            for name in sorted(EXPECTED_LIVE_DIRS):
+                ensure_live_directory(live_dir / name)
+            for name, target_mode in MANAGED_FILES.items():
+                print(install_one(source_dir / name, live_dir / name, target_mode))
+            ensure_live_directory(compatibility_live_dir)
+            for name, target_mode in COMPATIBILITY_FILES.items():
+                print(install_one(compatibility_source_dir / name, compatibility_live_dir / name, target_mode))
+            if not check(source_dir, live_dir, compatibility_source_dir, compatibility_live_dir):
+                raise DeploymentError("post-install source/live check failed")
+        except BaseException:
+            try:
+                sync.restore_production_pair(backup, targets)
+            except BaseException as exc:
+                # Preserve the verified original pair if the OS cannot restore
+                # it; the temporary-directory finalizer must not erase rescue.
+                recovery = parent / (Path(temporary).name + ".recovery")
+                os.replace(temporary, recovery)
+                raise DeploymentError(f"rollback failed; verified backup preserved at {recovery}") from exc
+            for path, original_mode in reversed(list(directory_modes.items())):
+                if original_mode is None:
+                    if path.exists():
+                        path.rmdir()
+                else:
+                    path.chmod(original_mode)
+            raise
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -479,7 +512,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             else 1
         )
-    except (DeploymentError, OSError) as exc:
+    except (DeploymentError, sync.SyncError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

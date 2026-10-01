@@ -30,6 +30,7 @@ RELEASED_CANONICAL_LINEAGE = (
     ("v1.4.0", "0c82bceb12edde749aa6deddab25acb4ec083aeea92a37970ec64179ef92726b"),
     ("v1.5.0", "0c82bceb12edde749aa6deddab25acb4ec083aeea92a37970ec64179ef92726b"),
     ("v1.6.0", "943ebf4e56ae344cf88ab3dc579d5e497663b052c8ccbade5c42f1f52b5efa93"),
+    ("67e3e6c", "288d3126d9459913714aa2e3934773111b2d4430fb73a8385fd33511807a823c"),
 )
 
 

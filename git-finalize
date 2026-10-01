@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.8.2"
+readonly VERSION="1.8.3"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -706,6 +706,7 @@ Options:
   --reviewed-sensitive-source <file>
                                External exact Python/CSS/JSON source review; secret scans remain mandatory.
   --allow-large-binary <path>    Allow this exact binary file above 5 MiB, up to 25 MiB.
+                               Existing publication/resume bind it to the exact HEAD blob.
   --dry-run                      Commit modes avoid Git mutation/remote; retirement runs live preflight only.
   --summary                      Emit one bounded JSON result instead of phase output.
   --version                      Show the version and exit.
@@ -1003,92 +1004,25 @@ load_source_reviews() {
     done <<<"$output"
 }
 
-readonly private_key_re='-----BEGIN ([A-Z0-9]+[[:space:]]+)*PRIVATE KEY-----'
-readonly known_token_re='(AKIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,})'
-readonly ssh_key_re='(^|[[:space:]])ssh-(rsa|dss|ecdsa|ed25519)[[:space:]]+[A-Za-z0-9+/]{40,}'
 readonly assignment_re="(credentials?|password|passwd|secret|token|api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token)['\"]?[[:space:]]*[:=][[:space:]]*['\"][^'\"]{12,}['\"]"
 
-working_content_reason() {
-    local path=$1
-    local excepted_detectors=${2:-}
-    local only_detector=${3:-}
-    local schema_verdict
-
-    if [[ -z "$only_detector" || "$only_detector" == 'private-key-header-v1' ]] &&
-        [[ "$excepted_detectors" != *'|private-key-header-v1|'* ]] &&
-        LC_ALL=C grep -aEiq -- "$private_key_re" "$path"; then
-        printf 'private key 内容签名'
-        return 0
-    fi
-    if [[ -z "$only_detector" || "$only_detector" == 'known-token-v1' ]] &&
-        [[ "$excepted_detectors" != *'|known-token-v1|'* ]] &&
-        LC_ALL=C grep -aEiq -- "$known_token_re" "$path"; then
-        printf '高置信度 token/credential 内容签名'
-        return 0
-    fi
-    if [[ -z "$only_detector" ]] &&
-        LC_ALL=C grep -aEiq -- "$ssh_key_re" "$path"; then
-        printf 'SSH key 内容签名'
-        return 0
-    fi
-    schema_verdict=$(public_schema_content_verdict file "$path" "$excepted_detectors" "$only_detector")
-    case "$schema_verdict" in
-        PRIVATE) printf 'private key 内容签名'; return 0 ;;
-        KNOWN) printf '高置信度 token/credential 内容签名'; return 0 ;;
-        SSH) printf 'SSH key 内容签名'; return 0 ;;
-        ASSIGNMENT) printf '疑似硬编码 credential/secret/token'; return 0 ;;
+content_verdict_reason() {
+    case "$1" in
+        PRIVATE) printf 'private key 内容签名' ;;
+        KNOWN) printf '高置信度 token/credential 内容签名' ;;
+        SSH) printf 'SSH key 内容签名' ;;
+        ASSIGNMENT) printf '疑似硬编码 credential/secret/token' ;;
         CLEAR) return 1 ;;
-        NON_SCHEMA) ;;
-        *) printf 'public schema 内容分类失败'; return 0 ;;
+        *) printf '内容分类失败' ;;
     esac
-    if [[ -z "$only_detector" || "$only_detector" == 'credential-assignment-v1' ]] &&
-        [[ "$excepted_detectors" != *'|credential-assignment-v1|'* ]] &&
-        LC_ALL=C grep -aEiq -- "$assignment_re" "$path"; then
-        printf '疑似硬编码 credential/secret/token'
-        return 0
-    fi
-    return 1
+}
+
+working_content_reason() {
+    content_verdict_reason "$(public_schema_content_verdict file "$1" "${2:-}" "${3:-}")"
 }
 
 staged_content_reason() {
-    local oid=$1
-    local excepted_detectors=${2:-}
-    local only_detector=${3:-}
-    local schema_verdict
-    if [[ -z "$only_detector" || "$only_detector" == 'private-key-header-v1' ]] &&
-        [[ "$excepted_detectors" != *'|private-key-header-v1|'* ]] &&
-        LC_ALL=C grep -aEiq -- "$private_key_re" < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null); then
-        printf 'private key 内容签名'
-        return 0
-    fi
-    if [[ -z "$only_detector" || "$only_detector" == 'known-token-v1' ]] &&
-        [[ "$excepted_detectors" != *'|known-token-v1|'* ]] &&
-        LC_ALL=C grep -aEiq -- "$known_token_re" < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null); then
-        printf '高置信度 token/credential 内容签名'
-        return 0
-    fi
-    if [[ -z "$only_detector" ]] &&
-        LC_ALL=C grep -aEiq -- "$ssh_key_re" < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null); then
-        printf 'SSH key 内容签名'
-        return 0
-    fi
-    schema_verdict=$(public_schema_content_verdict blob "$oid" "$excepted_detectors" "$only_detector")
-    case "$schema_verdict" in
-        PRIVATE) printf 'private key 内容签名'; return 0 ;;
-        KNOWN) printf '高置信度 token/credential 内容签名'; return 0 ;;
-        SSH) printf 'SSH key 内容签名'; return 0 ;;
-        ASSIGNMENT) printf '疑似硬编码 credential/secret/token'; return 0 ;;
-        CLEAR) return 1 ;;
-        NON_SCHEMA) ;;
-        *) printf 'public schema 内容分类失败'; return 0 ;;
-    esac
-    if [[ -z "$only_detector" || "$only_detector" == 'credential-assignment-v1' ]] &&
-        [[ "$excepted_detectors" != *'|credential-assignment-v1|'* ]] &&
-        LC_ALL=C grep -aEiq -- "$assignment_re" < <(git -C "$repo" cat-file blob "$oid" 2>/dev/null); then
-        printf '疑似硬编码 credential/secret/token'
-        return 0
-    fi
-    return 1
+    content_verdict_reason "$(public_schema_content_verdict blob "$1" "${2:-}" "${3:-}")"
 }
 
 is_working_large_binary() {
@@ -1381,6 +1315,7 @@ verify_local_candidate() {
     local command_status
     local whitespace_output
     local candidate_count=0
+    local candidate_result verdict size binary digest filtered_oid raw_oid reason candidate_rules
     declare -A candidate_paths=()
 
     summary_phase='local_validation'
@@ -1433,6 +1368,41 @@ verify_local_candidate() {
 
         candidate_paths["$path"]=1
         candidate_count=$((candidate_count + 1))
+
+        # Check the blob Git would stage, including clean filters and encoding.
+        if [[ -f "$absolute_path" && ! -L "$absolute_path" ]]; then
+            candidate_rules=''
+            if [[ -n ${history_fixture_paths[$path]+present} ]]; then
+                raw_oid=$(git -C "$repo" hash-object --no-filters -- "$path") ||
+                    fail '无法只读复核 candidate fixture raw blob'
+                candidate_rules=${history_fixture_rules[$path:$raw_oid]-}
+            fi
+            candidate_result=$(public_schema_content_verdict candidate "$path" "$candidate_rules" '')
+            read -r verdict size binary digest filtered_oid <<<"$candidate_result"
+            [[ "$size" =~ ^[0-9]+$ && "$binary" =~ ^[01]$ &&
+               "$digest" =~ ^[0-9a-f]{64}$ && "$filtered_oid" =~ ^[0-9a-f]+$ ]] ||
+                fail '无法只读验证 clean-filter candidate blob；未执行 add、commit 或 push'
+            if [[ -z ${test_fixture_content_overrides[$path]+present} ]] &&
+                reason=$(content_verdict_reason "$verdict"); then
+                fail "拒绝候选敏感文件 $(printf '%q' "$path"): $reason"
+            fi
+            if ((binary == 1 && size > MAX_BINARY_BYTES)); then
+                [[ -n ${large_binary_overrides[$path]+present} ]] ||
+                    fail "拒绝候选的大于 5 MiB 明显二进制文件: $(printf '%q' "$path")"
+                ((size <= MAX_ALLOWED_LARGE_BINARY_BYTES)) ||
+                    fail 'clean-filter candidate blob 超过 25 MiB 硬上限'
+            fi
+            if [[ -n ${large_binary_overrides[$path]+present} ]] &&
+                ((binary != 1 || size <= MAX_BINARY_BYTES)); then
+                fail 'large binary exception requires a filtered candidate above 5 MiB'
+            fi
+            if [[ -n ${reviewed_source_paths[$path]+present} ]]; then
+                raw_oid=$(git -C "$repo" hash-object --no-filters -- "$path") ||
+                    fail '无法只读验证 reviewed source raw blob'
+                [[ "$filtered_oid" == "$raw_oid" ]] ||
+                    fail 'reviewed source clean-filter blob 已漂移；未执行 add、commit 或 push'
+            fi
+        fi
     done
 
     ((candidate_count > 0)) || fail 'staged diff 为空；未执行 commit 或 push'
@@ -1455,7 +1425,7 @@ verify_local_candidate() {
     done
     if ((fixture_exceptions_seen == 1 && (verify_only == 1 || commit_only == 1))); then
         declare -A changed_index_paths=()
-        local raw_oid filtered_oid fixture_key
+        local fixture_key
         for path in "${staged_paths[@]}"; do
             changed_index_paths["$path"]=1
         done
@@ -2330,6 +2300,18 @@ check_git_operation_state() {
     local merge_head
 
     git_operation_error=''
+    if [[ -n "$merge_parent_arg" ]]; then
+        local object_format oid_length
+        object_format=$(git -C "$repo" rev-parse --show-object-format=storage) || return 1
+        case "$object_format" in
+            sha1) oid_length=40 ;;
+            sha256) oid_length=64 ;;
+            *) git_operation_error='unsupported Git object format'; return 1 ;;
+        esac
+        ((${#merge_parent_arg} == oid_length)) || {
+            git_operation_error="--merge-parent requires a full $object_format OID"; return 1;
+        }
+    fi
     if ! git_dir=$(git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null); then
         git_operation_error='无法解析 Git metadata 目录'
         return 1
@@ -2400,139 +2382,41 @@ is_committed_large_binary() {
     return 0
 }
 
+load_history_large_binary_overrides() {
+    local path lexical entry mode type oid extra size
+    history_large_binary_overrides=()
+    history_large_binary_applied=()
+    for path in "${allow_large_binary_args[@]}"; do
+        [[ -n "$path" && "$path" != /* && "$path" != *$'\n'* &&
+           "$path" != *$'\r'* && "$path" != *$'\t'* ]] ||
+            fail '--allow-large-binary requires a canonical repo-relative path'
+        lexical=$(realpath -m -s -- "$repo/$path") || fail 'invalid large binary path'
+        [[ "$lexical" == "$repo/$path" && "$lexical" == "$repo/"* &&
+           "$path" != .git && "$path" != .git/* ]] || fail 'invalid large binary path'
+        [[ -z ${history_large_binary_overrides[$path]+present} ]] ||
+            fail 'duplicate large binary history exception'
+        entry=$(git -C "$repo" --literal-pathspecs ls-tree HEAD -- "$path") ||
+            fail 'cannot read large binary HEAD entry'
+        [[ -n "$entry" && "$entry" != *$'\n'* && "$entry" == *$'\t'* ]] ||
+            fail 'large binary history exception requires one HEAD file'
+        read -r mode type oid extra <<<"${entry%%$'\t'*}"
+        [[ ("$mode" == 100644 || "$mode" == 100755) && "$type" == blob && -z "$extra" ]] ||
+            fail 'large binary history exception requires a regular HEAD blob'
+        is_committed_large_binary "$oid" ||
+            fail 'large binary history exception requires a binary blob above 5 MiB'
+        size=$(git -C "$repo" cat-file -s "$oid") || fail 'cannot read large binary blob size'
+        ((size <= MAX_ALLOWED_LARGE_BINARY_BYTES)) || fail 'large binary HEAD blob exceeds 25 MiB'
+        history_large_binary_overrides["$path"]=$oid
+    done
+}
+
 public_schema_content_verdict() {
-    python3_available || {
-        printf 'ERROR\n'
-        return 0
-    }
-    local verdict
-    verdict=$("$PYTHON3_EXECUTABLE" -B - "$1" "$2" "$repo" "$assignment_re" \
-        "$private_key_re" "$known_token_re" "$ssh_key_re" "$3" "$4" <<'PY'
-import json
-from pathlib import Path
-import re
-import subprocess
-import sys
-
-
-def expression(value):
-    return re.compile(value.replace("[[:space:]]", r"[\x09-\x0d ]").encode(), re.I)
-
-
-def unique_object(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("duplicate JSON key")
-        result[key] = value
-    return result
-
-
-def invalid_constant(value):
-    raise ValueError("non-JSON constant")
-
-
-def strings(value):
-    if isinstance(value, str):
-        yield value
-    elif isinstance(value, dict):
-        for key, item in value.items():
-            yield key
-            yield from strings(item)
-    elif isinstance(value, list):
-        for item in value:
-            yield from strings(item)
-
-
-def decoded_assignment(value, detector):
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if isinstance(item, str) and len(item.encode()) >= 12 and detector.search(
-                key.encode() + b'="AAAAAAAAAAAA"'
-            ):
-                return True
-            if decoded_assignment(item, detector):
-                return True
-    elif isinstance(value, list):
-        return any(decoded_assignment(item, detector) for item in value)
-    elif isinstance(value, str):
-        return detector.search(value.encode()) is not None
-    return False
-
-
-try:
-    kind, source, repo, assignment, private_key, known, ssh_key, excepted, only = sys.argv[1:]
-    raw = (
-        Path(source).read_bytes() if kind == "file"
-        else subprocess.check_output(
-            ["git", "-C", repo, "cat-file", "blob", source], stderr=subprocess.DEVNULL
-        )
-    )
-    try:
-        document = json.loads(
-            raw, object_pairs_hook=unique_object, parse_constant=invalid_constant
-        )
-    except ValueError:
-        print("NON_SCHEMA")
-        sys.exit(0)
-    # Decode every JSON string before scanning; quotes and escapes can hide
-    # signatures from the raw-text rules. Contract masking remains schema-bound.
-    for name, pattern, verdict in (
-        ("private-key-header-v1", private_key, "PRIVATE"),
-        ("known-token-v1", known, "KNOWN"),
-        ("ssh-key", ssh_key, "SSH"),
-    ):
-        if (not only or only == name) and "|" + name + "|" not in excepted and any(
-            expression(pattern).search(value.encode()) for value in strings(document)
-        ):
-            print(verdict)
-            sys.exit(0)
-    detector = expression(assignment)
-    assignment_enabled = (
-        (not only or only == "credential-assignment-v1")
-        and "|credential-assignment-v1|" not in excepted
-    )
-    retirement = document.get("branch_retirement_contract") if isinstance(document, dict) else None
-    declaration = retirement.get("execution_authorization") if isinstance(retirement, dict) else None
-    qualified_schema = (
-        isinstance(document, dict)
-        and type(document.get("schema_version")) is int
-        and document["schema_version"] == 1
-        and document.get("tool_name") == "worktree-controller"
-        and type(document.get("contract_version")) is int
-        and document["contract_version"] > 0
-        and type(document.get("branch_retirement_execution_version")) is int
-        and document["branch_retirement_execution_version"] == 1
-        and isinstance(retirement, dict)
-        and retirement.get("contract") == "branch-retirement/v3"
-        and isinstance(declaration, dict)
-        and declaration.get("contract") == "branch-retirement-execution/v1"
-        and declaration.get("capability") == "branch_retirement_execution_version"
-    )
-    if not qualified_schema:
-        print("ASSIGNMENT" if assignment_enabled and decoded_assignment(document, detector) else "NON_SCHEMA")
-        sys.exit(0)
-    if not assignment_enabled:
-        print("CLEAR")
-        sys.exit(0)
-    description = (
-        "a 256-bit Controller-generated capability returned only by authorize and "
-        "compared constant-time at complete or abandon; it is excluded from the "
-        "identity so it cannot change the authorization address"
-    )
-    masked = raw
-    if declaration.get("token") == description:
-        literals = re.finditer(rb'"(?:[^"\\]|\\.)*"', raw)
-        descriptions = [match for match in literals if json.loads(match.group()) == description]
-        if len(descriptions) == 1:
-            match = descriptions[0]
-            masked = raw[:match.start()] + b'""' + raw[match.end():]
-            declaration["token"] = ""
-    print("ASSIGNMENT" if detector.search(masked) or decoded_assignment(document, detector) else "CLEAR")
-except (OSError, ValueError, TypeError, RecursionError, subprocess.CalledProcessError):
-    print("ERROR")
-PY
-    ) || verdict=ERROR
+    python3_available || { printf 'ERROR\n'; return 0; }
+    local executable helper verdict
+    executable=$(realpath -e -- "${BASH_SOURCE[0]}") || { printf 'ERROR\n'; return 0; }
+    helper=${executable%/*}/git-finalize-content-scan.py
+    [[ -f "$helper" && ! -L "$helper" ]] || { printf 'ERROR\n'; return 0; }
+    verdict=$("$PYTHON3_EXECUTABLE" -B "$helper" "$1" "$2" "$repo" "$3" "$4") || verdict=ERROR
     printf '%s\n' "$verdict"
 }
 
@@ -2793,6 +2677,12 @@ validate_existing_publish_range() {
     declare -A publish_paths=()
 
     existing_range_error=''
+    history_large_binary_overrides=()
+    history_large_binary_applied=()
+    if ((resume_initial == 1 || resume_existing == 1 || resume_existing_history == 1 ||
+         publish_existing_branch == 1 || publish_existing_history == 1)); then
+        load_history_large_binary_overrides
+    fi
     if [[ -n ${existing_publish_commit_output_override-} ]]; then
         commit_output=$existing_publish_commit_output_override
     elif ! commit_output=$(
@@ -2835,6 +2725,16 @@ validate_existing_publish_range() {
                 existing_range_error="待发布 commit 包含异常文件路径: $(printf '%q' "$path")"
                 return 1
             fi
+            tree_entries=()
+            mapfile -d '' -t tree_entries < <(
+                git -C "$repo" --literal-pathspecs ls-tree -z "$commit_oid" -- "$path"
+            )
+            if ((${#tree_entries[@]} == 0)); then
+                # A deletion adds no blob. Earlier unpublished additions are
+                # still examined separately, even when HEAD now ignores them.
+                publish_paths["$path"]=1
+                continue
+            fi
             if reason=$(sensitive_path_reason "$path") &&
                 [[ -z ${reviewed_source_paths[$path]+present} ]]; then
                 existing_range_error="拒绝待发布敏感文件 $(printf '%q' "$path"): $reason"
@@ -2852,14 +2752,6 @@ validate_existing_publish_range() {
                 return 1
             fi
 
-            tree_entries=()
-            mapfile -d '' -t tree_entries < <(
-                git -C "$repo" --literal-pathspecs ls-tree -z "$commit_oid" -- "$path"
-            )
-            if ((${#tree_entries[@]} == 0)); then
-                publish_paths["$path"]=1
-                continue
-            fi
             if ((${#tree_entries[@]} != 1)); then
                 existing_range_error="待发布 commit 文件解析结果含糊: $(printf '%q' "$path")"
                 return 1
@@ -2879,8 +2771,11 @@ validate_existing_publish_range() {
                 return 1
             fi
             if is_committed_large_binary "$object_oid"; then
-                existing_range_error="拒绝待发布的大于 5 MiB 明显二进制文件: $(printf '%q' "$path")"
-                return 1
+                if [[ "$object_oid" != "${history_large_binary_overrides[$path]-}" ]]; then
+                    existing_range_error="拒绝待发布的大于 5 MiB 明显二进制文件: $(printf '%q' "$path")"
+                    return 1
+                fi
+                history_large_binary_applied["$path"]=1
             fi
             if [[ -n ${reviewed_source_paths[$path]+present} &&
                 "$object_oid" != "${reviewed_source_paths[$path]}" ]]; then
@@ -2918,6 +2813,12 @@ validate_existing_publish_range() {
             existing_range_error='fixture exception 未匹配待发布历史中的 exact path/blob/detector'
             return 1
         fi
+    done
+    for path in "${!history_large_binary_overrides[@]}"; do
+        [[ -n ${history_large_binary_applied[$path]+present} ]] || {
+            existing_range_error='large binary exception did not match the exact unpublished path/blob'
+            return 1
+        }
     done
     resume_publish_path_count=${#publish_paths[@]}
 }
@@ -3143,6 +3044,10 @@ resume_initial_publish() {
     if ! resolve_resume_target; then
         fail "$resume_target_error"
     fi
+    resume_publish_commit_count=1
+    resume_publish_range=$resume_expected_oid
+    existing_publish_commit_output_override=''
+    validate_existing_publish_range || fail "$existing_range_error；未执行 push"
     summary_branch=$resume_branch
     summary_upstream=$resume_remote/$resume_branch
     summary_commit_sha=$resume_expected_oid
@@ -3500,6 +3405,8 @@ resume_existing_publish() {
     if ! resolve_existing_resume_target; then
         fail "$resume_target_error"
     fi
+    paths=("${input_paths[@]}")
+    load_source_reviews head
     summary_branch=$resume_branch
     summary_upstream=$upstream_name
     summary_commit_sha=$resume_expected_oid
@@ -3543,6 +3450,7 @@ resume_existing_publish() {
     fi
     printf 'validated changed paths: %s\n' "$resume_publish_path_count"
     printf 'range safety checks: passed\n'
+    load_source_reviews head
     summary_completed_through='preflight'
     summary_remote_conclusion='fast_forward_publish_ready'
 
@@ -3692,6 +3600,8 @@ publish_existing_branch_head() {
     else
         [[ -z "$fixture_exceptions_file" ]] ||
             fail 'fixture exception 未匹配待发布历史中的 exact path/blob/detector；未执行 push'
+        ((${#allow_large_binary_args[@]} == 0)) ||
+            fail 'large binary exception did not match the exact unpublished path/blob'
         printf 'all commits already reachable from captured remote heads\n'
     fi
     printf 'range safety checks: passed\n'
@@ -5259,6 +5169,9 @@ fixture_exceptions_seen=0
 source_review_file=''
 source_review_seen=0
 declare -A reviewed_source_paths=()
+declare -a paths=()
+declare -A history_large_binary_overrides=()
+declare -A history_large_binary_applied=()
 declare -A history_fixture_exceptions=()
 declare -A history_fixture_paths=()
 declare -A history_fixture_rules=()
@@ -5528,7 +5441,7 @@ while (($# > 0)); do
         --merge-parent)
             (($# >= 2)) || fail '--merge-parent requires a full commit OID'
             [[ -z "$merge_parent_arg" ]] || fail '--merge-parent may be supplied only once'
-            [[ "$2" =~ ^[0-9a-f]{40}$ ]] || fail '--merge-parent requires a full commit OID'
+            [[ "$2" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || fail '--merge-parent requires a full commit OID'
             merge_parent_arg=$2
             shift 2
             ;;
@@ -5639,9 +5552,9 @@ if ((source_review_seen == 1)); then
     ((initial_commit_only == 0 && initial_publish == 0 && initial_branch_publish == 0 &&
         publish_existing_history == 0 &&
         retire_remote_branch == 0 && retire_local_branch == 0 &&
-        resume_initial == 0 && resume_existing == 0 &&
+        resume_initial == 0 &&
         resume_existing_history == 0)) ||
-        fail '--reviewed-sensitive-source 只接受 normal/commit-only/verify-only/existing-branch'
+        fail '--reviewed-sensitive-source 只接受 normal/commit-only/verify-only/existing-branch/resume-publish'
     ((fixture_exceptions_seen == 0 && ${#allow_test_fixture_args[@]} == 0)) ||
         fail 'source review 不接受任何 secret 内容例外'
     ((repository_id_seen == 1 && allocation_id_seen == 1 && task_key_seen == 1 &&
@@ -5734,8 +5647,6 @@ elif ((publish_existing_branch == 1 || publish_existing_history == 1)); then
     ((dry_run == 0)) || fail 'existing-history/branch publication 不支持 --dry-run'
     ((${#allow_test_fixture_args[@]} == 0)) ||
         fail '--publish-existing-branch 不接受 --allow-test-fixture'
-    ((${#allow_large_binary_args[@]} == 0)) ||
-        fail '--publish-existing-branch 不接受 --allow-large-binary'
     ((snapshot_seen == 0)) || fail '--publish-existing-branch 不接受 --snapshot'
     if ((publish_existing_branch == 1 && source_review_seen == 1)); then
         ((separator_seen == 1 && ${#input_paths[@]} > 0)) ||
@@ -5756,14 +5667,17 @@ elif ((resume_initial == 1 || resume_existing == 1 || resume_existing_history ==
     ((dry_run == 0)) || fail 'resume 模式不支持 --dry-run'
     ((${#allow_test_fixture_args[@]} == 0)) ||
         fail 'resume 模式不接受 --allow-test-fixture'
-    ((${#allow_large_binary_args[@]} == 0)) ||
-        fail 'resume 模式不接受 --allow-large-binary'
     ((snapshot_seen == 0)) || fail 'resume 模式不接受 --snapshot'
     if ((resume_existing_history == 0)); then
         ((remote_branch_seen == 0)) || fail '普通 resume 模式不接受 --remote-branch'
     fi
-    ((separator_seen == 0 && ${#input_paths[@]} == 0)) ||
-        fail 'resume 模式不接受文件列表或 -- 分隔符'
+    if ((resume_existing == 1 && source_review_seen == 1)); then
+        ((separator_seen == 1 && ${#input_paths[@]} > 0)) ||
+            fail 'reviewed resume publication 要求 exact review scope 文件列表'
+    else
+        ((separator_seen == 0 && ${#input_paths[@]} == 0)) ||
+            fail 'resume 模式不接受文件列表或 -- 分隔符'
+    fi
     if ((resume_initial == 1 || resume_existing_history == 1)); then
         ((remote_seen == 1)) || fail 'root resume 模式必须指定 --remote'
         if ((resume_existing_history == 1)); then

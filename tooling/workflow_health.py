@@ -43,38 +43,7 @@ def installed_tool(
     sources: sync.Sources, tool: str, agents_root: Path, bin_dir: Path | None,
     hooks_dir: Path,
 ) -> dict[str, Any]:
-    result = sync.check_tool_deployment(sources, tool, agents_root, bin_dir)
-    try:
-        manifest = sync.read_json(sources.manifest_path(tool))
-        executable = manifest["executable"]
-        entrypoints = sync.validate_install_targets(manifest)
-        if executable["kind"] == "python_console_scripts":
-            installation = sync.python_tool_installation(entrypoints, bin_dir)
-            result["artifact_verification"] = sync.verify_installed_record(
-                Path(installation["root"])
-            )
-        else:
-            first = sync.resolve_entry(entrypoints[0], bin_dir)
-            if first is None:
-                raise sync.SyncError(f"entrypoint is missing: {entrypoints[0]}")
-            live_bin = bin_dir or first.parent
-            drift = []
-            for relative, target in executable["production_targets"].items():
-                parts = Path(target).parts
-                root = live_bin if parts[0] == "bin" else hooks_dir
-                if parts[0] not in {"bin", "hooks"}:
-                    raise sync.SyncError(f"unsupported production target: {target}")
-                live = root.joinpath(*parts[1:])
-                source = sources.repo(tool) / relative
-                if not live.is_file() or sync.sha256_file(live) != sync.sha256_file(source):
-                    drift.append(str(live))
-            result["binary_content_drift"] = drift
-            if drift:
-                raise sync.SyncError("installed executable/sidecar bytes differ from source")
-    except (OSError, ValueError, KeyError, sync.SyncError) as exc:
-        result["errors"].append(str(exc))
-        result["status"] = "FAIL"
-    return result
+    return sync.check_tool_deployment(sources, tool, agents_root, bin_dir, hooks_dir)
 
 
 def controller_state(

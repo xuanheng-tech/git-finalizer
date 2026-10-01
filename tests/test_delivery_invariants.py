@@ -59,6 +59,120 @@ class DeliveryInvariantTests(unittest.TestCase):
     def remote_head(self) -> str:
         return self.git("ls-remote", "--refs", "origin", "refs/heads/feature").split()[0]
 
+    def clean_filter(self, body: str) -> None:
+        filter_script = self.root / "filter.py"
+        filter_script.write_text("import sys\nsys.stdin.buffer.read()\n" + body)
+        self.git("config", "filter.synthetic.clean", f"/usr/bin/python3 {filter_script}")
+        self.git("config", "filter.synthetic.required", "true")
+        (self.repo / ".git/info/attributes").write_text("wanted.txt filter=synthetic\n")
+
+    def readonly_state(self) -> tuple:
+        return (
+            self.git("rev-parse", "HEAD"), (self.repo / ".git/index").read_bytes(),
+            self.git("status", "--porcelain=v1", "--untracked-files=all"),
+            (self.repo / "wanted.txt").read_bytes(),
+            sorted(str(path.relative_to(self.repo)) for path in (self.repo / ".git/objects").rglob("*")),
+            (self.repo / ".git/config").read_bytes(),
+        )
+
+    def test_verify_only_checks_filtered_content_without_repository_writes(self) -> None:
+        self.clean_filter("sys.stdout.write('ghp_' + 'A' * 24 + '\\n')\n")
+        before = self.readonly_state()
+        result, data = self.finalize("verify-only")
+        self.assertEqual(result.returncode, 1, data)
+        self.assertFalse(data["commit"]["created"])
+        self.assertIn("候选敏感文件", data["reason"])
+        self.assertEqual(self.readonly_state(), before)
+
+    def test_verify_only_checks_filtered_binary_size(self) -> None:
+        self.clean_filter("sys.stdout.buffer.write(b'\\0' * (6 * 1024 * 1024))\n")
+        before = self.readonly_state()
+        result, data = self.finalize("verify-only")
+        self.assertEqual(result.returncode, 1, data)
+        self.assertIn("5 MiB", data["reason"])
+        self.assertEqual(self.readonly_state(), before)
+
+    def test_verify_only_accepts_safe_filter_conversion(self) -> None:
+        self.clean_filter("sys.stdout.write('safe normalized candidate\\n')\n")
+        before = self.readonly_state()
+        result, data = self.finalize("verify-only")
+        self.assertEqual(result.returncode, 0, data)
+        self.assertEqual(self.readonly_state(), before)
+
+    def resume(self, *extra: str) -> tuple[subprocess.CompletedProcess[str], dict]:
+        result = subprocess.run(
+            [str(ROOT / "git-finalize"), "--summary", "--repo", str(self.repo),
+             "--resume-publish", self.git("rev-parse", "HEAD").strip(), *extra],
+            env=self.environment, capture_output=True, text=True, timeout=30,
+        )
+        return result, json.loads(result.stdout)
+
+    def test_resume_allows_deleting_a_published_path_now_ignored(self) -> None:
+        (self.repo / "wanted.txt").write_text("base\n")
+        cache = self.repo / "cache"
+        cache.mkdir()
+        (cache / "generated.pyc").write_bytes(b"synthetic published cache\n")
+        self.git("add", "--", "cache/generated.pyc")
+        self.git("commit", "-qm", "Synthetic legacy cache")
+        self.git("push", "-q", "origin", "feature")
+        (self.repo / ".gitignore").write_text("cache/\n")
+        self.git("rm", "-q", "--", "cache/generated.pyc")
+        self.git("add", "--", ".gitignore")
+        self.git("commit", "-qm", "Remove and ignore synthetic cache")
+        head = self.git("rev-parse", "HEAD").strip()
+        result, data = self.resume()
+        self.assertEqual(result.returncode, 0, data)
+        self.assertEqual(self.remote_head(), head)
+
+    def test_deleted_unpublished_ignored_blob_is_still_checked(self) -> None:
+        (self.repo / "wanted.txt").write_text("base\n")
+        cache = self.repo / "cache"
+        cache.mkdir()
+        (cache / "generated.pyc").write_bytes(b"synthetic unpublished cache\n")
+        self.git("add", "--", "cache/generated.pyc")
+        self.git("commit", "-qm", "Synthetic unpublished cache")
+        (self.repo / ".gitignore").write_text("cache/\n")
+        self.git("rm", "-q", "--", "cache/generated.pyc")
+        self.git("add", "--", ".gitignore")
+        self.git("commit", "-qm", "Remove synthetic cache")
+        result, data = self.resume()
+        self.assertEqual(result.returncode, 1, data)
+        self.assertIn("ignored", data["reason"])
+        self.assertFalse(data["push"]["executed"])
+        self.assertEqual(self.remote_head(), self.base)
+
+    def test_resume_revalidates_an_explicit_large_binary_exception(self) -> None:
+        (self.repo / "wanted.txt").write_text("base\n")
+        (self.repo / "sample.bin").write_bytes(b"\0" * (6 * 1024 * 1024))
+        committed = subprocess.run(
+            [str(ROOT / "git-finalize"), "--summary", "--repo", str(self.repo),
+             "--mode", "commit-only", "--message", "Synthetic approved binary",
+             "--allow-large-binary", "sample.bin", "--", "sample.bin"],
+            env=self.environment, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(committed.returncode, 0, committed.stdout)
+        before = self.git("rev-parse", "HEAD").strip()
+        result, data = self.resume()
+        self.assertEqual(result.returncode, 1, data)
+        self.assertFalse(data["push"]["executed"])
+        result, data = self.resume("--allow-large-binary", "sample.bin")
+        self.assertEqual(result.returncode, 0, data)
+        self.assertFalse(data["commit"]["created"])
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), before)
+        self.assertEqual(self.remote_head(), before)
+
+    def test_resume_large_binary_exception_does_not_cover_an_older_blob(self) -> None:
+        (self.repo / "wanted.txt").write_text("base\n")
+        target = self.repo / "sample.bin"
+        for value in (b"\0", b"A\0"):
+            target.write_bytes(value * (6 * 1024 * 1024))
+            self.git("add", "--", "sample.bin")
+            self.git("commit", "-qm", "Synthetic binary revision")
+        result, data = self.resume("--allow-large-binary", "sample.bin")
+        self.assertEqual(result.returncode, 1, data)
+        self.assertFalse(data["push"]["executed"])
+        self.assertEqual(self.remote_head(), self.base)
+
     def test_hook_cannot_replace_reviewed_content_in_the_same_path(self) -> None:
         hook = self.repo / ".git/hooks/pre-commit"
         hook.write_text("#!/bin/sh\nprintf 'unreviewed hook content\\n' > wanted.txt\ngit add -- wanted.txt\n")

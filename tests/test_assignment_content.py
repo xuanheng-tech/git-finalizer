@@ -310,6 +310,47 @@ class AssignmentContentTests(unittest.TestCase):
                 self.env["PATH"] = str(binary) + os.pathsep + os.defpath
                 self.assert_blocked(schema())
 
+    def test_invalid_json_cannot_hide_escaped_signatures(self) -> None:
+        signatures = (
+            (b"ghp_" + b"A" * 24, b"ghp\\u005f" + b"A" * 24),
+            (b"-----BEGIN PRIVATE KEY-----", b"-----BEGIN\\u0020PRIVATE KEY-----"),
+            (b"ssh-ed25519 " + b"A" * 48, b"ssh-ed25519\\u0020" + b"A" * 48),
+        )
+        for _plain, escaped in signatures:
+            safe_container = b'{"description":"' + escaped + b'", "extra":0}'
+            for raw in (
+                safe_container.replace(b'"extra":0', b'"extra":0,"extra":1'),
+                safe_container.replace(b'"extra":0', b'"extra":NaN'),
+                safe_container[:-1],
+                safe_container + b'\xff',
+            ):
+                with self.subTest(signature=escaped[:16], ending=raw[-20:]):
+                    self.assert_blocked(raw)
+
+    def test_duplicate_key_does_not_discard_an_escaped_sensitive_assignment(self) -> None:
+        self.assert_blocked(
+            b'{"p\\u0061ssword":"SYNTHETIC_VALUE_012345", "extra":0,"extra":1}'
+        )
+
+    def test_invalid_escaped_json_in_unpublished_history_remains_blocked(self) -> None:
+        self.prepare_publication()
+        self.git("push", "-qu", "origin", "feature/schema")
+        self.write(b'{"description":"ghp\\u005f' + b'A' * 24 + b'", "extra":NaN}')
+        self.commit_fixture("Synthetic historical escaped signature")
+        self.write({"description": "safe public metadata"})
+        self.commit_fixture("Synthetic safe replacement")
+        head = self.git("rev-parse", "HEAD")
+        before = self.state()
+        result = subprocess.run(
+            [str(ROOT / "git-finalize"), "--summary", "--repo", str(self.repo), "--resume-publish", head],
+            env=self.env, capture_output=True, text=True, timeout=30,
+        )
+        data = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1, data)
+        self.assertFalse(data["push"]["executed"])
+        self.assertIn("内容", data["reason"])
+        self.assertEqual(self.state(), before)
+
     def test_initial_branch_publish_accepts_schema_blobs_in_history(self) -> None:
         self.prepare_publication()
         self.write(schema())

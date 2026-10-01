@@ -95,7 +95,8 @@
         "exact_backend_test_assignment_review_when_requested",
         "existing_unique_local_origin_identity_with_fixture_review",
         "raw_clean_filter_and_changed_index_blob_match_with_fixture_review",
-        "optional_exact_resolved_two_parent_merge_without_other_git_operations"
+        "optional_exact_resolved_two_parent_merge_without_other_git_operations",
+        "filtered_candidate_content_and_size_checked_without_repository_object_writes"
       ],
       "result_statuses": [
         "success",
@@ -254,14 +255,16 @@
         "--resume-initial-publish",
         "--remote",
         "--repo",
-        "--summary"
+        "--summary",
+        "--allow-large-binary"
       ],
       "name": "resume_initial_publish",
       "operation_class": "remote_mutation",
       "preconditions": [
         "clean_attached_single_root_commit",
         "full_expected_head_oid",
-        "empty_or_exact_remote_shape"
+        "empty_or_exact_remote_shape",
+        "exact_regular_head_blob_at_most_25_mib_with_large_binary_exception"
       ],
       "result_statuses": [
         "success",
@@ -274,7 +277,14 @@
         "--resume-publish",
         "--repo",
         "--summary",
-        "--fixture-exceptions"
+        "--fixture-exceptions",
+        "--allow-large-binary",
+        "--reviewed-sensitive-source",
+        "--repository-id",
+        "--allocation-id",
+        "--task-key",
+        "--authority-key",
+        "--"
       ],
       "name": "resume_publish",
       "operation_class": "remote_mutation",
@@ -282,7 +292,10 @@
         "clean_attached_branch",
         "full_expected_head_oid",
         "configured_upstream",
-        "ahead_at_least_one_and_not_behind"
+        "ahead_at_least_one_and_not_behind",
+        "exact_regular_head_blob_at_most_25_mib_with_large_binary_exception",
+        "controller_linkage_and_exact_scope_with_source_review",
+        "exact_reviewed_head_blob_in_every_unpublished_revision"
       ],
       "result_statuses": [
         "success",
@@ -332,7 +345,8 @@
         "--repository-id",
         "--allocation-id",
         "--task-key",
-        "--authority-key"
+        "--authority-key",
+        "--allow-large-binary"
       ],
       "name": "publish_existing_branch",
       "operation_class": "remote_mutation",
@@ -341,7 +355,8 @@
         "full_expected_head_oid",
         "no_configured_upstream",
         "remote_target_absent",
-        "controller_linkage_required_with_reviewed_sensitive_source"
+        "controller_linkage_required_with_reviewed_sensitive_source",
+        "exact_regular_head_blob_at_most_25_mib_with_large_binary_exception"
       ],
       "result_statuses": [
         "success",
@@ -356,7 +371,8 @@
         "--remote-branch",
         "--repo",
         "--summary",
-        "--fixture-exceptions"
+        "--fixture-exceptions",
+        "--allow-large-binary"
       ],
       "name": "publish_existing_history",
       "operation_class": "remote_mutation",
@@ -365,7 +381,8 @@
         "clean_attached_existing_history",
         "full_expected_head_oid",
         "verified_empty_entire_remote",
-        "missing_or_exact_unresolved_upstream"
+        "missing_or_exact_unresolved_upstream",
+        "exact_regular_head_blob_at_most_25_mib_with_large_binary_exception"
       ],
       "result_statuses": [
         "success",
@@ -380,7 +397,8 @@
         "--remote-branch",
         "--repo",
         "--summary",
-        "--fixture-exceptions"
+        "--fixture-exceptions",
+        "--allow-large-binary"
       ],
       "name": "resume_existing_history_publish",
       "operation_class": "remote_mutation",
@@ -388,7 +406,8 @@
         "clean_attached_existing_history",
         "full_expected_head_oid",
         "empty_or_exact_target_only_remote",
-        "missing_or_exact_upstream"
+        "missing_or_exact_upstream",
+        "exact_regular_head_blob_at_most_25_mib_with_large_binary_exception"
       ],
       "result_statuses": [
         "success",
@@ -521,5 +540,5 @@
   ],
   "schema_version": 1,
   "tool_name": "git-finalizer",
-  "tool_version": "1.8.2"
+  "tool_version": "1.8.3"
 }

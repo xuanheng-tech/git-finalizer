@@ -620,8 +620,8 @@ test_resume_rejects_cli_conflicts() {
     output=$case_dir/large-binary.log
     expect_failure "$output" "$finalizer" --resume-initial-publish "$expected_head" \
         --remote origin --repo "$test_repo" --allow-large-binary original.bin
-    assert_file_contains "$output" '不接受 --allow-large-binary' \
-        'resume accepted large binary override'
+    assert_file_contains "$output" 'large binary history exception' \
+        'resume accepted an unmatched large binary override'
     output=$case_dir/initial.log
     expect_failure "$output" "$finalizer" --resume-initial-publish "$expected_head" \
         --initial-publish --remote origin --repo "$test_repo"

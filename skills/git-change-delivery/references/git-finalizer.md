@@ -41,7 +41,9 @@ publication lease，并把 verified receipt 交回 Controller 完成 lifecycle�
 先应用当前用户的持续自动交付授权。其覆盖普通开发任务时，验收后直接 commit/push，不要求
 逐次人工确认；缺少远端时先安全地本地 commit。只读或更窄的 no-commit/no-push 指令优先：
 只验证用 `--mode verify-only`，仅本地提交用 `--mode commit-only`，已覆盖 commit/push 且达到
-交付状态用默认模式或正式首次发布/恢复接口。调用绝对入口 `$HOME/bin/git-finalize` 前，还必须满足：
+交付状态用默认模式或正式首次发布/恢复接口。先以 `command -v git-finalize` 与
+`realpath -e` 解析实际安装路径，完整调用命令使用该绝对入口；以下
+`/absolute/path/to/git-finalize` 为占位符，安装目录无需固定。调用前还必须满足：
 
 - 实现已完成，相关测试和检查实际通过；
 - Snapshot Runner 的相关审查已通过，阻断项已经解决；
@@ -56,7 +58,7 @@ publication lease，并把 verified receipt 交回 Controller 完成 lifecycle�
 权限配置、使用 root，或将生命周期拆成原始 Git 写命令。
 
 ```bash
-$HOME/bin/git-finalize --summary --mode verify-only --repo /absolute/repo -- path/to/file
+/absolute/path/to/git-finalize --summary --mode verify-only --repo /absolute/repo -- path/to/file
 ```
 
 只有按 [明确发布授权](../SKILL.md#明确发布授权) 判定为当前有效且覆盖对应操作的授权，才可选择
@@ -106,7 +108,7 @@ verify-only、commit-only、normal、initial、initial-branch 和 resume 默认�
 ### Verify only
 
 ```bash
-$HOME/bin/git-finalize \
+/absolute/path/to/git-finalize \
   --summary \
   --mode verify-only \
   --repo <absolute-repo> \
@@ -125,7 +127,7 @@ verify-only 保持 HEAD/index/worktree/merge identity；commit-only 只产生本
 它不解决冲突，也不允许同时发布；之后使用原有首次发布或 resume 入口与 Controller 集成。
 
 ```bash
-$HOME/bin/git-finalize \
+/absolute/path/to/git-finalize \
   --summary \
   --mode commit-only \
   --repo <absolute-repo> \
@@ -138,7 +140,7 @@ commit-only 用于已授权创建本地 commit、但未授权或暂不适合 pus
 unborn 仓库仅获本地 commit 授权、remote target 尚未明确时，使用：
 
 ```bash
-$HOME/bin/git-finalize \
+/absolute/path/to/git-finalize \
   --summary \
   --initial-commit-only \
   --repo <absolute-repo> \
@@ -155,7 +157,7 @@ $HOME/bin/git-finalize \
 调用格式：
 
 ```bash
-$HOME/bin/git-finalize \
+/absolute/path/to/git-finalize \
   --summary \
   --repo <absolute-repo> \
   --message <commit-message> \
@@ -174,7 +176,7 @@ Finalizer 在 commit 前 fetch 并核对远端 branch、upstream OID 和 ahead/b
 不得伪造 upstream 或创建空 commit；使用 `--publish-existing-branch`：
 
 ```bash
-$HOME/bin/git-finalize \
+/absolute/path/to/git-finalize \
   --summary \
   --publish-existing-branch <full-head-oid> \
   --remote <remote-name> \
@@ -194,7 +196,7 @@ fail closed，不自动重试、覆盖或切换到 force。
 完成显式 `--repo-plan` → `--repo-ensure` 后，本地已有 history 且目标 repository 仍完全空时：
 
 ```bash
-$HOME/bin/git-finalize \
+/absolute/path/to/git-finalize \
   --summary \
   --publish-existing-history <full-head-oid> \
   --remote <remote-name> \
@@ -212,7 +214,7 @@ remote 只有目标 branch，且 HEAD、upstream、remote OID 相同、ahead/beh
 若 push 中断或结果不确定，使用工具报告的同一完整 OID：
 
 ```bash
-$HOME/bin/git-finalize \
+/absolute/path/to/git-finalize \
   --summary \
   --resume-existing-history-publish <full-head-oid> \
   --remote <remote-name> \
@@ -228,7 +230,7 @@ resume 只接受 remote 仍完全空，或只有目标 ref 且其 OID 精确等�
 普通 attached branch 已有一个或多个连续 local ahead commits，且用户已明确授权继续 push 时使用：
 
 ```bash
-$HOME/bin/git-finalize \
+/absolute/path/to/git-finalize \
   --summary \
   --resume-publish <full-head-oid> \
   --repo <absolute-repo>
@@ -236,7 +238,8 @@ $HOME/bin/git-finalize \
 
 `<full-head-oid>` 必须是当前 HEAD 的确切完整小写 OID。该接口要求非 unborn、非 root 的
 attached branch，index 和包含 untracked 文件在内的 worktree 完全 clean，且不存在未完成的
-Git operation；不接受 `--message`、文件列表、`--remote`、`--dry-run` 或其他 mode。
+Git operation；不接受 `--message`、`--remote`、`--dry-run` 或其他 mode。只有携带
+`--reviewed-sensitive-source` 时才接受 `--` 后的精确复核 scope，并要求完整 Controller linkage。
 
 当前 branch 必须有唯一 configured upstream；push 目标严格由该 upstream 推导。Finalizer
 fetch 后要求 `ahead >= 1`、`behind = 0`，以 `upstream..HEAD` 为发布范围，并对范围内每个
@@ -253,7 +256,7 @@ clean，HEAD、local branch、tag 和 Git 配置保持不变。push 或 post-ver
 上层 Controller 已完成 frozen intent claim、exact candidate validation 和 lease-acquire 后使用：
 
 ```bash
-$HOME/bin/git-finalize \
+/absolute/path/to/git-finalize \
   --summary \
   --publish-integration-candidate <full-candidate-oid> \
   --repo <absolute-candidate-worktree> \
@@ -285,7 +288,7 @@ release、registered disposable cleanup 和 guarded release。缺能力、断连
 调用格式：
 
 ```bash
-$HOME/bin/git-finalize \
+/absolute/path/to/git-finalize \
   --summary \
   --initial-publish \
   --remote <remote-name> \
@@ -317,7 +320,7 @@ initial 和 resume 可以接受与所选 remote/branch 精确匹配的 configure
 仅当 `--initial-publish` 已经创建 root commit，但 initial push 失败或结果不确定时使用：
 
 ```bash
-$HOME/bin/git-finalize \
+/absolute/path/to/git-finalize \
   --summary \
   --resume-initial-publish <full-root-oid> \
   --remote <remote-name> \
@@ -345,7 +348,7 @@ push delete；成功结果必须是 `RETIREMENT_PREFLIGHT_PASSED`。两类 dry-r
 可重试的 operation；Finalizer 使用公开协议分别完成 Controller 登记，不能假设原子完成。
 
 ```bash
-$HOME/bin/git-finalize \
+/absolute/path/to/git-finalize \
   --summary \
   --retire-local-branch <branch-or-refs/heads/branch> \
   --remote <remote-name> --integrated-into <branch> \
@@ -389,7 +392,7 @@ Controller 治理职责，不由 Finalizer 代办。authority digest 始终作�
 Finalizer 不读取 authority JSON、不重算 recipe，也不在外部持锁后嵌套调用 Controller。
 
 ```bash
-$HOME/bin/git-finalize \
+/absolute/path/to/git-finalize \
   --summary \
   --retire-remote-branch <branch-or-refs/heads/branch> \
   --remote <remote-name> \
@@ -424,14 +427,21 @@ receipt，result 只取 `REMOTE_BRANCH_RETIRED_VERIFIED`、`ALREADY_ABSENT_VERIF
 
 ## Reviewed sensitive source（Python、CSS、JSON；1.8.1）
 
-当任务明确授权审查某个敏感命名的源码文件时，normal、commit-only、verify-only 和
-publish-existing-branch 可显式使用
+当任务明确授权审查某个敏感命名的源码文件时，normal、commit-only、verify-only、
+publish-existing-branch 和 configured-upstream resume-publish 可显式使用
 `--reviewed-sensitive-source <absolute-json-file>`。它只豁免 exact `.py`、`.css` 或 `.json` 文件的
 credential/secret/token **路径标记**，包括设计系统中的 `tokens/tokens.css`、`tokens/registry.json`
 或 `dist/tokens.json`；`.env` 和 private/SSH key 路径始终不接受，即使同一路径也包含 token 标记。
 既有 secret 内容扫描仍在工作区、index 和提交后运行，不能组合任何 fixture 内容例外。
 JSON 内容扫描也检查解码后的字符串与键，不能通过 JSON 转义隐藏凭据签名。
-其他 initial/history/resume/integration 接口不消费该 review，保持原有 fail-closed 行为。
+resume-publish 重新核对 HEAD 复核身份，且待发布历史中该路径的每个 blob 必须精确匹配
+复核的 HEAD blob；旧内容不能因当前文件通过复核而获准。恢复时重传复核文件、完整 linkage
+与 `--` 后的原始精确 scope，不重复创建 commit。其他 initial/history/integration 接口不消费该 review。
+
+existing branch/history publication 及各 resume 接口接受 `--allow-large-binary <path>`。
+例外只绑定该规范路径的普通 HEAD blob，要求大于 5 MiB、至多 25 MiB；历史中其它 blob
+和未实际匹配发布范围的例外仍拒绝，内容扫描照常执行。删除对象不按当前 ignore 规则误判为
+新文件，但更早的待发布新增对象仍逐个扫描。
 
 先使用 Controller 取得合法 task/writer 和显式 source scope，完成定向业务与 secret 审查；
 再由受信任调用者生成以下外部 review JSON。它不授予 writer、不修改 Controller，也不改变
@@ -511,7 +521,8 @@ tag、Release、Artifact 和 deployment 是独立 Release 流程，必须按仓�
 作为非凭据处理，不按文件名、空格、JSON 后缀或整文件白名单放行。其它 raw/decoded 敏感赋值
 继续检查；全转义敏感键仍检查。decoded known-token、private-key、SSH-key 签名在 working/blob
 完整扫描中独立检查，不能由 credential-only fixture review 一并跳过。分类进程失败、空或未知
-结果拒绝候选；普通 non-schema 内容继续原 raw 检查。
+结果拒绝候选；普通 non-schema 内容继续 raw 检查。重复键、非有限常量或损坏的 JSON
+容器仍逐个解码有效字符串 literal，不能通过容器错误关闭转义内容检查。
 
 `--fixture-exceptions <absolute-json-file>` 是显式精确复核，原有签名匹配规则继续执行。支持 normal、
 configured-upstream `--resume-publish` 以及 existing branch/history publication/resume；
