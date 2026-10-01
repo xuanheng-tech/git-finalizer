@@ -14,7 +14,7 @@ Runner 会在目标仓库之外创建本地状态和内容寻址产物。默认�
 
 `--summary` 成功时输出单行确定性 JSON，提供 `command`、`status`、`next_action`、`snapshot_id`/`artifact`、`repository`、`head`、`scope`、命令相关 `result` 计数、`warnings`/`warnings_omitted`、`truncated` 和 `evidence_gap`。摘要由同一正式 artifact 派生，只用于首轮决策；`snapshot.json` 仍是权威的有界快照证据。完整产物目录还包含：
 
-- `preview.txt` 是人工预览摘要，不是完整审查证据。
+- `preview.txt` 是便于审阅的预览摘要，不是完整审查证据。
 - `snapshot.json` 是完整的有界快照证据；仍可能记录截断、拒绝项或 evidence gaps。
 - `meta.json` 描述快照和摘要的元数据与摘要值。
 
@@ -24,7 +24,7 @@ Runner 处于 prepare-only 模式，不自动调用模型。自动脱敏只能�
 
 仅当命令成功、`status` 和 `next_action` 符合继续条件、`truncated=false`、`evidence_gap=false`、没有影响当前决策的 warning，且任务不需要检查 diff、正文、日志或 file-context 具体内容时，摘要可作为该阶段的首轮充分证据；不得仅因 artifact 存在就机械打开。
 
-命令失败或退出码异常，`evidence_gap=true`、`truncated=true`，`status` 或 `next_action` 表明阻断、部分完成或需要审查，warning 影响范围、提交、发布或安全判断，`warnings_omitted` 可能改变决策，任务需要具体代码、diff、删除、测试失败或 file-context，用户要求详细证据，或既有流程要求人工审查具体内容时，不得只依赖摘要。使用摘要中的 `artifact` 引用，通过 `read` 或直接读取当前判断所需的章节或文件；artifact 本身仍有截断或缺口时执行现有聚焦取证流程，打开 artifact 不等于自动消除 evidence gap。
+命令失败或退出码异常，`evidence_gap=true`、`truncated=true`，`status` 或 `next_action` 表明阻断、部分完成或需要审查，warning 影响范围、提交、发布或安全判断，`warnings_omitted` 可能改变决策，任务需要具体代码、diff、删除、测试失败或 file-context，用户要求详细证据，或适用流程明确要求独立审核具体内容时，不得只依赖摘要。使用摘要中的 `artifact` 引用，通过 `read` 或直接读取当前判断所需的章节或文件；artifact 本身仍有截断或缺口时执行现有聚焦取证流程，打开 artifact 不等于自动消除 evidence gap。
 
 ## 命令选择
 
@@ -79,7 +79,7 @@ Runner 处于 prepare-only 模式，不自动调用模型。自动脱敏只能�
 ## 失败与产物处理
 
 - Runner 因明确不支持的文件类型（如 YAML）拒绝内容时，视为工具能力边界，不视为代码 finding。
-- 变更仅含此类文件时，可用人工聚焦 diff、格式或语法解析、项目测试和 `git diff --check` 作为替代审查证据。
+- 变更仅含此类文件时，可用执行 agent 的聚焦 diff 审阅、格式或语法解析、项目测试和 `git diff --check` 作为替代审查证据。
 - 混合变更仍须对支持的文件使用 Runner，并单独审查不支持部分。
 - 仅真实 finding、范围混杂或证据不足阻止发布；不得用原始 Git 绕过其他停止条件。
 - Runner 工作流失败时通常退出 2，并以 `workflow_failed: <code>: <message>` 报告。

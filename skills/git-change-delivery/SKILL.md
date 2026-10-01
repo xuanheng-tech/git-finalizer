@@ -313,7 +313,8 @@ commit、push、stash、reset、restore 或 clean；最终回复应简短报告 
 
 - Context Loader 只加载确定性的本地上下文；不实施、不测试、不审查、不发布。
 - 实现与测试由常规开发命令完成；不由三个生命周期工具代替。
-- Snapshot Runner 只收集并发布供人工检查的只读快照；不修改目标仓库 Git 状态、不运行测试、不自动调用模型、不 commit/push。
+- Snapshot Runner 只收集供执行 agent 审阅的只读快照；不修改目标仓库 Git 状态、不运行测试、不自动调用模型、不 commit/push。
+  审阅、核验、验收和 dry-run plan 检查默认由执行 agent 完成；仅在适用仓库或平台明确要求独立审核时等待对应审核。
 - Git Finalizer 只做适用的本地提交前验证、显式路径暂存、commit，以及由默认或显式发布/恢复接口授权的 fast-forward-safe push 和发布后验证；不加载上下文、不实施、不测试、不审查。
 
 ### Git Finalizer 原生执行边界（强制）
@@ -324,8 +325,10 @@ commit、push、stash、reset、restore 或 clean；最终回复应简短报告 
   相同参数合同和精确仓库工作目录。
 - 原生审批与 OS 权限决定命令是否能执行；CLI 不检查或推断执行器私有会话状态。不得伪造审批、切换权限配置、使用 root 或额外宿主代理绕过边界。
 - 完整 Finalizer 生命周期由一次调用完成，不拆分为原始 Git 写命令。任何可能写入 index、
-  commit、ref 或 remote 的 Finalizer 接口，都从一开始通过执行器已有的原生权限请求与原生审核通道
-  提交这一条完整命令；不要先在沙箱内制造一次预期失败，也不要为绕过权限关闭 commit signing、hooks
+  commit、ref 或 remote 的 Finalizer 接口，都按执行器当前运行策略提交这一条完整命令。
+  当前策略已允许执行且任务授权覆盖时（如 Full Access + `approval_policy = "never"`），直接调用，不新增人工确认。
+  仅当当前运行策略要求审批时，才从一开始通过执行器已有的原生权限请求与原生审核通道提交；
+  不要先在沙箱内制造一次预期失败，也不要为绕过权限关闭 commit signing、hooks
   或其他既有安全设置。runtime permission/reviewer 只提供执行能力，不授予 task/business authority。
   原生 reviewer 拒绝、失败或无合法执行能力时 fail closed；结果不明时 fail closed，不得重复创建
   commit 或盲目重放 publication。
