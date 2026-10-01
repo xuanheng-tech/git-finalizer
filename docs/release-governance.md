@@ -334,6 +334,7 @@ record.
 | `v1.8.8` | GitHub | `16778ab07b051981c8e294dd23eff2a6c7c8e81c` | `e290125fa40263a79da43a53504aafd4e6d09f39` | `5325706c8d049f5097547f89c954090e8bbac23a9ef5c3cf2d09548f8a168542` | 196457 |
 | `v1.8.9` | GitHub | `54d2f7f80bfb0392bea79561311551c7528cd3b6` | `8149d8e5dbf804a70f0cab1df94c728c08d61df9` | `23ed4bf2459568f7fc3b1705358be26ecf18dcf24611bd5eaadfe1d0e5116f33` | 196825 |
 | `v1.8.10` | GitHub + Gitea | `63abbdb7e2322de2c129fc710d65a6a035c2071f` | `42ff19c71c54ec4ff623a35bf1c4268e2bf2f3fc` | `b0d25177680fa29b07b9e2cffe09e50a74788c9189efcc74d45cccd49d607f3b` | 197289 |
+| `v1.8.11` | GitHub + Gitea | `e6da9e7a553c465880af76288f722c731209263b` | `a6fed530638eccca5f9f83b9d3e0ab0164ae6e49` | `dae3649294f8e0b6101d3329c620ebb676c3eddcc7aebea37f71bb781f6a8371` | 197016 |
 
 `v1.8.10` is a deliberate mirror. GitHub run `36883946683` published release `401104963`;
 Gitea run `851` independently built and verified the same candidate and digest. Its publication
@@ -342,7 +343,16 @@ step retained draft `129` after an API/UI download-origin mismatch. Recovery kep
 both assets and published the same draft through the Gitea API. Both served tarballs match the row;
 both served `SHA256SUMS.txt` files are 94 bytes with SHA-256
 `433ac4e8b748e876b44e3ba33625878ec2abc7a842d612f0d2811242b894f08a`.
-The workflow routing correction is in `Unreleased`; the original tag and GitHub publication stay fixed.
+The workflow routing correction ships in `v1.8.11`; the original tag and GitHub publication stay fixed.
+
+`v1.8.11` is an automatically published deliberate mirror. GitHub run `36903318804` published
+release `401221831`; Gitea run `868` independently built, uploaded, re-downloaded and published
+release `130` without recovery. Both served tarballs and the clean candidate's `selfcheck` match
+the row. Both served `SHA256SUMS.txt` files are 94 bytes with SHA-256
+`27486815715bb860ae1e9df383414e04eb0ed4c12ab26ec4741360499822f23e`.
+Before tagging, the clean candidate passed `just release-check`: 16 PASS, 0 SKIP, 0 FAIL,
+including 429 Python tests, 68 Skill tests and the real Controller suite with installed
+Controller `1.18.3`, CLI contract `43` and storage layout `4`.
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
