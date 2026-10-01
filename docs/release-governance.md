@@ -73,11 +73,17 @@ manual run has to happen in a clean checkout of the commit being tagged.
 
 ## Artifact and checksum consistency
 
-The recipe is fixed so that one commit yields one byte stream: sorted member names, `ustar`,
+In a fresh Git checkout, one commit yields one byte stream: sorted member names, `ustar`,
 owner/group `0` with numeric ids, member mtime pinned to the commit timestamp, `gzip -n`, and
 staged directory modes pinned to `0755`. Directory-mode pinning matters: before it was added the
 build depended on the builder's umask, so two hosts could have produced different bytes from the
 same commit.
+
+Regular-file read permissions still come from the builder's checkout; Git records only their
+executable bit. Altered read permissions can therefore change archive bytes even when `git status`
+is clean. For `v1.8.6`, the canonical checkout had `quick_validate.py` at `0600` while a fresh checkout
+used `0644`: file contents were identical, and the fresh-checkout digest matched the published
+artifact. Use a fresh checkout when comparing builds across hosts.
 
 Per-run guarantees:
 
@@ -274,6 +280,7 @@ record.
 | `v1.5.0` | GitHub | `a59773ae5ea4aca781152ac289d46afcc91a93b9` | `12cc0f60d0a04296e1cf8527aa14673c3cb42cfb` | `8e16fc878de5e2ff715d035dde74292a240842a3bc296a4c4755c061f18df77c` | 160480 |
 | `v1.6.0` | GitHub | `930c5ec3e489fe9a160349d4dc9fad9390697877` | `e0aa67de0e22aebd93ecccab6868c48bef89e017` | `70741393ffbc837d44b82cac9031be2dfe0aac5c3661802b42c7110752c769eb` | 164273 |
 | `v1.8.5` | GitHub | `32ebbcb94d1ecf4468db72dfe6e4b196d9660fb9` | `44129cf58c7f470ee9add8d1eac55e4338f243ae` | `c15274ee104988b512ef3cfd2c36b6ca8227720943b29abe7d9cc0c10753de51` | 195094 |
+| `v1.8.6` | GitHub | `17d15bf343e64e06840b520b7b3509ba0ec4f3cd` | `762188cade263a862b8a1dd1b352f2ebd9c1471c` | `0f3161b42c3140b10dd5dd7dad158c84dc3ea8487969cb129e0f8c5f2ac2069d` | 195192 |
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
