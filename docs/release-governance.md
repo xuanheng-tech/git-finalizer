@@ -273,6 +273,7 @@ record.
 | `v1.4.0` | Gitea | `64806dae0805b3dc707e7eab848c8b40ee952ad3` | `f768a6197268dc4a9be1b5d466464a3c2f6bf73c` | `ae1d29683ca36a911993eb138b769577961f7708d61e8eeb47ac402419b7f0f9` | 157304 |
 | `v1.5.0` | GitHub | `a59773ae5ea4aca781152ac289d46afcc91a93b9` | `12cc0f60d0a04296e1cf8527aa14673c3cb42cfb` | `8e16fc878de5e2ff715d035dde74292a240842a3bc296a4c4755c061f18df77c` | 160480 |
 | `v1.6.0` | GitHub | `930c5ec3e489fe9a160349d4dc9fad9390697877` | `e0aa67de0e22aebd93ecccab6868c48bef89e017` | `70741393ffbc837d44b82cac9031be2dfe0aac5c3661802b42c7110752c769eb` | 164273 |
+| `v1.8.5` | GitHub | `32ebbcb94d1ecf4468db72dfe6e4b196d9660fb9` | `44129cf58c7f470ee9add8d1eac55e4338f243ae` | `c15274ee104988b512ef3cfd2c36b6ca8227720943b29abe7d9cc0c10753de51` | 195094 |
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
