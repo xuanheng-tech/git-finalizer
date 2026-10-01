@@ -357,6 +357,42 @@ class TempDirToolTest(unittest.TestCase):
         temp_tool.cleanup_directory(str(path), allow_owned_fixture_fifo=True)
         self.assertFalse(path.exists())
 
+    def test_owned_fifo_below_custom_pytest_basetemp(self) -> None:
+        for basetemp in ("pytest", "p2", "short-test-root"):
+            with self.subTest(basetemp=basetemp):
+                _result, path = self.create("custom-basetemp")
+                fixture = path / basetemp / "test_compute_logs_reject_fifo_0"
+                fixture.mkdir(parents=True)
+                os.mkfifo(fixture / "fifo.out", mode=0o600)
+
+                self.assert_error("unsafe_entry", temp_tool.cleanup_directory, str(path))
+                preview = temp_tool.dry_run_cleanup(
+                    str(path), allow_owned_fixture_fifo=True
+                )
+                self.assertEqual(
+                    [entry["path"] for entry in preview["entries"] if entry["kind"] == "FIFO"],
+                    [f"{basetemp}/test_compute_logs_reject_fifo_0/fifo.out"],
+                )
+                temp_tool.cleanup_directory(str(path), allow_owned_fixture_fifo=True)
+                self.assertFalse(path.exists())
+
+    def test_custom_basetemp_rejects_fifo_outside_numbered_pytest_node(self) -> None:
+        for relative in ("p2/pipe", "p2/test_fixture/pipe", "p2/test_fixture0"):
+            with self.subTest(relative=relative):
+                _result, path = self.create("custom-basetemp-rejection")
+                marker = path / "keep.txt"
+                marker.write_text("keep", encoding="utf-8")
+                fifo = path / relative
+                fifo.parent.mkdir(parents=True, exist_ok=True)
+                os.mkfifo(fifo, mode=0o600)
+
+                self.assert_error(
+                    "fifo_scope_rejected", temp_tool.cleanup_directory, str(path),
+                    allow_owned_fixture_fifo=True,
+                )
+                self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
+                self.assertTrue(fifo.exists())
+
     def test_cli_uses_only_neutral_state_in_an_empty_home(self) -> None:
         home = Path(self.temporary_state.name) / "empty-home"
         home.mkdir()
