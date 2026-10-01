@@ -123,6 +123,38 @@ class AssignmentContentTests(unittest.TestCase):
         self.git("add", "--", self.path)
         self.git("commit", "-qm", message)
 
+    def test_word_suffixes_do_not_start_secret_key_signatures(self) -> None:
+        for prefix in ("task-", "predispatch-risk-", "TASK-"):
+            identifier = prefix + "validation-policy-regression"
+            document = json.dumps({"description": identifier}).encode()
+            for raw in (
+                identifier.encode(),
+                document,
+                document.replace(b"sk-", b"s\\u006b-"),
+                document.replace(b"sk-", b"s\\u006b-")[:-1],
+            ):
+                with self.subTest(prefix=prefix, raw=raw):
+                    self.write(raw)
+                    status, summary = self.finalize()
+                    self.assertEqual(status, 0, summary)
+                    self.assertEqual(summary["status"], "success", summary)
+                    self.assertEqual(summary["mode_result"]["local_validation"], "passed", summary)
+
+    def test_secret_key_signatures_at_token_boundaries_remain_blocked(self) -> None:
+        for prefix in ("s" + "k-", "s" + "k-proj-"):
+            value = prefix + OPAQUE_VALUE
+            document = json.dumps({"description": value}).encode()
+            for raw in (
+                value.encode(),
+                b"Bearer " + value.encode(),
+                b"`" + value.encode() + b"`",
+                document,
+                document.replace(b"sk-", b"s\\u006b-"),
+                document.replace(b"sk-", b"s\\u006b-")[:-1],
+            ):
+                with self.subTest(prefix=prefix, raw=raw):
+                    self.assert_blocked(raw)
+
     def test_exact_declaration_accepts_version_and_format_changes(self) -> None:
         for version, formatting in (
             ("1.13.3", {"indent": 2}),
@@ -262,6 +294,7 @@ class AssignmentContentTests(unittest.TestCase):
                         .replace(b'"password"', b'"pass\\u0077ord"'))
         for value, literal, escaped in (
             ("github" + "_pat_" + OPAQUE_VALUE, b"github_pat_", b"github\\u005fpat_"),
+            ("s" + "k-proj-" + OPAQUE_VALUE, b"sk-", b"s\\u006b-"),
             ("-----BEGIN " + "PRIVATE KEY-----", b"PRIVATE", b"PRIV\\u0041TE"),
             (" ssh-" + "ed25519 " + "A" * 48, b"ssh-", b"ss\\u0068-"),
         ):

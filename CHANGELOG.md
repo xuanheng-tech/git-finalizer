@@ -42,6 +42,11 @@ section is invented for it.
 - Correct the deployment-health adapter ledger, track custom Claude homes and project instruction
   files, register the independently attested released Skill payload, and ignore only host worktree policy.
 
+## 1.8.4
+
+- Require an ASCII word boundary before the secret-key prefix so task and risk identifiers do not
+  trigger a credential signature. Preserve raw, decoded JSON and clean-filter credential checks.
+
 ## 1.8.3
 
 - Share one scanner across worktree, index and history blobs; malformed JSON, duplicate keys and

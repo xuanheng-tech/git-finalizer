@@ -15,7 +15,7 @@ import tempfile
 
 PATTERNS = (
     ("private-key-header-v1", rb"-----BEGIN ([A-Z0-9]+[\x09-\x0d ]+)*PRIVATE KEY-----", "PRIVATE"),
-    ("known-token-v1", rb"(AKIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|sk-(proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,})", "KNOWN"),
+    ("known-token-v1", rb"(AKIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|(?<![A-Za-z0-9_])sk-(proj-)?[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{16,})", "KNOWN"),
     ("ssh-key", rb"(^|[\x09-\x0d ])ssh-(rsa|dss|ecdsa|ed25519)[\x09-\x0d ]+[A-Za-z0-9+/]{40,}", "SSH"),
 )
 ASSIGNMENT = re.compile(

@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.8.3**.
+Current source version: **1.8.4**.
 
-当前版本：`1.8.3`
+当前版本：`1.8.4`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
@@ -84,6 +84,10 @@ signatures are checked separately from credential-assignment reviews in both wor
 scans. Fully escaped sensitive keys remain checked, and classifier failure refuses the candidate.
 Duplicate keys, non-finite constants and malformed JSON containers do not disable scanning of
 escaped string literals. Worktree, index and history checks use the same scanner.
+
+The secret-key prefix must start outside an ASCII word: the suffix of a task or risk identifier
+does not count as a key prefix. Standalone keys and keys after punctuation or whitespace remain
+checked in raw content, decoded JSON strings and Git clean-filter output.
 
 Python prose reviews are limited to already-published literal refusal-reason pairs in module-level
 `*_REASONS` dictionaries. The full raw key/value pair must be preserved, with only whitespace and a
