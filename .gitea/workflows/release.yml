@@ -165,6 +165,9 @@ jobs:
               return parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
 
           api_origin = origin(api_url)
+          web_url = api_url.removesuffix("/api/v1")
+          if web_url == api_url:
+              raise SystemExit("Gitea API URL must end with /api/v1")
 
           class NoRedirect(urllib.request.HTTPRedirectHandler):
               def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -239,9 +242,15 @@ jobs:
                   )
               try:
                   uploaded = json.loads(body)
-                  download_url = uploaded["browser_download_url"]
-                  if uploaded["name"] != asset.name or origin(download_url) != api_origin:
-                      raise ValueError("asset identity or download origin differs")
+                  download_url = (
+                      f"{web_url}/{urllib.parse.quote(repository, safe='/')}/releases/download/"
+                      f"{urllib.parse.quote(tag, safe='')}/{urllib.parse.quote(asset.name, safe='')}"
+                  )
+                  # API and UI/attachment URLs can have different aliases. Authenticate only
+                  # against the configured API origin and its exact repository/tag/asset route.
+                  if (uploaded["name"] != asset.name or uploaded["size"] != asset.stat().st_size
+                          or origin(download_url) != api_origin):
+                      raise ValueError("asset identity or size differs")
                   operation = urllib.request.Request(download_url, headers={"Authorization": f"token {token}"})
                   with download_opener.open(operation, timeout=30) as response:
                       downloaded = response.read(asset.stat().st_size + 1)
