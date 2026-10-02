@@ -337,6 +337,7 @@ record.
 | `v1.8.9` | GitHub | `54d2f7f80bfb0392bea79561311551c7528cd3b6` | `8149d8e5dbf804a70f0cab1df94c728c08d61df9` | `23ed4bf2459568f7fc3b1705358be26ecf18dcf24611bd5eaadfe1d0e5116f33` | 196825 |
 | `v1.8.10` | GitHub + Gitea | `63abbdb7e2322de2c129fc710d65a6a035c2071f` | `42ff19c71c54ec4ff623a35bf1c4268e2bf2f3fc` | `b0d25177680fa29b07b9e2cffe09e50a74788c9189efcc74d45cccd49d607f3b` | 197289 |
 | `v1.8.11` | GitHub + Gitea | `e6da9e7a553c465880af76288f722c731209263b` | `a6fed530638eccca5f9f83b9d3e0ab0164ae6e49` | `dae3649294f8e0b6101d3329c620ebb676c3eddcc7aebea37f71bb781f6a8371` | 197016 |
+| `v1.8.12` | GitHub + Gitea | `f9a325e7ebddb2cb562297b27f60aa7bdffe70d8` | `db1e69bd4bf5e7294efbd3fa89d61bf563ee02d5` | `3b3aad1c852183eb5990a8ebaaf7aaac7cee8cc0dd0410850fc4ac770f5bb4b9` | 197058 |
 
 `v1.8.10` is a deliberate mirror. GitHub run `36883946683` published release `401104963`;
 Gitea run `851` independently built and verified the same candidate and digest. Its publication
@@ -355,6 +356,15 @@ the row. Both served `SHA256SUMS.txt` files are 94 bytes with SHA-256
 Before tagging, the clean candidate passed `just release-check`: 16 PASS, 0 SKIP, 0 FAIL,
 including 429 Python tests, 68 Skill tests and the real Controller suite with installed
 Controller `1.18.3`, CLI contract `43` and storage layout `4`.
+
+`v1.8.12` ships the separate Snapshot Runner 2.5.2 pairing batch. GitHub run `36987236350`
+published release `401672109`; Gitea run `895` independently built, verified and published release
+`132` without recovery. Both downloaded tarballs match the clean candidate's `selfcheck` and the
+row above. Both checksum files are 94 bytes with SHA-256
+`fe98d42c5e31d2ce27cc9ebf9f6fe17c7c7d16fbf35a17cab1f7e8beb6185e39`.
+The clean candidate passed `just release-check`: 16 PASS, 0 SKIP, 0 FAIL, including 429 Python tests,
+68 Skill tests and the real Controller suite with Controller `1.18.6`, CLI contract `43` and storage
+layout `4`. Published workflow updates remain separate from this artifact's version batch.
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
