@@ -13,6 +13,12 @@ section is invented for it.
 
 ## Unreleased
 
+## 1.8.13
+
+- Ship the Snapshot Runner 2.5.3 pairing manifest, verified against its published CLI contract.
+  Preserve Git Finalizer's CLI and shared Skill payload contracts in this separate pairing release.
+- Include the reviewed setup-uv v10.2.0 and uv 0.12.19 pins in both hosts' quality and release workflows.
+
 ## 1.8.12
 
 - Ship the Snapshot Runner 2.5.2 pairing manifest, verified against its published CLI contract.
