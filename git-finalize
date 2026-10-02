@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.8.14"
+readonly VERSION="1.8.15"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1

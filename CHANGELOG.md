@@ -13,6 +13,13 @@ section is invented for it.
 
 ## Unreleased
 
+## 1.8.15
+
+- Accept the reviewed Worktree Controller CLI contract 45 while retaining explicit version,
+  capability and storage checks. Continue rejecting the next unreviewed contract without writing.
+- Ship the Snapshot Runner 2.5.6 pairing manifest, verified against its published CLI contract.
+  Preserve Git Finalizer's publication, retirement and shared Skill payload contracts.
+
 ## 1.8.14
 
 - Accept the reviewed Worktree Controller CLI contract 44 while retaining explicit version,
