@@ -339,6 +339,7 @@ record.
 | `v1.8.11` | GitHub + Gitea | `e6da9e7a553c465880af76288f722c731209263b` | `a6fed530638eccca5f9f83b9d3e0ab0164ae6e49` | `dae3649294f8e0b6101d3329c620ebb676c3eddcc7aebea37f71bb781f6a8371` | 197016 |
 | `v1.8.12` | GitHub + Gitea | `f9a325e7ebddb2cb562297b27f60aa7bdffe70d8` | `db1e69bd4bf5e7294efbd3fa89d61bf563ee02d5` | `3b3aad1c852183eb5990a8ebaaf7aaac7cee8cc0dd0410850fc4ac770f5bb4b9` | 197058 |
 | `v1.8.13` | GitHub + Gitea | `dc43a50cca1679856df154196c9df68b9885fd90` | `cd5192ca7aff0c6da867039bb8129a38989d43fb` | `c6f541c38af3ab93b5b79b5556905fa656bf430d7927be34c41664dfd48bbd17` | 197119 |
+| `v1.8.14` | GitHub + Gitea | `4e765291ff892d0edf5d3cb5d6994d0b76c00d29` | `783d0196e5faefb86fa40e4ae021e94ea77dc13e` | `37dac494c5d070c0ebb70de5110bf3ad495430b8298f33b92ec33130408252fb` | 197195 |
 
 `v1.8.10` is a deliberate mirror. GitHub run `36883946683` published release `401104963`;
 Gitea run `851` independently built and verified the same candidate and digest. Its publication
@@ -377,6 +378,17 @@ The clean candidate passed `just release-check`: 16 PASS, 0 SKIP, 0 FAIL, includ
 layout `4`. This release deviated from the runbook's main-first order: the tag was created from
 the clean, published feature candidate before Controller integration. The published tag remains
 fixed; integration and the release-record update follow without rebuilding or replacing its assets.
+
+`v1.8.14` ships the reviewed Controller CLI contract `44` compatibility batch and the published
+Snapshot Runner 2.5.5 pairing manifest. GitHub run `37042628636` published release `402033728`;
+Gitea run `922` independently built, verified and published release `137` without recovery.
+Both hosts' downloaded assets match the independent clean candidate build byte for byte.
+Both checksum files are 94 bytes with SHA-256
+`f418cfb5625cbbfe969fe0aec971a217faa7c2d937aa04075701c25707c9d980`.
+The clean candidate passed `just release-check`: 16 PASS, 0 SKIP, 0 FAIL, including 429 Python tests,
+68 Skill tests and the real Controller suite with Controller `1.18.8`, CLI contract `44` and storage
+layout `4`. Controller integration and exact publication to both main remotes completed before
+the annotated tag was created, following the runbook's main-first order.
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
