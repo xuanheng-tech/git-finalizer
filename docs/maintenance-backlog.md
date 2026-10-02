@@ -69,3 +69,18 @@ release age and manual merge policy locally. It no longer requires a private Git
   complete its onboarding. A valid configuration is not evidence that a bot is installed or active.
 - Verification: read actual bot runs and proposed updates on each host. Changes to action pins must
   keep both hosts consistent, as enforced by `tests/test_release_procedure.py`.
+
+Maintainer readback on 2026-10-02 confirmed the Gitea automation: onboarding PR #1 was merged,
+Dependency Dashboard #3 is open, and update PRs #9 (`setup-uv`) and #11 (`uv`) were refreshed that
+day. Each open PR covers both quality and release workflows under `.gitea/` and `.github/`.
+This closes the Gitea activation uncertainty; proposed updates still require review and the shared
+workflow checks before integration through the normal Gitea delivery flow.
+
+GitHub had no issues or PRs at that readback. The current CLI authentication received HTTP 403
+when listing GitHub App installations, so an independent GitHub bot installation remains
+unverified. An empty PR list is not evidence that a bot is disabled. Gitea's existing updates
+already cover both workflow sets; the GitHub mirror receives accepted changes through the normal
+main synchronization. If independent GitHub automation is desired, an administrator should verify
+its repository selection through the service's
+[installation and onboarding procedure](https://docs.renovatebot.com/getting-started/installing-onboarding/)
+and then check actual processing results.

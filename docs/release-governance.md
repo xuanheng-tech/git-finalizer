@@ -297,9 +297,11 @@ If the two differ, the difference is in the build environment, and the recipe is
 enough to make that diagnosable: `tar` and `gzip` behaviour and locale sort order are the variables,
 which is why the member metadata is pinned in the recipe (sorted names, `ustar`, numeric uid/gid `0`,
 mtime from the commit, `gzip -n`, staged directories `0755`). The runner image is part of that
-environment: GitHub pins `ubuntu-24.04`, while the Gitea job asks for `ubuntu-latest`, so a Gitea
-digest is only comparable once the two hosts are known to run the same tools — an open item in
-[maintenance-backlog.md](maintenance-backlog.md).
+environment: GitHub pins `ubuntu-24.04`, while the Gitea job asks for `ubuntu-latest`. Those labels
+alone do not establish or rule out equal artifacts: compare the bytes actually served by both
+hosts, as required by [Cross-host parity](#cross-host-parity). The `v1.8.10` and `v1.8.11` rows below
+record verified equality for those candidates; future runner changes still need the same comparison.
+The remaining environment and attestation limits are in [maintenance-backlog.md](maintenance-backlog.md).
 
 ## Release record
 
@@ -367,11 +369,11 @@ published and re-verified it, with **no** Gitea release object for that version 
 `v1.6.0` repeated that decision rather than reopening it: annotated tag pushed to GitHub only,
 published by run `36305958586`, and its published digest equals the digest measured locally from the
 same commit before tagging, so the two independent witnesses agree to the byte. Gitea again carries no
-release object for it. The Gitea release
-job last ran at `v1.4.0`, on workflow bytes that predate the current
-`.gitea/workflows/release.yml` — that file was last edited by the `v1.5.0` candidate itself, so its
-publish path has never executed as shipped and its first real test is the next Gitea release. A future
-version may be mirrored on the second host only together with the digest comparison in
+release object for it. At the time of these two GitHub-only releases, the Gitea job had last run at
+`v1.4.0`; the workflow introduced for `v1.5.0` had not been exercised on that host. Later,
+`v1.8.10` exercised the independent Gitea build and verification, with publication completed by
+draft recovery. `v1.8.11` then completed automatic publication and asset readback on both hosts
+without recovery, as recorded above. Every future mirror still requires the digest comparison in
 [Cross-host parity](#cross-host-parity).
 
 ## Support boundary of the release contract
