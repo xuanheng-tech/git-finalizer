@@ -13,6 +13,11 @@ section is invented for it.
 
 ## Unreleased
 
+## 1.8.12
+
+- Ship the Snapshot Runner 2.5.2 pairing manifest, verified against its published CLI contract.
+  Preserve Git Finalizer's CLI and shared Skill payload contracts in this separate pairing release.
+
 ## 1.8.11
 
 - Derive authenticated Gitea asset verification routes from the configured API origin and exact
