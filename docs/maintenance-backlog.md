@@ -72,9 +72,11 @@ release age and manual merge policy locally. It no longer requires a private Git
 
 Maintainer readback on 2026-10-02 confirmed the Gitea automation: onboarding PR #1 was merged,
 Dependency Dashboard #3 is open, and update PRs #9 (`setup-uv`) and #11 (`uv`) were refreshed that
-day. Each open PR covers both quality and release workflows under `.gitea/` and `.github/`.
-This closes the Gitea activation uncertainty; proposed updates still require review and the shared
-workflow checks before integration through the normal Gitea delivery flow.
+day. Both proposals cover quality and release workflows under `.gitea/` and `.github/`.
+The reviewed updates pin `setup-uv` v10.2.0 to the official tag's commit and `uv` to 0.12.19 in all
+four files. The shared workflow checks passed for each update; source-built release installation
+with uv 0.12.19 passed on Python 3.11 and 3.12. Further proposals follow the same review and normal
+Controller integration gates. This closes the Gitea activation uncertainty.
 
 GitHub had no issues or PRs at that readback. The current CLI authentication received HTTP 403
 when listing GitHub App installations, so an independent GitHub bot installation remains
