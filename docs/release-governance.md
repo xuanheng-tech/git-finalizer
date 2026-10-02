@@ -338,6 +338,7 @@ record.
 | `v1.8.10` | GitHub + Gitea | `63abbdb7e2322de2c129fc710d65a6a035c2071f` | `42ff19c71c54ec4ff623a35bf1c4268e2bf2f3fc` | `b0d25177680fa29b07b9e2cffe09e50a74788c9189efcc74d45cccd49d607f3b` | 197289 |
 | `v1.8.11` | GitHub + Gitea | `e6da9e7a553c465880af76288f722c731209263b` | `a6fed530638eccca5f9f83b9d3e0ab0164ae6e49` | `dae3649294f8e0b6101d3329c620ebb676c3eddcc7aebea37f71bb781f6a8371` | 197016 |
 | `v1.8.12` | GitHub + Gitea | `f9a325e7ebddb2cb562297b27f60aa7bdffe70d8` | `db1e69bd4bf5e7294efbd3fa89d61bf563ee02d5` | `3b3aad1c852183eb5990a8ebaaf7aaac7cee8cc0dd0410850fc4ac770f5bb4b9` | 197058 |
+| `v1.8.13` | GitHub + Gitea | `dc43a50cca1679856df154196c9df68b9885fd90` | `cd5192ca7aff0c6da867039bb8129a38989d43fb` | `c6f541c38af3ab93b5b79b5556905fa656bf430d7927be34c41664dfd48bbd17` | 197119 |
 
 `v1.8.10` is a deliberate mirror. GitHub run `36883946683` published release `401104963`;
 Gitea run `851` independently built and verified the same candidate and digest. Its publication
@@ -365,6 +366,17 @@ row above. Both checksum files are 94 bytes with SHA-256
 The clean candidate passed `just release-check`: 16 PASS, 0 SKIP, 0 FAIL, including 429 Python tests,
 68 Skill tests and the real Controller suite with Controller `1.18.6`, CLI contract `43` and storage
 layout `4`. Published workflow updates remain separate from this artifact's version batch.
+
+`v1.8.13` ships the separate Snapshot Runner 2.5.3 pairing batch and the previously reviewed
+build-tool pins. GitHub run `37021425248` published release `401902585`; Gitea run `909`
+independently built, verified and published release `134` without recovery. Both hosts' downloaded
+assets match the clean candidate's build. Both checksum files are 94 bytes with SHA-256
+`5c30841aed4e2d123088088c91ed543c3fbc73e26e00453202901cee674b131b`.
+The clean candidate passed `just release-check`: 16 PASS, 0 SKIP, 0 FAIL, including 429 Python tests,
+68 Skill tests and the real Controller suite with Controller `1.18.7`, CLI contract `43` and storage
+layout `4`. This release deviated from the runbook's main-first order: the tag was created from
+the clean, published feature candidate before Controller integration. The published tag remains
+fixed; integration and the release-record update follow without rebuilding or replacing its assets.
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
