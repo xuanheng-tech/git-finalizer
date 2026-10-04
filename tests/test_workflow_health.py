@@ -179,7 +179,7 @@ class WorkflowHealthTests(unittest.TestCase):
         self.assertEqual((root / "active").resolve().parent.name, "a" * 40)
 
     def test_reviewed_controller_cli_contracts(self) -> None:
-        for version in (37, 38, 39, 40, 41, 42, 43, 44, 45, 46):
+        for version in (37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47):
             with self.subTest(contract_version=version):
                 root, requirements, envelope, frozen = self.controller_fixture(version)
                 result = self.probe_controller(root, requirements, envelope, frozen)
