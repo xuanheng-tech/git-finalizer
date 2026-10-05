@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -23,6 +24,61 @@ ASSIGNMENT = re.compile(
     re.I,
 )
 LITERAL = re.compile(rb'"(?:[^"\\]|\\.)*"')
+DIRECTORY_ENV_KEY = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_CREDENTIALS")
+SYSTEMD_DIRECTORY = re.compile(r"/run/credentials/[A-Za-z0-9][A-Za-z0-9_.@-]*\.service")
+
+
+def mask_systemd_directory_references(raw: bytes) -> bytes:
+    """Classify static Python environment directory references, without reading them."""
+    if b"/run/credentials/" not in raw:
+        return raw
+    try:
+        tree = ast.parse(raw.decode("utf-8"))
+    except (SyntaxError, UnicodeError, ValueError, RecursionError):
+        return raw
+    # A bare JSON-like expression is not a Python environment declaration.
+    declarations = (ast.Assign, ast.AnnAssign, ast.FunctionDef, ast.AsyncFunctionDef,
+                    ast.ClassDef, ast.Import, ast.ImportFrom)
+    if not any(isinstance(node, declarations) for node in tree.body):
+        return raw
+    offsets = [0]
+    for line in raw.splitlines(keepends=True):
+        offsets.append(offsets[-1] + len(line))
+
+    def literal_span(node, text):
+        if node.lineno != node.end_lineno:
+            return None
+        start = offsets[node.lineno - 1] + node.col_offset
+        end = offsets[node.end_lineno - 1] + node.end_col_offset
+        value = text.encode("ascii")
+        if raw[start:end] not in (b'"' + value + b'"', b"'" + value + b"'"):
+            return None
+        return start, end
+
+    spans = []
+    for mapping in ast.walk(tree):
+        if not isinstance(mapping, ast.Dict):
+            continue
+        if any(not isinstance(key, ast.Constant) or not isinstance(key.value, str)
+               for key in mapping.keys):
+            continue
+        keys = [key.value for key in mapping.keys]
+        if len(keys) != len(set(keys)):
+            continue
+        for key, value in zip(mapping.keys, mapping.values):
+            if not (isinstance(key, ast.Constant) and isinstance(key.value, str)
+                    and DIRECTORY_ENV_KEY.fullmatch(key.value)
+                    and isinstance(value, ast.Constant) and isinstance(value.value, str)
+                    and SYSTEMD_DIRECTORY.fullmatch(value.value)
+                    and len(value.value.removeprefix("/run/credentials/")) <= 255):
+                continue
+            span = literal_span(value, value.value)
+            if literal_span(key, key.value) and span:
+                spans.append(span)
+    for start, end in sorted(spans, reverse=True):
+        # Preserve byte positions and never mask adjacent comments or literals.
+        raw = raw[:start] + b'""' + b" " * (end - start - 2) + raw[end:]
+    return raw
 
 
 def unique_object(pairs):
@@ -109,7 +165,7 @@ def scan(raw: bytes, excepted: str = "", only: str = "") -> str:
         "compared constant-time at complete or abandon; it is excluded from the "
         "identity so it cannot change the authorization address"
     )
-    masked = raw
+    masked = raw if valid_json else mask_systemd_directory_references(raw)
     if qualified_schema and declaration.get("token") == description:
         descriptions = [match for match in LITERAL.finditer(raw) if json.loads(match.group()) == description]
         if len(descriptions) == 1:
@@ -127,7 +183,7 @@ def scan(raw: bytes, excepted: str = "", only: str = "") -> str:
             return b'"' + json.loads(match.group()).encode() + b'"'
         except (ValueError, UnicodeError):
             return match.group()
-    decoded_text = LITERAL.sub(decode_match, raw)
+    decoded_text = LITERAL.sub(decode_match, masked)
     return "ASSIGNMENT" if ASSIGNMENT.search(decoded_text) or any(ASSIGNMENT.search(value) for value in decoded) else "CLEAR"
 
 

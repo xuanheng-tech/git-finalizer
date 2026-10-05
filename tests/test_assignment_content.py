@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,15 @@ DESCRIPTION = (
     "identity so it cannot change the authorization address"
 )
 OPAQUE_VALUE = "A" * 32  # Artificial values, never caller credentials.
+DIRECTORY = "/run/credentials/jq-production-docker.service"
+DIRECTORY_KEY = "QUANT_JQ_CONTAINER_CREDENTIALS"
+SCANNER_SPEC = importlib.util.spec_from_file_location("content_scan", ROOT / "git-finalize-content-scan.py")
+SCANNER = importlib.util.module_from_spec(SCANNER_SPEC)
+SCANNER_SPEC.loader.exec_module(SCANNER)
+
+
+def environment_item(value: str = DIRECTORY, key: str = DIRECTORY_KEY) -> bytes:
+    return f"environment = {{{json.dumps(key)}: {json.dumps(value)}}}\n".encode()
 
 
 def schema(version: str = "1.13.3") -> dict:
@@ -122,6 +132,183 @@ class AssignmentContentTests(unittest.TestCase):
     def commit_fixture(self, message: str) -> None:
         self.git("add", "--", self.path)
         self.git("commit", "-qm", message)
+
+    def application_test_path(self) -> None:
+        self.path = "apps/quant_orchestration/tests/test_jq_breakglass.py"
+        self.source = self.repo / self.path
+        self.source.parent.mkdir(parents=True)
+
+    def test_application_directory_reference_passes_default_preflight(self) -> None:
+        self.application_test_path()
+        for raw in (
+            environment_item(),
+            environment_item().replace(b'"', b"'"),
+            environment_item("/run/credentials/worker@blue.service"),
+            'environment = {"备注": "目录", '.encode() + environment_item().split(b"{", 1)[1],
+        ):
+            with self.subTest(raw=raw):
+                self.write(raw)
+                status, summary = self.finalize()
+                self.assertEqual(status, 0, summary)
+                self.assertEqual(summary["mode_result"]["local_validation"], "passed", summary)
+
+    def test_directory_classification_does_not_depend_on_a_test_path(self) -> None:
+        self.write(environment_item())
+        status, summary = self.finalize("commit-only")
+        self.assertEqual(status, 0, summary)
+        self.assertTrue(summary["commit"]["created"])
+        self.assertFalse(summary["push"]["executed"])
+        self.assertEqual(self.git("status", "--porcelain"), "")
+
+    def test_resolved_merge_preflight_and_commit_accept_application_directory(self) -> None:
+        self.application_test_path()
+        self.write(environment_item())
+        self.commit_fixture("Synthetic environment baseline")
+        self.git("switch", "-qc", "feature/imports")
+        self.write(environment_item() + b"# Synthetic import-only edit\n")
+        self.commit_fixture("Synthetic application import change")
+        parent = self.git("rev-parse", "HEAD")
+        self.git("switch", "-q", "main")
+        (self.repo / "README.md").write_text("Synthetic parallel mainline change\n")
+        self.git("add", "--", "README.md")
+        self.git("commit", "-qm", "Synthetic mainline change")
+        first_parent = self.git("rev-parse", "HEAD")
+        self.git("merge", "--no-commit", "--no-ff", "feature/imports")
+        for mode in ("verify-only", "commit-only"):
+            before = self.state()
+            command = [str(ROOT / "git-finalize"), "--summary", "--repo", str(self.repo),
+                       "--mode", mode, "--merge-parent", parent]
+            if mode == "commit-only":
+                command += ["--message", "Synthetic resolved merge"]
+            result = subprocess.run([*command, "--", self.path], env=self.env,
+                                    capture_output=True, text=True, timeout=30)
+            summary = json.loads(result.stdout)
+            self.assertEqual(result.returncode, 0, summary)
+            self.assertFalse(summary["push"]["executed"])
+            if mode == "verify-only":
+                self.assertEqual(self.state(), before)
+                self.assertEqual(self.git("rev-parse", "MERGE_HEAD"), parent)
+            else:
+                self.assertTrue(summary["commit"]["created"])
+                self.assertEqual(self.git("rev-list", "--parents", "-n", "1", "HEAD").split()[1:],
+                                 [first_parent, parent])
+
+    def test_directory_classification_requires_canonical_service_directory(self) -> None:
+        for value in (
+            DIRECTORY + "/password", DIRECTORY + "/", DIRECTORY + " ",
+            "/run/credentials/../jq-production-docker.service",
+            "/run/credentials/.hidden.service", "/run/credentials/unit.socket",
+            "/run/credentials/unit name.service", "run/credentials/unit.service",
+            "file:///run/credentials/unit.service", "/run/credentials/" + "a" * 248 + ".service",
+            OPAQUE_VALUE,
+        ):
+            with self.subTest(value=value):
+                self.assert_blocked(environment_item(value))
+        self.write(environment_item("/run/credentials/" + "a" * 247 + ".service"))
+        status, summary = self.finalize()
+        self.assertEqual(status, 0, summary)
+
+    def test_directory_value_does_not_exempt_other_sensitive_names(self) -> None:
+        for key in ("credentials", "QUANT_JQ_CREDENTIAL", "quant_jq_credentials",
+                    "QUANT_JQ_PASSWORD", "QUANT_JQ_TOKEN", "QUANT_JQ_CLIENT_SECRET"):
+            with self.subTest(key=key):
+                self.assert_blocked(environment_item(key=key))
+        self.assert_blocked(f'{DIRECTORY_KEY} = "{DIRECTORY}"\n'.encode())
+
+    def test_directory_requires_complete_unambiguous_python_dictionary(self) -> None:
+        item = json.dumps(DIRECTORY_KEY) + ": " + json.dumps(DIRECTORY)
+        for raw in (
+            ("{" + item + "}\n").encode(),
+            ("{" + item + ",}\n").encode(),
+            ("environment = {" + item + ", " + item + "}\n").encode(),
+            ("environment = {" + item + ", **other}\n").encode(),
+            ("environment = {" + item + ", other_key: 'public'}\n").encode(),
+            environment_item() + b"if broken syntax\n",
+            environment_item() + b"\xff",
+        ):
+            with self.subTest(raw=raw):
+                self.assert_blocked(raw)
+
+    def test_nonliteral_directory_forms_receive_no_classification(self) -> None:
+        raw = environment_item()
+        value = json.dumps(DIRECTORY).encode()
+        for replacement in (
+            b"r" + value, b"u" + value, b"f" + value,
+            value + b' ""', b'"""' + DIRECTORY.encode() + b'"""',
+            value.replace(b"jq-", b"j\\u0071-"),
+        ):
+            content = raw.replace(value, replacement)
+            with self.subTest(replacement=replacement):
+                self.assertEqual(SCANNER.mask_systemd_directory_references(content), content)
+        escaped_key = raw.replace(b"QUANT", b"QU\\u0041NT")
+        self.assertEqual(SCANNER.mask_systemd_directory_references(escaped_key), escaped_key)
+        self.assert_blocked(escaped_key)
+        # These raw assignments were already detected and must stay detected.
+        self.assert_blocked(raw.replace(value, value + b' ""'))
+        self.assert_blocked(raw.replace(value, value.replace(b"jq-", b"j\\u0071-")))
+
+    def test_directory_masking_preserves_adjacent_assignments_and_comments(self) -> None:
+        for suffix in (
+            b'password = "SYNTHETIC_VALUE_012345"\n',
+            b'# password = "SYNTHETIC_VALUE_012345"\n',
+            b'metadata = {"pass\\u0077ord": "SYNTHETIC_VALUE_012345"}\n',
+        ):
+            with self.subTest(suffix=suffix):
+                self.assert_blocked(environment_item() + suffix)
+
+    def test_known_signatures_override_directory_classification(self) -> None:
+        for value in (
+            "github" + "_pat_" + OPAQUE_VALUE,
+            "-----BEGIN " + "PRIVATE KEY-----",
+            " ssh-" + "ed25519 " + "A" * 48,
+        ):
+            with self.subTest(value=value[:12]):
+                extra = json.dumps({"description": value}).encode()
+                for suffix in (extra, extra.replace(b"github_pat_", b"github\\u005fpat_")):
+                    self.assert_blocked(environment_item() + b"metadata = " + suffix)
+        self.assert_blocked(environment_item("/run/credentials/github" + "_pat_" + OPAQUE_VALUE + ".service"))
+
+    def test_initial_branch_publish_accepts_directory_blobs_in_history(self) -> None:
+        self.prepare_publication()
+        self.application_test_path()
+        self.write(environment_item())
+        self.commit_fixture("Synthetic directory environment")
+        self.write(environment_item() + b"# Synthetic import-only edit\n")
+        status, summary = self.finalize("initial-branch")
+        self.assertEqual(status, 0, summary)
+        self.assertTrue(summary["commit"]["created"])
+        self.assertTrue(summary["push"]["executed"])
+        self.assertEqual(self.git("ls-remote", "origin", "refs/heads/feature/schema").split()[0],
+                         self.git("rev-parse", "HEAD"))
+
+    def test_directory_in_history_cannot_hide_a_credential_file(self) -> None:
+        self.prepare_publication()
+        self.application_test_path()
+        self.write(environment_item(DIRECTORY + "/password"))
+        self.commit_fixture("Synthetic unsafe historical credential file")
+        self.write(environment_item())
+        self.commit_fixture("Synthetic safe directory replacement")
+        self.assert_blocked(environment_item() + b"# Synthetic edit\n", mode="initial-branch")
+        self.assertEqual(self.git("ls-remote", "origin", "refs/heads/feature/schema"), "")
+
+    def test_candidate_clean_filter_cannot_hide_secret_behind_directory(self) -> None:
+        self.application_test_path()
+        target = self.base / "filtered.py"
+        target.write_bytes(environment_item() + b'password = "SYNTHETIC_VALUE_012345"\n')
+        script = self.base / "filter.py"
+        script.write_text("import pathlib, sys\nsys.stdin.buffer.read()\n"
+                          "sys.stdout.buffer.write(pathlib.Path(sys.argv[1]).read_bytes())\n")
+        (self.repo / ".gitattributes").write_text(self.path + " filter=synthetic\n")
+        self.git("add", "--", ".gitattributes")
+        self.git("commit", "-qm", "Synthetic filter configuration")
+        self.git("config", "filter.synthetic.clean", shlex.join([sys.executable, str(script), str(target)]))
+        self.git("config", "filter.synthetic.required", "true")
+        self.write(environment_item())
+        status, summary = self.finalize()
+        self.assertEqual(status, 1, summary)
+        self.assertFalse(summary["commit"]["created"])
+        self.assertFalse(summary["push"]["executed"])
+        self.assertIn("候选", summary["reason"])
 
     def test_word_suffixes_do_not_start_secret_key_signatures(self) -> None:
         for prefix in ("task-", "predispatch-risk-", "TASK-"):

@@ -13,6 +13,19 @@ section is invented for it.
 
 ## Unreleased
 
+## 1.8.16
+
+- Classify directly quoted, canonical systemd service credential directory references in static
+  Python environment dictionaries as non-secret paths. Require a namespaced uppercase
+  `_CREDENTIALS` key, distinct static string keys, a parsed Python declaration and a single
+  `/run/credentials/<unit>.service` component of at most 255 characters. No fixture exception or
+  new flag is required, including for application tests and resolved-merge local verification.
+- Preserve assignment scanning for other keys, child-file paths, noncanonical or ambiguous
+  declarations, and all raw/decoded known-token, private-key and SSH-key signatures. Excluded
+  dynamic/string forms receive no directory classification; the scanner does not evaluate Python
+  or read credential directories. Use the same classification for candidate, staged and historical
+  Git blobs while retaining clean-filter and merge-state guards.
+
 ## 1.8.15
 
 - Accept the reviewed Worktree Controller CLI contract 45 while retaining explicit version,

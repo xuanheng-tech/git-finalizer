@@ -48,10 +48,10 @@
       "git-finalize"
     ]
   },
-  "public_cli_contract_sha256": "2bae616a5f4ce724867e7a52d894baf2bb979658f11a772ddfa838fa8bc5b8c5",
+  "public_cli_contract_sha256": "b9d7f663fef55d733ceb3ff27cce5bbaecb599b33a145e9aec563dfceb6f4b11",
   "schema_version": 2,
   "skill_contract_version": 2,
   "tool_commit": "@release",
   "tool_name": "git-finalizer",
-  "tool_version": "1.8.15"
+  "tool_version": "1.8.16"
 }

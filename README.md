@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.8.15**.
+Current source version: **1.8.16**.
 
-当前版本：`1.8.15`
+当前版本：`1.8.16`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
@@ -84,6 +84,19 @@ signatures are checked separately from credential-assignment reviews in both wor
 scans. Fully escaped sensitive keys remain checked, and classifier failure refuses the candidate.
 Duplicate keys, non-finite constants and malformed JSON containers do not disable scanning of
 escaped string literals. Worktree, index and history checks use the same scanner.
+
+Static Python environment dictionary items have one narrow non-secret directory classification:
+the directly quoted ASCII key must be an uppercase namespace ending in `_CREDENTIALS`, and its
+directly quoted value must be exactly `/run/credentials/<unit>.service`. The unit is a single ASCII
+component starting with an alphanumeric character, followed by alphanumerics, `_`, `.`, `@` or `-`,
+with a total unit-name length of at most 255 characters. This describes a systemd credential
+directory reference, not its contents; the scanner never reads that directory. It requires parsed
+Python containing a declaration, requires distinct static string dictionary keys, and accepts no string prefixes,
+escapes, concatenation, interpolation, traversal or child-file paths. JSON and prose, bare assignments,
+and other sensitive keys retain their existing checks. These excluded forms receive no directory
+classification; this does not add Python runtime evaluation or a new dynamic-expression detector.
+All other assignments and raw/decoded known
+token, private-key and SSH-key signatures remain mandatory. No fixture exception or new flag is needed.
 
 The secret-key prefix must start outside an ASCII word: the suffix of a task or risk identifier
 does not count as a key prefix. Standalone keys and keys after punctuation or whitespace remain
