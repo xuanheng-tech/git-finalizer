@@ -341,6 +341,7 @@ record.
 | `v1.8.13` | GitHub + Gitea | `dc43a50cca1679856df154196c9df68b9885fd90` | `cd5192ca7aff0c6da867039bb8129a38989d43fb` | `c6f541c38af3ab93b5b79b5556905fa656bf430d7927be34c41664dfd48bbd17` | 197119 |
 | `v1.8.14` | GitHub + Gitea | `4e765291ff892d0edf5d3cb5d6994d0b76c00d29` | `783d0196e5faefb86fa40e4ae021e94ea77dc13e` | `37dac494c5d070c0ebb70de5110bf3ad495430b8298f33b92ec33130408252fb` | 197195 |
 | `v1.8.15` | GitHub + Gitea | `e657618770309ed762528b51466f4482bb8d4a0c` | `5e78d59065132f00ea6f3d72e55882c62a9e96bc` | `dca4a5c2febec8c9682280391453b82e34bddbbff588b42a1a85ff4360659e6c` | 197239 |
+| `v1.8.16` | GitHub + Gitea | `f29655c2668337f3b089fab3d729816e57eb4bcb` | `19f5ed500dbd287a10f1c224155b4de40b869467` | `b06aef49c3419a647cfa077bbac839039773aceaa2e5385af90c37b9b5cccafa` | 199050 |
 
 `v1.8.10` is a deliberate mirror. GitHub run `36883946683` published release `401104963`;
 Gitea run `851` independently built and verified the same candidate and digest. Its publication
@@ -402,6 +403,23 @@ The delivery closeout ran `just release-check` in a fresh clean candidate after 
 the existing GitHub tag and before pushing the same annotated tag to Gitea: 16 PASS, 0 SKIP,
 0 FAIL, including 429 Python tests, 68 Skill tests and the real Controller suite with Controller
 `1.18.8`, CLI contract `44` and storage layout `4`.
+
+`v1.8.16` adds the narrowly classified static Python systemd credential directory references
+documented in README, with default credential and raw/decoded signature scans retained. GitHub
+run `37362981177` published and verified release `404048998`. Gitea run `1082` failed twice while
+downloading external Actions with connection EOF, before checkout, build or upload; its existing
+tag was preserved. Gitea CI run `1081` passed for the same candidate. Mirror recovery used the
+existing API draft/upload/re-download/publish transaction: draft `142`, checksum asset `39` and
+archive asset `40`. Both downloaded assets match the fresh candidate build and GitHub byte for byte;
+the release notes match after ignoring final newlines. Both checksum files are 94 bytes with SHA-256
+`3574bb060ac9a48c8dde88c217bd845bce6a0f885a42525802aaeaf4f7d8cb16`.
+The clean candidate passed `just release-check` before tagging: 16 PASS, 0 SKIP, 0 FAIL, including
+445 Python tests, 68 Skill tests and the real Controller suite with Controller `1.19.3`, CLI
+contract `50` and storage layout `4`. The fresh task checkout supplied the independent `selfcheck`
+witness. An initial canonical build differed only because its existing `quick_validate.py` mode
+was `0600` instead of the normal checkout's `0644`; that build was excluded and the existing
+permissions were preserved. Installation through `tool-skill-sync` activated the clean published
+candidate, followed by passing installed checks, doctor and positive/negative default-scanner smoke.
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
