@@ -19,7 +19,7 @@ from typing import Any
 TMP_ROOT = Path("/tmp")
 STATE_ROOT = Path.home() / ".local/state/tool-temp-dir"
 RECORD_VERSION = 2
-TOOL_VERSION = "1.0.3"
+TOOL_VERSION = "1.0.4"
 PREFIX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 NAME_RE = re.compile(
     r"^tool-task-(?P<prefix>[A-Za-z0-9][A-Za-z0-9_-]{0,63})-"
@@ -341,7 +341,14 @@ def _allowed_entry_kind(
         named_pytest_root = first.startswith("pytest-") and first != "pytest-"
         # --basetemp may use any name, including a short path for AF_UNIX sockets.
         numbered_test_node = len(parts) >= 3 and re.fullmatch(r"test_.+\d+", parts[1]) is not None
-        if not separator or not (named_pytest_root or numbered_test_node):
+        # Acceptance runners nest a named pytest basetemp under their work directory.
+        # Only descendants of its numbered test nodes extend the existing FIFO scope.
+        nested_pytest_node = any(
+            (root == "pytest" or (root.startswith("pytest-") and root != "pytest-"))
+            and re.fullmatch(r"test_.+\d+", parts[index + 1]) is not None
+            for index, root in enumerate(parts[1:-2], start=1)
+        )
+        if not separator or not (named_pytest_root or numbered_test_node or nested_pytest_node):
             raise TempDirError(
                 "fifo_scope_rejected",
                 f"FIFO 不在 pytest 临时子目录中：{relative_path}",

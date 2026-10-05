@@ -393,6 +393,107 @@ class TempDirToolTest(unittest.TestCase):
                 self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
                 self.assertTrue(fifo.exists())
 
+    def test_owned_fifo_below_nested_pytest_basetemp(self) -> None:
+        for relative in (
+            "project/pytest/test_absent_completion_preserv0/preservations/tree/pipe",
+            "project/pytest-candidate/test_fixture0/pipe",
+            "acceptance/project/pytest/test_fixture1/tree/pipe",
+        ):
+            with self.subTest(relative=relative):
+                result, path = self.create("nested-basetemp")
+                record = Path(result["record"])
+                record_before = record.read_bytes()
+                fifo = path / relative
+                fifo.parent.mkdir(parents=True)
+                os.mkfifo(fifo, mode=0o600)
+
+                self.assert_error("unsafe_entry", temp_tool.cleanup_directory, str(path))
+                preview = temp_tool.dry_run_cleanup(
+                    str(path), allow_owned_fixture_fifo=True
+                )
+                self.assertEqual(
+                    [entry["path"] for entry in preview["entries"] if entry["kind"] == "FIFO"],
+                    [relative],
+                )
+                self.assertTrue(fifo.exists())
+                self.assertEqual(record.read_bytes(), record_before)
+                temp_tool.cleanup_directory(str(path), allow_owned_fixture_fifo=True)
+                self.assertFalse(path.exists())
+                self.assertFalse(record.exists())
+
+    def test_nested_pytest_scope_rejects_unrelated_fifo_before_deletion(self) -> None:
+        for relative in (
+            "project/pytest/pipe",
+            "project/pytest/test_fixture/pipe",
+            "project/pytest/test_fixture0",
+            "project/pytest-/test_fixture0/pipe",
+            "project/not-pytest/test_fixture0/pipe",
+            "project/p2/test_fixture0/pipe",
+            "project/pytest/test_fixture0-suffix/pipe",
+            "unrelated/pipe",
+        ):
+            with self.subTest(relative=relative):
+                result, path = self.create("nested-rejection")
+                record = Path(result["record"])
+                record_before = record.read_bytes()
+                marker = path / "keep.txt"
+                marker.write_text("keep", encoding="utf-8")
+                accepted = path / "project/pytest/test_accepted1/pipe"
+                accepted.parent.mkdir(parents=True)
+                os.mkfifo(accepted, mode=0o600)
+                rejected = path / relative
+                rejected.parent.mkdir(parents=True, exist_ok=True)
+                os.mkfifo(rejected, mode=0o600)
+
+                self.assert_error(
+                    "fifo_scope_rejected", temp_tool.cleanup_directory, str(path),
+                    allow_owned_fixture_fifo=True,
+                )
+                self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
+                self.assertEqual(record.read_bytes(), record_before)
+                self.assertTrue(accepted.exists())
+                self.assertTrue(rejected.exists())
+
+    def test_nested_pytest_fifo_still_requires_registered_owner(self) -> None:
+        _result, path = self.create("nested-owner")
+        fifo = path / "project/pytest/test_fixture0/pipe"
+        fifo.parent.mkdir(parents=True)
+        os.mkfifo(fifo, mode=0o600)
+        original_stat = os.stat
+
+        def foreign_pipe_stat(*arguments: Any, **keywords: Any) -> os.stat_result:
+            metadata = original_stat(*arguments, **keywords)
+            if arguments[0] == "pipe" and keywords.get("dir_fd") is not None:
+                fields = list(metadata)
+                fields[4] = os.getuid() + 1
+                return os.stat_result(fields)
+            return metadata
+
+        with mock.patch.object(temp_tool.os, "stat", side_effect=foreign_pipe_stat):
+            self.assert_error(
+                "owner_mismatch", temp_tool.cleanup_directory, str(path),
+                allow_owned_fixture_fifo=True,
+            )
+        self.assertTrue(fifo.exists())
+        temp_tool.cleanup_directory(str(path), allow_owned_fixture_fifo=True)
+
+    def test_nested_pytest_cleanup_does_not_follow_symlink(self) -> None:
+        _result, path = self.create("nested-symlink")
+        fixture = path / "project/pytest/test_fixture0"
+        fixture.mkdir(parents=True)
+        os.mkfifo(fixture / "pipe", mode=0o600)
+        external = Path(self.temporary_state.name) / "external"
+        external.mkdir()
+        marker = external / "keep.txt"
+        marker.write_text("keep", encoding="utf-8")
+        os.mkfifo(external / "pipe", mode=0o600)
+        (fixture / "external").symlink_to(external, target_is_directory=True)
+
+        temp_tool.cleanup_directory(str(path), allow_owned_fixture_fifo=True)
+        self.assertFalse(path.exists())
+        self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
+        self.assertTrue((external / "pipe").exists())
+
     def test_cli_uses_only_neutral_state_in_an_empty_home(self) -> None:
         home = Path(self.temporary_state.name) / "empty-home"
         home.mkdir()
