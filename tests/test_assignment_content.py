@@ -29,6 +29,12 @@ def environment_item(value: str = DIRECTORY, key: str = DIRECTORY_KEY) -> bytes:
     return f"environment = {{{json.dumps(key)}: {json.dumps(value)}}}\n".encode()
 
 
+def additional_directory_forms(value: str = DIRECTORY) -> tuple[bytes, bytes]:
+    quoted = json.dumps(value)
+    return (f"CREDENTIALS = {quoted}\n".encode(),
+            f'config = {{"container_credentials": {quoted}}}\n'.encode())
+
+
 def schema(version: str = "1.13.3") -> dict:
     return {
         "schema_version": 1,
@@ -160,12 +166,84 @@ class AssignmentContentTests(unittest.TestCase):
         self.assertFalse(summary["push"]["executed"])
         self.assertEqual(self.git("status", "--porcelain"), "")
 
+    def test_module_constant_and_container_field_pass_default_preflight(self) -> None:
+        paths = ("apps/quant_orchestration/tests/test_jq_container.py",
+                 "tests/platform/control_plane_admin/test_docker_runtime.py")
+        for path, raw in zip(paths, additional_directory_forms()):
+            self.path = path
+            self.source = self.repo / path
+            self.source.parent.mkdir(parents=True, exist_ok=True)
+            for content in (raw, raw.replace(b'"', b"'")):
+                with self.subTest(path=path, content=content):
+                    self.write(content)
+                    status, summary = self.finalize()
+                    self.assertEqual(status, 0, summary)
+            self.source.unlink()
+
+    def test_additional_directory_forms_require_exact_static_context(self) -> None:
+        constant, field = additional_directory_forms()
+        for raw in (
+            b"def function():\n    " + constant,
+            constant.replace(b"CREDENTIALS =", b"alias = CREDENTIALS ="),
+            constant.replace(b"CREDENTIALS =", b"credentials ="),
+            field.replace(b"container_credentials", b"credentials"),
+            field.replace(b"container_credentials", b"other_credentials"),
+            field.replace(b"container_credentials", b"CONTAINER_CREDENTIALS").replace(b"config = ", b""),
+            field.replace(b"container_credentials", b"container_creden\\u0074ials"),
+            field.replace(b"}", b", **other}"),
+            field.replace(b"}", b', "container_credentials": "SYNTHETIC_VALUE_012345"}'),
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(SCANNER.mask_systemd_directory_references(raw), raw)
+                self.assertEqual(SCANNER.scan(raw), "ASSIGNMENT")
+        annotated = constant.replace(b"CREDENTIALS =", b"CREDENTIALS: str =")
+        self.assertEqual(SCANNER.mask_systemd_directory_references(annotated), annotated)
+        for raw in (constant, field):
+            for prefix in (b"r", b"u", b"f"):
+                content = raw.replace(b'"' + DIRECTORY.encode() + b'"',
+                                      prefix + b'"' + DIRECTORY.encode() + b'"')
+                with self.subTest(prefix=prefix, raw=raw):
+                    self.assertEqual(SCANNER.mask_systemd_directory_references(content), content)
+
+    def test_additional_directory_forms_reject_credential_files_and_secret_values(self) -> None:
+        for value in (DIRECTORY + "/password", DIRECTORY + "/", OPAQUE_VALUE,
+                      "/run/credentials/../jq-production-docker.service"):
+            for raw in additional_directory_forms(value):
+                with self.subTest(raw=raw):
+                    self.assertEqual(SCANNER.scan(raw), "ASSIGNMENT")
+
+    def test_additional_directory_forms_preserve_all_default_detectors(self) -> None:
+        guards = (
+            (b'password = "SYNTHETIC_VALUE_012345"\n', "ASSIGNMENT"),
+            (b'# -----BEGIN ' + b'PRIVATE KEY-----\n', "PRIVATE"),
+            (b'# gh' + b'p_' + b'A' * 32 + b'\n', "KNOWN"),
+            (b'# ssh-' + b'ed25519 ' + b'A' * 48 + b'\n', "SSH"),
+            (b'metadata = {"description": "github\\u005fpat_' + b'A' * 32 + b'"}\n', "KNOWN"),
+        )
+        for raw in additional_directory_forms():
+            for suffix, verdict in guards:
+                with self.subTest(raw=raw, verdict=verdict):
+                    self.assertEqual(SCANNER.scan(raw + suffix), verdict)
+        for raw in additional_directory_forms("/run/credentials/gh" + "p_" + OPAQUE_VALUE + ".service"):
+            self.assertEqual(SCANNER.scan(raw), "KNOWN")
+
     def test_resolved_merge_preflight_and_commit_accept_application_directory(self) -> None:
         self.application_test_path()
         self.write(environment_item())
+        extra_paths = ("apps/quant_orchestration/tests/test_jq_container.py",
+                       "tests/platform/control_plane_admin/test_docker_runtime.py")
+        for path, raw in zip(extra_paths, additional_directory_forms()):
+            source = self.repo / path
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(raw)
+        self.git("add", "--", *extra_paths)
         self.commit_fixture("Synthetic environment baseline")
         self.git("switch", "-qc", "feature/imports")
         self.write(environment_item() + b"# Synthetic import-only edit\n")
+        for path in extra_paths:
+            source = self.repo / path
+            source.write_bytes(source.read_bytes() + b"# Synthetic import-only edit\n")
+        self.git("add", "--", *extra_paths)
         self.commit_fixture("Synthetic application import change")
         parent = self.git("rev-parse", "HEAD")
         self.git("switch", "-q", "main")
@@ -180,7 +258,7 @@ class AssignmentContentTests(unittest.TestCase):
                        "--mode", mode, "--merge-parent", parent]
             if mode == "commit-only":
                 command += ["--message", "Synthetic resolved merge"]
-            result = subprocess.run([*command, "--", self.path], env=self.env,
+            result = subprocess.run([*command, "--", self.path, *extra_paths], env=self.env,
                                     capture_output=True, text=True, timeout=30)
             summary = json.loads(result.stdout)
             self.assertEqual(result.returncode, 0, summary)
@@ -303,12 +381,14 @@ class AssignmentContentTests(unittest.TestCase):
         self.git("commit", "-qm", "Synthetic filter configuration")
         self.git("config", "filter.synthetic.clean", shlex.join([sys.executable, str(script), str(target)]))
         self.git("config", "filter.synthetic.required", "true")
-        self.write(environment_item())
-        status, summary = self.finalize()
-        self.assertEqual(status, 1, summary)
-        self.assertFalse(summary["commit"]["created"])
-        self.assertFalse(summary["push"]["executed"])
-        self.assertIn("候选", summary["reason"])
+        for raw in (environment_item(), *additional_directory_forms()):
+            target.write_bytes(raw + b'password = "SYNTHETIC_VALUE_012345"\n')
+            self.write(raw)
+            status, summary = self.finalize()
+            self.assertEqual(status, 1, summary)
+            self.assertFalse(summary["commit"]["created"])
+            self.assertFalse(summary["push"]["executed"])
+            self.assertIn("候选", summary["reason"])
 
     def test_word_suffixes_do_not_start_secret_key_signatures(self) -> None:
         for prefix in ("task-", "predispatch-risk-", "TASK-"):

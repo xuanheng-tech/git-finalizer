@@ -29,7 +29,7 @@ SYSTEMD_DIRECTORY = re.compile(r"/run/credentials/[A-Za-z0-9][A-Za-z0-9_.@-]*\.s
 
 
 def mask_systemd_directory_references(raw: bytes) -> bytes:
-    """Classify static Python environment directory references, without reading them."""
+    """Classify narrow static Python credential directory references, without reading them."""
     if b"/run/credentials/" not in raw:
         return raw
     try:
@@ -55,6 +55,13 @@ def mask_systemd_directory_references(raw: bytes) -> bytes:
             return None
         return start, end
 
+    def directory_span(node):
+        if (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                and SYSTEMD_DIRECTORY.fullmatch(node.value)
+                and len(node.value.removeprefix("/run/credentials/")) <= 255):
+            return literal_span(node, node.value)
+        return None
+
     spans = []
     for mapping in ast.walk(tree):
         if not isinstance(mapping, ast.Dict):
@@ -67,13 +74,18 @@ def mask_systemd_directory_references(raw: bytes) -> bytes:
             continue
         for key, value in zip(mapping.keys, mapping.values):
             if not (isinstance(key, ast.Constant) and isinstance(key.value, str)
-                    and DIRECTORY_ENV_KEY.fullmatch(key.value)
-                    and isinstance(value, ast.Constant) and isinstance(value.value, str)
-                    and SYSTEMD_DIRECTORY.fullmatch(value.value)
-                    and len(value.value.removeprefix("/run/credentials/")) <= 255):
+                    and (DIRECTORY_ENV_KEY.fullmatch(key.value)
+                         or key.value == "container_credentials")):
                 continue
-            span = literal_span(value, value.value)
+            span = directory_span(value)
             if literal_span(key, key.value) and span:
+                spans.append(span)
+    for declaration in tree.body:
+        if (isinstance(declaration, ast.Assign) and len(declaration.targets) == 1
+                and isinstance(declaration.targets[0], ast.Name)
+                and declaration.targets[0].id == "CREDENTIALS"):
+            span = directory_span(declaration.value)
+            if span:
                 spans.append(span)
     for start, end in sorted(spans, reverse=True):
         # Preserve byte positions and never mask adjacent comments or literals.
