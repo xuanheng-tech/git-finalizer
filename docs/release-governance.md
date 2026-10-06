@@ -342,6 +342,7 @@ record.
 | `v1.8.14` | GitHub + Gitea | `4e765291ff892d0edf5d3cb5d6994d0b76c00d29` | `783d0196e5faefb86fa40e4ae021e94ea77dc13e` | `37dac494c5d070c0ebb70de5110bf3ad495430b8298f33b92ec33130408252fb` | 197195 |
 | `v1.8.15` | GitHub + Gitea | `e657618770309ed762528b51466f4482bb8d4a0c` | `5e78d59065132f00ea6f3d72e55882c62a9e96bc` | `dca4a5c2febec8c9682280391453b82e34bddbbff588b42a1a85ff4360659e6c` | 197239 |
 | `v1.8.16` | GitHub + Gitea | `f29655c2668337f3b089fab3d729816e57eb4bcb` | `19f5ed500dbd287a10f1c224155b4de40b869467` | `b06aef49c3419a647cfa077bbac839039773aceaa2e5385af90c37b9b5cccafa` | 199050 |
+| `v1.8.17` | GitHub + Gitea | `24c4f53c0fa270beec9284b42222b71230a1b88a` | `5efb356ba6019ef425d5b3f3d571007709822f0f` | `71d639f92d40dd5a9f4775ad331c3b93fcade92747b0e1b1fa57ab969f4be7ba` | 199380 |
 
 `v1.8.10` is a deliberate mirror. GitHub run `36883946683` published release `401104963`;
 Gitea run `851` independently built and verified the same candidate and digest. Its publication
@@ -420,6 +421,21 @@ witness. An initial canonical build differed only because its existing `quick_va
 was `0600` instead of the normal checkout's `0644`; that build was excluded and the existing
 permissions were preserved. Installation through `tool-skill-sync` activated the clean published
 candidate, followed by passing installed checks, doctor and positive/negative default-scanner smoke.
+
+`v1.8.17` extends the same strict Python directory classification to the exact
+`container_credentials` dictionary field and a plain module-level `CREDENTIALS` assignment.
+GitHub run `37407075636` published and verified release `404272935`; Gitea release run `1085`
+published and verified release `143`, with checksum asset `41` and archive asset `42`. Gitea CI
+run `1084` also passed for the same candidate. Both downloaded archives match the independent
+fresh candidate build byte for byte; both checksum files are 94 bytes with SHA-256
+`090199fbe283cb230164d48c2062946f3d32fb95c3cf38b312fe68982beb4cef`. Release notes match the
+Changelog after ignoring final newlines. The clean candidate passed `just release-check` before
+tagging: 16 PASS, 0 SKIP, 0 FAIL, including 449 Python tests, 68 Skill tests and the real Controller
+suite. Supported installation activated the clean published candidate; installed checks, doctor
+and six focused smoke tests passed, including a three-file resolved merge and clean-filter guards.
+Read-only default scans of the three QP test files passed for their raw, stage-0 and candidate
+blobs, with known-token, private-key, SSH, other-assignment and credential-child-file controls still
+refused. QP sources and their stage-0 identities stayed unchanged; no QP fixture exception was used.
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
