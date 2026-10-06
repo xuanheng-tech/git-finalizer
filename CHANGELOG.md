@@ -13,6 +13,17 @@ section is invented for it.
 
 ## Unreleased
 
+## 1.8.17
+
+- Extend the strict static Python systemd directory classification to the exact
+  `container_credentials` dictionary field and module-level plain `CREDENTIALS` assignment with
+  one name target. Preserve directly quoted ASCII canonical service-directory values, the unit
+  length limit, distinct static dictionary keys and default scanning without fixture exceptions.
+- Verify all three declaration forms in resolved-merge local preflight and commit. Retain
+  clean-filter scanning, child-file and other-assignment guards, raw/decoded known-token,
+  private-key and SSH-key detection. Do not evaluate Python or read credential directories;
+  excluded syntax keeps its existing scanner behavior.
+
 ## 1.8.16
 
 - Classify directly quoted, canonical systemd service credential directory references in static
