@@ -141,6 +141,8 @@ class AgentContractTests(unittest.TestCase):
                      "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"},
                 capture_output=True, text=True, check=False,
             )
+            argument_value = self.run_summary(repository, "--mode", "commit-only",
+                                              "--message", "--diagnostics")
         self.assertNotIn("diagnostics", plain)
         self.assertEqual(plain["status"], "success")
         self.assertEqual(expanded["status"], "success")
@@ -149,6 +151,8 @@ class AgentContractTests(unittest.TestCase):
         self.assertIn("may be supplied once", duplicate["reason"])
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--diagnostics requires --summary", result.stderr)
+        self.assertTrue(argument_value["commit"]["created"])
+        self.assertNotIn("diagnostics", argument_value)
 
 
     def setUp(self) -> None:

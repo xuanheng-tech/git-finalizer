@@ -83,8 +83,6 @@ for summary_argument in "$@"; do
     [[ "$summary_argument" != '--' ]] || break
     if [[ "$summary_argument" == '--summary' ]]; then
         summary_requested=1
-    elif [[ "$summary_argument" == '--diagnostics' ]]; then
-        summary_diagnostics_requested=1
     fi
 done
 
@@ -5611,6 +5609,7 @@ while (($# > 0)); do
         --diagnostics)
             ((diagnostics_seen == 0)) || fail '--diagnostics may be supplied once'
             diagnostics_seen=1
+            summary_diagnostics_requested=1
             shift
             ;;
         --version)
