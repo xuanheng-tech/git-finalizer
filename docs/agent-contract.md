@@ -23,13 +23,52 @@ status, summary_schema_version, task_key, upstream, warning_characters_omitted, 
 warnings_omitted, worktree_path
 ```
 
-`summary_schema_version` is `1`. Three keys are conditional and must be treated as optional:
+`summary_schema_version` is `1`. These keys are conditional and must be treated as optional:
 
 | Key | Appears when |
 | --- | --- |
 | `resume` | a resume interface reported recovery context |
 | `fixture_exceptions` | the run consumed documented fixture exceptions |
 | `reviewed_sensitive_sources` | `--reviewed-sensitive-source` reviews were consumed |
+| `diagnostics` | the bash entrypoint captured its runtime identity and a content refusal/risk occurred, or `--diagnostics` was requested |
+
+### Metadata-only diagnostics
+
+`diagnostics` is an additive optional object with its own `schema_version: 1`. Existing fixed
+keys, their order, the classification triple and exit codes remain unchanged. Consumers must
+ignore unfamiliar optional keys and classify the operation from the existing triple.
+Exec-forwarded companions and the serialization-failure fallback retain their existing shapes.
+Ordinary summaries omit diagnostics to preserve their output efficiency budget. Content refusals
+and dry-run content risks include it automatically; `--summary --diagnostics` requests runtime
+identity even without a finding. `--diagnostics` requires `--summary`, may appear once, and is
+supported by the bash core modes, not the exec-forwarded bootstrap/integration companions.
+
+`runtime.entrypoint` and `runtime.content_scanner` each contain `path` and `sha256`. The entrypoint
+is the resolved script actually invoked, measured at startup and retained for companion lookup
+throughout the invocation; the scanner checksum is observed
+at startup and updated from the last successfully parsed scanner report. Missing/unreadable or
+symlink scanner files have an unavailable startup checksum, never a hash of their target contents.
+These identify observed local bytes, not a source-version inference or a build attestation.
+
+`content_scan` is `null` unless a content scan refused or reported a dry-run risk. It records only
+the first such finding, bound to the exact bytes from that scanner invocation:
+
+| Field | Meaning |
+| --- | --- |
+| `path` | repository-relative file path |
+| `stage` | `worktree` (raw file), `candidate` (Git clean-filter output), `index`, `history`, or `commit` |
+| `verdict` | `PRIVATE`, `KNOWN`, `SSH`, `ASSIGNMENT`, or `ERROR` |
+| `detector` | `private-key-header-v1`, `known-token-v1`, `ssh-key`, `credential-assignment-v1`, or `content-scan-error` |
+| `byte_length`, `binary` | size and NUL-byte classification of the scanned bytes |
+| `sha256` | SHA-256 of those exact scanned bytes |
+| `blob_oid` | the actual candidate/index/history/commit Git blob OID; `null` for a raw file |
+
+Failed reads/filters inside the content scan, or malformed scanner reports, remain fail-closed
+with `ERROR`; unavailable
+byte metadata is `null`. A dry-run finding does not change the existing dry-run status or create
+authority to write. Non-content refusals, including sensitive-path and review-linkage checks, do
+not manufacture a content finding. No matched value, source line, excerpt or filter diagnostic is
+included. The scanner runs once per check; its verdict and metadata refer to the same bytes.
 
 Governance identity fields (`allocation_id`, `authority_key`, `task_key`, `role`,
 `worktree_path`, `repository_id`) are `null` for ordinary use; they exist so an orchestration

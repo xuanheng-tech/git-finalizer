@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.8.17"
+readonly VERSION="1.8.18"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -74,7 +74,11 @@ if ((repository_bootstrap_requested == 1)); then
     exec "$PYTHON3_EXECUTABLE" -B "$repository_bootstrap_companion" "$@"
 fi
 
+content_scan_entrypoint=$(realpath -e -- "${BASH_SOURCE[0]}" 2>/dev/null) || content_scan_entrypoint=''
+readonly content_scan_entrypoint
+
 summary_requested=0
+summary_diagnostics_requested=0
 for summary_argument in "$@"; do
     [[ "$summary_argument" != '--' ]] || break
     if [[ "$summary_argument" == '--summary' ]]; then
@@ -156,6 +160,15 @@ summary_retirement_remote_tracking_absent=false
 summary_retirement_local_absent_after=''
 summary_retirement_plan_id=''
 summary_retirement_receipt_id=''
+summary_runtime_identity=''
+summary_scan_path=''
+summary_scan_stage=''
+summary_scan_verdict=''
+summary_scan_size=''
+summary_scan_binary=''
+summary_scan_sha256=''
+summary_scan_blob_oid=''
+summary_scanner_sha256=''
 declare -a summary_warnings=()
 declare -a summary_fixture_exceptions=()
 declare -a summary_source_reviews=()
@@ -178,6 +191,35 @@ record_summary_failure() {
             summary_next_action='inspect_failure'
         fi
     fi
+}
+
+capture_runtime_identity() {
+    "$PYTHON3_EXECUTABLE" -B - "$content_scan_entrypoint" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+
+def identity(path):
+    try:
+        if path.is_symlink() or not path.is_file():
+            return {"path": str(path), "sha256": None}
+        return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    except OSError:
+        return {"path": str(path), "sha256": None}
+
+
+try:
+    if not sys.argv[1]:
+        raise OSError
+    entry = Path(sys.argv[1]).resolve(strict=True)
+except (OSError, RuntimeError):
+    print("null")
+else:
+    print(json.dumps({"entrypoint": identity(entry),
+                     "content_scanner": identity(entry.with_name("git-finalize-content-scan.py"))}))
+PY
 }
 
 render_summary() {
@@ -217,6 +259,9 @@ render_summary() {
         "$summary_retirement_receipt_id" \
         "$(printf '%s\n' "${summary_fixture_exceptions[@]}")" \
         "$(printf '%s\n' "${summary_source_reviews[@]}")" \
+        "$summary_runtime_identity" "$summary_diagnostics_requested" "$summary_scan_path" "$summary_scan_stage" \
+        "$summary_scan_verdict" "$summary_scan_size" "$summary_scan_binary" \
+        "$summary_scan_sha256" "$summary_scan_blob_oid" "$summary_scanner_sha256" \
         "${summary_warnings[@]}" <<'PY'
 import json
 import sys
@@ -319,6 +364,17 @@ retirement_plan_id = take(values)
 retirement_receipt_id = take(values)
 fixture_exceptions = [json.loads(line) for line in take(values).splitlines() if line]
 source_reviews = [json.loads(line) for line in take(values).splitlines() if line]
+runtime_raw = take(values)
+runtime = json.loads(runtime_raw) if runtime_raw else None
+diagnostics_requested = take(values) == "1"
+scan_path = take(values)
+scan_stage = take(values)
+scan_verdict = take(values)
+scan_size = take(values)
+scan_binary = take(values)
+scan_sha256 = take(values)
+scan_blob_oid = take(values)
+scanner_sha256 = take(values)
 
 
 def optional_integer(value):
@@ -540,6 +596,21 @@ if resume_required:
         "head_oid": resume_oid,
         "remote": resume_remote,
     }
+if runtime is not None and (diagnostics_requested or scan_verdict):
+    if scanner_sha256:
+        runtime["content_scanner"]["sha256"] = scanner_sha256
+    content_scan = None
+    if scan_verdict:
+        detectors = {"PRIVATE": "private-key-header-v1", "KNOWN": "known-token-v1",
+                     "SSH": "ssh-key", "ASSIGNMENT": "credential-assignment-v1",
+                     "ERROR": "content-scan-error"}
+        content_scan = {"path": scan_path, "stage": scan_stage,
+                        "verdict": scan_verdict, "detector": detectors[scan_verdict],
+                        "byte_length": optional_integer(scan_size),
+                        "binary": optional_boolean(scan_binary),
+                        "sha256": scan_sha256 or None, "blob_oid": scan_blob_oid or None}
+    result["diagnostics"] = {"schema_version": 1, "runtime": runtime,
+                             "content_scan": content_scan}
 
 print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
 PY
@@ -707,6 +778,7 @@ Options:
                                Existing publication/resume bind it to the exact HEAD blob.
   --dry-run                      Commit modes avoid Git mutation/remote; retirement runs live preflight only.
   --summary                      Emit one bounded JSON result instead of phase output.
+  --diagnostics                  Include runtime identity in core --summary even without a content refusal.
   --version                      Show the version and exit.
   -h, --help                     Show this help.
 EOF
@@ -1023,6 +1095,42 @@ staged_content_reason() {
     content_verdict_reason "$(public_schema_content_verdict blob "$1" "${2:-}" "${3:-}")"
 }
 
+inspect_content() {
+    local result extra
+    result=$(public_schema_content_verdict "report-$1" "$2" "${3:-}" '')
+    read -r scan_verdict scan_size scan_binary scan_sha256 scan_blob_oid scan_scanner_sha256 extra <<<"$result"
+    if [[ ! "$scan_verdict" =~ ^(CLEAR|PRIVATE|KNOWN|SSH|ASSIGNMENT)$ ||
+          ! "$scan_size" =~ ^[0-9]+$ || ! "$scan_binary" =~ ^[01]$ ||
+          ! "$scan_sha256" =~ ^[0-9a-f]{64}$ ||
+          ! "$scan_blob_oid" =~ ^(-|[0-9a-f]{40}|[0-9a-f]{64})$ ||
+          ! "$scan_scanner_sha256" =~ ^[0-9a-f]{64}$ || -n "$extra" ||
+          "$result" == *$'\n'* ]]; then
+        scan_verdict=ERROR
+        scan_size=''
+        scan_binary=''
+        scan_sha256=''
+        scan_blob_oid=''
+        scan_scanner_sha256=''
+    elif [[ "$scan_blob_oid" == '-' ]]; then
+        scan_blob_oid=''
+    fi
+    if [[ -n "$scan_scanner_sha256" ]]; then
+        summary_scanner_sha256=$scan_scanner_sha256
+    fi
+}
+
+record_content_scan() {
+    [[ -z "$summary_scan_verdict" ]] || return 0
+    summary_scan_path=$1
+    summary_scan_stage=$2
+    summary_scan_verdict=$scan_verdict
+    summary_scan_size=$scan_size
+    summary_scan_binary=$([[ "$scan_binary" == 1 ]] && printf true || printf false)
+    [[ -n "$scan_binary" ]] || summary_scan_binary=''
+    summary_scan_sha256=$scan_sha256
+    summary_scan_blob_oid=$scan_blob_oid
+}
+
 is_working_large_binary() {
     local path=$1
     local size
@@ -1314,7 +1422,7 @@ verify_local_candidate() {
     local whitespace_output
     local candidate_count=0
     local candidate_temp_checked=0
-    local candidate_result verdict size binary digest filtered_oid raw_oid reason candidate_rules
+    local verdict size binary digest filtered_oid raw_oid reason candidate_rules
     declare -A candidate_paths=()
 
     summary_phase='local_validation'
@@ -1392,13 +1500,20 @@ PY
                     fail '无法只读复核 candidate fixture raw blob'
                 candidate_rules=${history_fixture_rules[$path:$raw_oid]-}
             fi
-            candidate_result=$(public_schema_content_verdict candidate "$path" "$candidate_rules" '')
-            read -r verdict size binary digest filtered_oid <<<"$candidate_result"
-            [[ "$size" =~ ^[0-9]+$ && "$binary" =~ ^[01]$ &&
-               "$digest" =~ ^[0-9a-f]{64}$ && "$filtered_oid" =~ ^[0-9a-f]+$ ]] ||
+            inspect_content candidate "$path" "$candidate_rules"
+            verdict=$scan_verdict
+            size=$scan_size
+            binary=$scan_binary
+            digest=$scan_sha256
+            filtered_oid=$scan_blob_oid
+            if [[ ! "$size" =~ ^[0-9]+$ || ! "$binary" =~ ^[01]$ ||
+                  ! "$digest" =~ ^[0-9a-f]{64}$ || ! "$filtered_oid" =~ ^[0-9a-f]+$ ]]; then
+                record_content_scan "$path" candidate
                 fail '无法只读验证 clean-filter candidate blob；未执行 add、commit 或 push'
+            fi
             if [[ -z ${test_fixture_content_overrides[$path]+present} ]] &&
                 reason=$(content_verdict_reason "$verdict"); then
+                record_content_scan "$path" candidate
                 fail "拒绝候选敏感文件 $(printf '%q' "$path"): $reason"
             fi
             if ((binary == 1 && size > MAX_BINARY_BYTES)); then
@@ -2428,7 +2543,8 @@ load_history_large_binary_overrides() {
 public_schema_content_verdict() {
     python3_available || { printf 'ERROR\n'; return 0; }
     local executable helper verdict
-    executable=$(realpath -e -- "${BASH_SOURCE[0]}") || { printf 'ERROR\n'; return 0; }
+    executable=$content_scan_entrypoint
+    [[ -n "$executable" ]] || { printf 'ERROR\n'; return 0; }
     helper=${executable%/*}/git-finalize-content-scan.py
     [[ -f "$helper" && ! -L "$helper" ]] || { printf 'ERROR\n'; return 0; }
     verdict=$("$PYTHON3_EXECUTABLE" -B "$helper" "$1" "$2" "$repo" "$3" "$4") || verdict=ERROR
@@ -2807,7 +2923,9 @@ validate_existing_publish_range() {
                 existing_range_error="fixture exception path/blob identity mismatch: $(printf '%q' "$path")"
                 return 1
             fi
-            if reason=$(staged_content_reason "$object_oid" "$excepted_detectors"); then
+            inspect_content blob "$object_oid" "$excepted_detectors"
+            if reason=$(content_verdict_reason "$scan_verdict"); then
+                record_content_scan "$path" history
                 existing_range_error="拒绝待发布敏感文件 $(printf '%q' "$path"): $reason"
                 return 1
             fi
@@ -3553,7 +3671,9 @@ publish_existing_branch_head() {
     fi
     load_source_reviews head
     for reviewed_path in "${!reviewed_source_paths[@]}"; do
-        if reason=$(staged_content_reason "${reviewed_source_paths[$reviewed_path]}"); then
+        inspect_content blob "${reviewed_source_paths[$reviewed_path]}"
+        if reason=$(content_verdict_reason "$scan_verdict"); then
+            record_content_scan "$reviewed_path" history
             fail "reviewed source 内容扫描阻断: $reason"
         fi
     done
@@ -5107,6 +5227,7 @@ if ((summary_requested == 1)); then
         printf 'ERROR: --summary requires Python 3.11+ on PATH\n' >&2
         exit 1
     fi
+    summary_runtime_identity=$(capture_runtime_identity) || summary_runtime_identity=''
     exec 3>&1 4>&2
     trap emit_summary EXIT
     exec >/dev/null 2>&1
@@ -5192,6 +5313,7 @@ ci_verified_at_seen=0
 resume_seen=0
 snapshot_seen=0
 summary_seen=0
+diagnostics_seen=0
 separator_seen=0
 fixture_exceptions_file=''
 fixture_exceptions_seen=0
@@ -5484,6 +5606,12 @@ while (($# > 0)); do
             summary_seen=1
             shift
             ;;
+        --diagnostics)
+            ((diagnostics_seen == 0)) || fail '--diagnostics may be supplied once'
+            diagnostics_seen=1
+            summary_diagnostics_requested=1
+            shift
+            ;;
         --version)
             printf 'git-finalize %s\n' "$VERSION"
             exit 0
@@ -5531,6 +5659,7 @@ done
 input_paths=("$@")
 summary_repo=$repo_arg
 summary_path_count=${#input_paths[@]}
+((summary_diagnostics_requested == 0 || summary_requested == 1)) || fail '--diagnostics requires --summary'
 if ((dry_run == 1)); then
     summary_dry_run=true
 fi
@@ -6157,9 +6286,12 @@ if ((dry_run == 1)); then
         if [[ -f "$absolute_path" && ! -L "$absolute_path" ]]; then
             if [[ ! -r "$absolute_path" ]]; then
                 add_risk "文件不可读: $(printf '%q' "$path")"
-            elif [[ -z ${test_fixture_content_overrides[$path]+present} ]] &&
-                reason=$(working_content_reason "$absolute_path"); then
-                add_risk "真实运行会拒绝 $(printf '%q' "$path"): $reason"
+            elif [[ -z ${test_fixture_content_overrides[$path]+present} ]]; then
+                inspect_content file "$absolute_path"
+                if reason=$(content_verdict_reason "$scan_verdict"); then
+                    record_content_scan "$path" worktree
+                    add_risk "真实运行会拒绝 $(printf '%q' "$path"): $reason"
+                fi
             fi
         fi
         path_status=$(
@@ -6265,9 +6397,12 @@ for index in "${!paths[@]}"; do
             working_fixture_rules=${history_fixture_rules[$path:$working_fixture_oid]-}
             [[ -n "$working_fixture_rules" ]] || fail 'fixture exception working blob 已漂移'
         fi
-        if [[ -z ${test_fixture_content_overrides[$path]+present} ]] &&
-            reason=$(working_content_reason "$absolute_path" "$working_fixture_rules"); then
-            fail "拒绝敏感文件 $(printf '%q' "$path"): $reason"
+        if [[ -z ${test_fixture_content_overrides[$path]+present} ]]; then
+            inspect_content file "$absolute_path" "$working_fixture_rules"
+            if reason=$(content_verdict_reason "$scan_verdict"); then
+                record_content_scan "$path" worktree
+                fail "拒绝敏感文件 $(printf '%q' "$path"): $reason"
+            fi
         fi
     fi
 done
@@ -6430,9 +6565,12 @@ for path in "${staged_paths[@]}"; do
     fi
     if get_index_entry "$path" &&
         [[ $(git -C "$repo" cat-file -t "$index_oid" 2>/dev/null) == 'blob' ]]; then
-        if [[ -z ${test_fixture_content_overrides[$path]+present} ]] &&
-            reason=$(staged_content_reason "$index_oid" "${history_fixture_rules[$path:$index_oid]-}"); then
-            fail "拒绝敏感 staged 文件 $(printf '%q' "$path"): $reason"
+        if [[ -z ${test_fixture_content_overrides[$path]+present} ]]; then
+            inspect_content blob "$index_oid" "${history_fixture_rules[$path:$index_oid]-}"
+            if reason=$(content_verdict_reason "$scan_verdict"); then
+                record_content_scan "$path" index
+                fail "拒绝敏感 staged 文件 $(printf '%q' "$path"): $reason"
+            fi
         fi
     fi
 done
@@ -6503,7 +6641,9 @@ load_source_reviews head
 for path in "${!reviewed_source_paths[@]}"; do
     reviewed_oid=$(git -C "$repo" rev-parse "HEAD:$path") ||
         fail_after_commit '无法读取已审查源码 commit blob'
-    if reason=$(staged_content_reason "$reviewed_oid"); then
+    inspect_content blob "$reviewed_oid"
+    if reason=$(content_verdict_reason "$scan_verdict"); then
+        record_content_scan "$path" commit
         fail_after_commit "拒绝敏感 commit 内容: $reason"
     fi
 done

@@ -105,6 +105,55 @@ class AgentContractTests(unittest.TestCase):
             self.assertIs(run["commit"]["created"], False, label)
             self.assertIs(run["push"]["executed"], False, label)
 
+    def test_runtime_identity_is_available_before_repository_validation(self) -> None:
+        import hashlib
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="gf-agent-runtime-") as temporary:
+            repository = self.scratch_repository(Path(temporary))
+            summary = self.run_summary(repository, "--diagnostics", "--mode", "unsupported-mode")
+        self.assertEqual(summary["status"], "blocked")
+        self.assertEqual(summary["final_phase"], "cli")
+        self.assertEqual(summary["next_action"], "resolve_blocker_and_retry")
+        self.assertIsNone(summary["diagnostics"]["content_scan"])
+        for key, name in (("entrypoint", "git-finalize"),
+                          ("content_scanner", "git-finalize-content-scan.py")):
+            path = ROOT / name
+            self.assertEqual(summary["diagnostics"]["runtime"][key], {
+                "path": str(path.resolve()), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            })
+
+    def test_diagnostics_are_optional_and_require_summary(self) -> None:
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="gf-agent-diagnostics-") as temporary:
+            repository = self.scratch_repository(Path(temporary))
+            (repository / "f.txt").write_text("candidate\n")
+            plain = self.run_summary(repository, "--mode", "verify-only")
+            expanded = self.run_summary(repository, "--diagnostics", "--mode", "verify-only")
+            duplicate = self.run_summary(repository, "--diagnostics", "--diagnostics",
+                                         "--mode", "verify-only")
+            result = subprocess.run(
+                [str(FINALIZER), "--diagnostics", "--repo", str(repository),
+                 "--mode", "verify-only", "--", "f.txt"],
+                env={"PATH": os.defpath, "HOME": str(repository.parent / "home"),
+                     "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"},
+                capture_output=True, text=True, check=False,
+            )
+            argument_value = self.run_summary(repository, "--mode", "commit-only",
+                                              "--message", "--diagnostics")
+        self.assertNotIn("diagnostics", plain)
+        self.assertEqual(plain["status"], "success")
+        self.assertEqual(expanded["status"], "success")
+        self.assertIsNone(expanded["diagnostics"]["content_scan"])
+        self.assertEqual(duplicate["status"], "blocked")
+        self.assertIn("may be supplied once", duplicate["reason"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--diagnostics requires --summary", result.stderr)
+        self.assertTrue(argument_value["commit"]["created"])
+        self.assertNotIn("diagnostics", argument_value)
+
 
     def setUp(self) -> None:
         self.source = FINALIZER.read_text(encoding="utf-8")
@@ -224,7 +273,7 @@ class AgentContractTests(unittest.TestCase):
             re.findall(r'^    result\["([a-z_]+)"\] = ', self.source, re.MULTILINE)
         ) - {"mode_result"}
         self.assertEqual(
-            optional, {"resume", "fixture_exceptions", "reviewed_sensitive_sources"}
+            optional, {"resume", "fixture_exceptions", "reviewed_sensitive_sources", "diagnostics"}
         )
         matrix = BOUNDARIES.read_text(encoding="utf-8")
         for key in optional:
