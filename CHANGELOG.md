@@ -19,6 +19,9 @@ section is invented for it.
   scanner paths/checksums. Record the first content refusal's detector, file, scan stage, size
   and exact byte/blob identity from the same scanner invocation. No matched value, source
   excerpt or filter output is included; non-content refusals do not invent content findings.
+- Include diagnostics automatically for content refusals/risks; `--summary --diagnostics` also
+  includes runtime identity without a content finding. Ordinary summaries retain their output
+  efficiency budget, and `--diagnostics` requires `--summary` without changing scan policy.
 - Preserve the existing fixed summary fields, classification triple, exit codes, legacy scanner
   protocol and all default scanning/fixture guards. Malformed reports and failed reads/filters
   remain fail-closed; dry-run risks remain observations, without mutation authority.

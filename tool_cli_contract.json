@@ -84,6 +84,7 @@
         "--task-key",
         "--authority-key",
         "--summary",
+        "--diagnostics",
         "--"
       ],
       "name": "verify_only",
@@ -120,6 +121,7 @@
         "--task-key",
         "--authority-key",
         "--summary",
+        "--diagnostics",
         "--"
       ],
       "name": "commit_only",
@@ -148,6 +150,7 @@
         "--allow-large-binary",
         "--dry-run",
         "--summary",
+        "--diagnostics",
         "--"
       ],
       "name": "initial_commit_only",
@@ -177,6 +180,7 @@
         "--task-key",
         "--authority-key",
         "--summary",
+        "--diagnostics",
         "--",
         "--fixture-exceptions"
       ],
@@ -207,6 +211,7 @@
         "--allow-large-binary",
         "--dry-run",
         "--summary",
+        "--diagnostics",
         "--"
       ],
       "name": "initial_publish",
@@ -234,6 +239,7 @@
         "--allow-large-binary",
         "--dry-run",
         "--summary",
+        "--diagnostics",
         "--"
       ],
       "name": "initial_branch_publish",
@@ -256,6 +262,7 @@
         "--remote",
         "--repo",
         "--summary",
+        "--diagnostics",
         "--allow-large-binary"
       ],
       "name": "resume_initial_publish",
@@ -277,6 +284,7 @@
         "--resume-publish",
         "--repo",
         "--summary",
+        "--diagnostics",
         "--fixture-exceptions",
         "--allow-large-binary",
         "--reviewed-sensitive-source",
@@ -313,7 +321,8 @@
         "--repo",
         "--dry-run",
         "--fixture-exceptions",
-        "--summary"
+        "--summary",
+        "--diagnostics"
       ],
       "name": "sync_published_branch",
       "operation_class": "remote_mutation",
@@ -340,6 +349,7 @@
         "--remote-branch",
         "--repo",
         "--summary",
+        "--diagnostics",
         "--fixture-exceptions",
         "--reviewed-sensitive-source",
         "--repository-id",
@@ -371,6 +381,7 @@
         "--remote-branch",
         "--repo",
         "--summary",
+        "--diagnostics",
         "--fixture-exceptions",
         "--allow-large-binary"
       ],
@@ -397,6 +408,7 @@
         "--remote-branch",
         "--repo",
         "--summary",
+        "--diagnostics",
         "--fixture-exceptions",
         "--allow-large-binary"
       ],
@@ -455,7 +467,8 @@
         "--ci-verified-at",
         "--repo",
         "--dry-run",
-        "--summary"
+        "--summary",
+        "--diagnostics"
       ],
       "name": "retire_remote_branch",
       "operation_class": "remote_mutation",
@@ -486,7 +499,8 @@
         "--retirement-plan-id",
         "--repo",
         "--dry-run",
-        "--summary"
+        "--summary",
+        "--diagnostics"
       ],
       "name": "retire_local_branch",
       "operation_class": "local_mutation",
@@ -524,7 +538,7 @@
       "--help"
     ],
     "summary": "bounded_deterministic_json",
-    "summary_diagnostics": "optional_metadata_only_runtime_identity_and_same_scan_refusal; no matched values or source excerpts; fixed fields, classification triple and exit codes unchanged"
+    "summary_diagnostics": "optional metadata-only runtime identity and same-scan refusal; automatic for content refusals/risks, otherwise core --summary --diagnostics; no matched values or source excerpts; fixed fields, classification triple and exit codes unchanged"
   },
   "operation_classes": [
     "read_only",

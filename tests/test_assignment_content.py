@@ -179,7 +179,7 @@ class AssignmentContentTests(unittest.TestCase):
                     self.write(content)
                     status, summary = self.finalize()
                     self.assertEqual(status, 0, summary)
-                    self.assertIsNone(summary["diagnostics"]["content_scan"])
+                    self.assertNotIn("diagnostics", summary)
             self.source.unlink()
 
     def test_refusal_diagnostics_bind_raw_bytes_without_echoing_values(self) -> None:

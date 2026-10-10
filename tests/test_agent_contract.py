@@ -111,7 +111,7 @@ class AgentContractTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix="gf-agent-runtime-") as temporary:
             repository = self.scratch_repository(Path(temporary))
-            summary = self.run_summary(repository, "--mode", "unsupported-mode")
+            summary = self.run_summary(repository, "--diagnostics", "--mode", "unsupported-mode")
         self.assertEqual(summary["status"], "blocked")
         self.assertEqual(summary["final_phase"], "cli")
         self.assertEqual(summary["next_action"], "resolve_blocker_and_retry")
@@ -122,6 +122,33 @@ class AgentContractTests(unittest.TestCase):
             self.assertEqual(summary["diagnostics"]["runtime"][key], {
                 "path": str(path.resolve()), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             })
+
+    def test_diagnostics_are_optional_and_require_summary(self) -> None:
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="gf-agent-diagnostics-") as temporary:
+            repository = self.scratch_repository(Path(temporary))
+            (repository / "f.txt").write_text("candidate\n")
+            plain = self.run_summary(repository, "--mode", "verify-only")
+            expanded = self.run_summary(repository, "--diagnostics", "--mode", "verify-only")
+            duplicate = self.run_summary(repository, "--diagnostics", "--diagnostics",
+                                         "--mode", "verify-only")
+            result = subprocess.run(
+                [str(FINALIZER), "--diagnostics", "--repo", str(repository),
+                 "--mode", "verify-only", "--", "f.txt"],
+                env={"PATH": os.defpath, "HOME": str(repository.parent / "home"),
+                     "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"},
+                capture_output=True, text=True, check=False,
+            )
+        self.assertNotIn("diagnostics", plain)
+        self.assertEqual(plain["status"], "success")
+        self.assertEqual(expanded["status"], "success")
+        self.assertIsNone(expanded["diagnostics"]["content_scan"])
+        self.assertEqual(duplicate["status"], "blocked")
+        self.assertIn("may be supplied once", duplicate["reason"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--diagnostics requires --summary", result.stderr)
 
 
     def setUp(self) -> None:

@@ -223,9 +223,10 @@ git-finalize --publish-existing-branch <full-head-oid> --remote origin \
 
 Ask for machine-readable output by adding `--summary` to any of the above. The result is one JSON
 object with `status`, `final_phase` and `next_action` even when the run is blocked.
-Its optional `diagnostics` object identifies the actual entrypoint and scanner by path and SHA-256,
-and identifies a content refusal by detector, file, scan stage and the exact scanned byte/blob
-digest. It never includes the matched value or a source excerpt. The existing result triple and
+Content refusals and dry-run content risks include an optional `diagnostics` object identifying
+the actual entrypoint and scanner by path and SHA-256, plus the detector, file, scan stage and
+exact scanned byte/blob digest. Add `--diagnostics` to core `--summary` to include runtime identity
+without a content finding. It never includes the matched value or a source excerpt. The existing result triple and
 scanner guards are unchanged; see [the diagnostics contract](docs/agent-contract.md#metadata-only-diagnostics).
 
 ## Modes

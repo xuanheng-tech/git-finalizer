@@ -312,6 +312,9 @@ git-finalize \
 没有内容拒绝时为 null。它不输出命中值、源码片段或 filter stderr。工作树、clean-filter candidate、
 index、history 和 commit 的阶段分别标为 `worktree`、`candidate`、`index`、`history`、`commit`；
 读取或 classifier 失败仍拒绝，无法确认的字节摘要为 null。dry-run finding 仍仅是风险观察。
+内容拒绝或 dry-run 内容风险自动包含诊断；其它 bash core 场景使用 `--summary --diagnostics`
+按需展开 runtime 身份，普通摘要保持精简。`--diagnostics` 必须与 `--summary` 一起使用且只能
+指定一次；exec-forwarded bootstrap/integration companion 保持原接口。
 消费者按可选字段读取，继续使用原 `(final_phase, status, next_action)` 判定。
 完整字段合同见 [Agent contract](agent-contract.md#metadata-only-diagnostics)。
 

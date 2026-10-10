@@ -78,10 +78,13 @@ content_scan_entrypoint=$(realpath -e -- "${BASH_SOURCE[0]}" 2>/dev/null) || con
 readonly content_scan_entrypoint
 
 summary_requested=0
+summary_diagnostics_requested=0
 for summary_argument in "$@"; do
     [[ "$summary_argument" != '--' ]] || break
     if [[ "$summary_argument" == '--summary' ]]; then
         summary_requested=1
+    elif [[ "$summary_argument" == '--diagnostics' ]]; then
+        summary_diagnostics_requested=1
     fi
 done
 
@@ -258,7 +261,7 @@ render_summary() {
         "$summary_retirement_receipt_id" \
         "$(printf '%s\n' "${summary_fixture_exceptions[@]}")" \
         "$(printf '%s\n' "${summary_source_reviews[@]}")" \
-        "$summary_runtime_identity" "$summary_scan_path" "$summary_scan_stage" \
+        "$summary_runtime_identity" "$summary_diagnostics_requested" "$summary_scan_path" "$summary_scan_stage" \
         "$summary_scan_verdict" "$summary_scan_size" "$summary_scan_binary" \
         "$summary_scan_sha256" "$summary_scan_blob_oid" "$summary_scanner_sha256" \
         "${summary_warnings[@]}" <<'PY'
@@ -365,6 +368,7 @@ fixture_exceptions = [json.loads(line) for line in take(values).splitlines() if 
 source_reviews = [json.loads(line) for line in take(values).splitlines() if line]
 runtime_raw = take(values)
 runtime = json.loads(runtime_raw) if runtime_raw else None
+diagnostics_requested = take(values) == "1"
 scan_path = take(values)
 scan_stage = take(values)
 scan_verdict = take(values)
@@ -594,7 +598,7 @@ if resume_required:
         "head_oid": resume_oid,
         "remote": resume_remote,
     }
-if runtime is not None:
+if runtime is not None and (diagnostics_requested or scan_verdict):
     if scanner_sha256:
         runtime["content_scanner"]["sha256"] = scanner_sha256
     content_scan = None
@@ -776,6 +780,7 @@ Options:
                                Existing publication/resume bind it to the exact HEAD blob.
   --dry-run                      Commit modes avoid Git mutation/remote; retirement runs live preflight only.
   --summary                      Emit one bounded JSON result instead of phase output.
+  --diagnostics                  Include runtime identity in core --summary even without a content refusal.
   --version                      Show the version and exit.
   -h, --help                     Show this help.
 EOF
@@ -5310,6 +5315,7 @@ ci_verified_at_seen=0
 resume_seen=0
 snapshot_seen=0
 summary_seen=0
+diagnostics_seen=0
 separator_seen=0
 fixture_exceptions_file=''
 fixture_exceptions_seen=0
@@ -5602,6 +5608,11 @@ while (($# > 0)); do
             summary_seen=1
             shift
             ;;
+        --diagnostics)
+            ((diagnostics_seen == 0)) || fail '--diagnostics may be supplied once'
+            diagnostics_seen=1
+            shift
+            ;;
         --version)
             printf 'git-finalize %s\n' "$VERSION"
             exit 0
@@ -5649,6 +5660,7 @@ done
 input_paths=("$@")
 summary_repo=$repo_arg
 summary_path_count=${#input_paths[@]}
+((summary_diagnostics_requested == 0 || summary_requested == 1)) || fail '--diagnostics requires --summary'
 if ((dry_run == 1)); then
     summary_dry_run=true
 fi

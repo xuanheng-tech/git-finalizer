@@ -319,9 +319,7 @@ assert document["next_action"] == "none", document["next_action"]
 assert document["exit_code"] == 0, document["exit_code"]
 assert document["summary_schema_version"] == 1
 assert document["reason"] is None, document["reason"]
-assert document["diagnostics"]["schema_version"] == 1
-assert document["diagnostics"]["content_scan"] is None
-document.pop("diagnostics")
+assert "diagnostics" not in document
 print(",".join(sorted(document)))
 ' "$case_dir/ok.json" >"$case_dir/keys"
     documented=$(documented_fixed_keys)

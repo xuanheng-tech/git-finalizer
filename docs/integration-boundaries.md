@@ -57,7 +57,8 @@ Git Finalizer（GF）核心只依赖 GNU bash、Git、GNU utilities 与 `PATH` �
   review 身份）、`diagnostics`（实际入口/sidecar 路径与摘要，以及同一次扫描绑定的首个内容拒绝元数据）。
   `diagnostics.schema_version` 为 1；内容 finding 仅含规则、路径、扫描阶段、大小、SHA-256 和可用的
   blob OID，不含命中值或源码片段。消费者忽略未知可选字段，继续按原三元组判断；其它拒绝的
-  `content_scan` 为 null。测试从源码提取条件键并要求本文件逐个列出，新增条件键必须同时改文档。
+  `content_scan` 为 null。内容拒绝/风险自动带诊断，其它 bash core 场景通过 `--summary --diagnostics`
+  按需展开；普通摘要保持原输出预算。测试从源码提取条件键并要求本文件逐个列出，新增条件键必须同时改文档。
 - 序列化失败的兜底对象使用**不同**的键形状（`summary_status`/`operation_status`/
   `operation_exit_code`），它不是正常合同的一部分，只表示“无法产出合规摘要”，Agent 必须按失败处理。
 - `status` 的取值封闭为 `success`、`blocked`、`failed`（测试从源码 `summary_status` 字面量提取并要求

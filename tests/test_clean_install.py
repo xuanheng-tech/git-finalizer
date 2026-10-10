@@ -129,7 +129,7 @@ class CleanInstallTests(unittest.TestCase):
         self.assertEqual(selected, str(sys.version_info[:2]))
         self.path.write_text("verified installed state\n")
         before = self.state()
-        data = self.run_cli("--mode", "verify-only", "--", "example.txt")
+        data = self.run_cli("--diagnostics", "--mode", "verify-only", "--", "example.txt")
         self.assertFalse(data["commit"]["created"])
         self.assertFalse(data["push"]["executed"])
         self.assertEqual(self.state(), before)
@@ -170,7 +170,7 @@ class CleanInstallTests(unittest.TestCase):
         sidecar.write_bytes(sidecar.read_bytes() + b"\n# Synthetic installation identity change.\n")
         self.path.write_text("runtime observation candidate\n")
         before = self.state()
-        data = self.run_cli("--mode", "verify-only", "--", "example.txt")
+        data = self.run_cli("--diagnostics", "--mode", "verify-only", "--", "example.txt")
         self.assertEqual(self.state(), before)
         runtime = data["diagnostics"]["runtime"]
         for key, path in (("entrypoint", Path(self.executable)), ("content_scanner", sidecar)):
@@ -187,7 +187,7 @@ class CleanInstallTests(unittest.TestCase):
         alias.symlink_to(target)
         self.executable = str(alias)
         self.path.write_text("symlink entry candidate\n")
-        data = self.run_cli("--mode", "verify-only", "--", "example.txt")
+        data = self.run_cli("--diagnostics", "--mode", "verify-only", "--", "example.txt")
         self.assertEqual(data["diagnostics"]["runtime"]["entrypoint"], {
             "path": str(target.resolve()), "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
         })
