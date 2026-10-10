@@ -343,6 +343,7 @@ record.
 | `v1.8.15` | GitHub + Gitea | `e657618770309ed762528b51466f4482bb8d4a0c` | `5e78d59065132f00ea6f3d72e55882c62a9e96bc` | `dca4a5c2febec8c9682280391453b82e34bddbbff588b42a1a85ff4360659e6c` | 197239 |
 | `v1.8.16` | GitHub + Gitea | `f29655c2668337f3b089fab3d729816e57eb4bcb` | `19f5ed500dbd287a10f1c224155b4de40b869467` | `b06aef49c3419a647cfa077bbac839039773aceaa2e5385af90c37b9b5cccafa` | 199050 |
 | `v1.8.17` | GitHub + Gitea | `24c4f53c0fa270beec9284b42222b71230a1b88a` | `5efb356ba6019ef425d5b3f3d571007709822f0f` | `71d639f92d40dd5a9f4775ad331c3b93fcade92747b0e1b1fa57ab969f4be7ba` | 199380 |
+| `v1.8.18` | GitHub | `8285ab34c443fac89e19a87a3d039fd39567cbea` | `e0e074044be94116c7314800d68c3510693b7559` | `705d4141c818a3f7c15f0accd1895b250cff9e6ae91fccb628a5cb8a8d0c4746` | 201348 |
 
 `v1.8.10` is a deliberate mirror. GitHub run `36883946683` published release `401104963`;
 Gitea run `851` independently built and verified the same candidate and digest. Its publication
@@ -436,6 +437,28 @@ and six focused smoke tests passed, including a three-file resolved merge and cl
 Read-only default scans of the three QP test files passed for their raw, stage-0 and candidate
 blobs, with known-token, private-key, SSH, other-assignment and credential-child-file controls still
 refused. QP sources and their stage-0 identities stayed unchanged; no QP fixture exception was used.
+
+`v1.8.18` adds metadata-only core-summary diagnostics for the actual entrypoint/scanner and the
+first content refusal's scanned-byte hash, blob, detector and scan stage. Content refusals/risks include
+them automatically; `--summary --diagnostics` also includes runtime identity without a finding.
+Ordinary summaries retain the existing aggregate efficiency gate (10.74% fewer bytes in its six
+scenarios). Default scanner guards, legacy verdict/candidate protocols, exit codes and the result
+classification triple remain unchanged; no matched value or source excerpt is emitted.
+GitHub-only run `38063437836` published and re-verified release `409033228`. Independent downloaded
+assets match the fresh clean candidate's pre-tag `selfcheck`, including the 201348-byte archive;
+the checksum file is 94 bytes. Main-first Controller publication and exact synchronization of both
+main remotes preceded the annotated tag. The exact candidate passed `just release-check`: 16 PASS,
+0 SKIP, 0 FAIL, including 458 Python tests, 68 Skill tests and the real Controller suite with
+Controller `1.20.1`, CLI contract `52` and storage layout `4`.
+Supported installation activated bundle `1.8.18-8285ab34c443fac89e19a-fe7f0dfbbae9`, retaining the
+previous 1.8.17 bundle. All 42 scanner regressions then passed against the actual installed entry
+and sidecar, including directory-reference, known-token, private-key, SSH, ambiguity, clean-filter
+and failure guards. The default four-tool doctor passed. The installed entrypoint and scanner
+SHA-256 are respectively `0db81425a80d721790c2f49e8a7114528ce6a606d40966cb44b056073beac3f1`
+and `5596b5c5c3a04f14ca651aa9eef3c1b2bbfb3207c47752ebf8ac88b2c98329e0`.
+Code publication receipt `c18db012-e14f-4df2-bf07-3d6c597288ff` is remote verified; source release
+receipt `f286695e-c063-45f0-8c7f-8cb495429546` has COMPLETE proof. No QP checkout was read or changed
+for this delivery.
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
