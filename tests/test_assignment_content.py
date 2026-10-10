@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -178,7 +179,34 @@ class AssignmentContentTests(unittest.TestCase):
                     self.write(content)
                     status, summary = self.finalize()
                     self.assertEqual(status, 0, summary)
+                    self.assertIsNone(summary["diagnostics"]["content_scan"])
             self.source.unlink()
+
+    def test_refusal_diagnostics_bind_raw_bytes_without_echoing_values(self) -> None:
+        cases = (
+            (b'password = "' + b'SYNTHETIC_VALUE_012345' + b'"\n',
+             "ASSIGNMENT", "credential-assignment-v1"),
+            (b'# -----BEGIN ' + b'PRIVATE KEY-----\n', "PRIVATE", "private-key-header-v1"),
+            (b'# gh' + b'p_' + b'A' * 32 + b'\n', "KNOWN", "known-token-v1"),
+            (b'# ssh-' + b'ed25519 ' + b'A' * 48 + b'\n', "SSH", "ssh-key"),
+        )
+        for raw, verdict, detector in cases:
+            with self.subTest(detector=detector):
+                summary = self.assert_blocked(raw)
+                diagnostic = summary["diagnostics"]["content_scan"]
+                self.assertEqual(diagnostic, {
+                    "path": self.path, "stage": "worktree", "verdict": verdict,
+                    "detector": detector, "byte_length": len(raw), "binary": False,
+                    "sha256": hashlib.sha256(raw).hexdigest(), "blob_oid": None,
+                })
+                runtime = summary["diagnostics"]["runtime"]
+                for key, name in (("entrypoint", "git-finalize"),
+                                  ("content_scanner", "git-finalize-content-scan.py")):
+                    source = (ROOT / name).resolve()
+                    self.assertEqual(runtime[key], {
+                        "path": str(source), "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                    })
+                self.assertNotIn(raw.decode().strip(), json.dumps(summary))
 
     def test_additional_directory_forms_require_exact_static_context(self) -> None:
         constant, field = additional_directory_forms()
@@ -364,9 +392,16 @@ class AssignmentContentTests(unittest.TestCase):
         self.application_test_path()
         self.write(environment_item(DIRECTORY + "/password"))
         self.commit_fixture("Synthetic unsafe historical credential file")
+        unsafe_oid = self.git("rev-parse", "HEAD:" + self.path)
         self.write(environment_item())
         self.commit_fixture("Synthetic safe directory replacement")
-        self.assert_blocked(environment_item() + b"# Synthetic edit\n", mode="initial-branch")
+        summary = self.assert_blocked(environment_item() + b"# Synthetic edit\n", mode="initial-branch")
+        diagnostic = summary["diagnostics"]["content_scan"]
+        self.assertEqual(diagnostic["stage"], "history")
+        self.assertEqual(diagnostic["path"], self.path)
+        self.assertEqual(diagnostic["blob_oid"], unsafe_oid)
+        self.assertEqual(diagnostic["sha256"],
+                         hashlib.sha256(environment_item(DIRECTORY + "/password")).hexdigest())
         self.assertEqual(self.git("ls-remote", "origin", "refs/heads/feature/schema"), "")
 
     def test_candidate_clean_filter_cannot_hide_secret_behind_directory(self) -> None:
@@ -383,12 +418,20 @@ class AssignmentContentTests(unittest.TestCase):
         self.git("config", "filter.synthetic.required", "true")
         for raw in (environment_item(), *additional_directory_forms()):
             target.write_bytes(raw + b'password = "SYNTHETIC_VALUE_012345"\n')
-            self.write(raw)
-            status, summary = self.finalize()
-            self.assertEqual(status, 1, summary)
-            self.assertFalse(summary["commit"]["created"])
-            self.assertFalse(summary["push"]["executed"])
-            self.assertIn("候选", summary["reason"])
+            for mode, stage in (("verify-only", "candidate"), ("commit-only", "index")):
+                with self.subTest(mode=mode, raw=raw):
+                    self.write(raw)
+                    status, summary = self.finalize(mode)
+                    self.assertEqual(status, 1, summary)
+                    self.assertFalse(summary["commit"]["created"])
+                    self.assertFalse(summary["push"]["executed"])
+                    diagnostic = summary["diagnostics"]["content_scan"]
+                    self.assertEqual(diagnostic["stage"], stage)
+                    self.assertEqual(diagnostic["path"], self.path)
+                    self.assertEqual(diagnostic["detector"], "credential-assignment-v1")
+                    self.assertEqual(diagnostic["sha256"], hashlib.sha256(target.read_bytes()).hexdigest())
+                    self.assertEqual(diagnostic["blob_oid"],
+                                     self.git("hash-object", "--no-filters", str(target)))
 
     def test_word_suffixes_do_not_start_secret_key_signatures(self) -> None:
         for prefix in ("task-", "predispatch-risk-", "TASK-"):
@@ -601,14 +644,33 @@ class AssignmentContentTests(unittest.TestCase):
             with self.subTest(exit_code=exit_code):
                 wrapper.write_text(
                     '#!/bin/sh\n'
-                    'if [ "$3" = file ] || [ "$3" = blob ]; then\n'
+                    'case "$3" in file|blob|report-file|report-blob)\n'
                     f'  exit {exit_code}\n'
-                    'fi\n'
+                    'esac\n'
                     f'exec {shlex.quote(sys.executable)} "$@"\n'
                 )
                 wrapper.chmod(0o755)
                 self.env["PATH"] = str(binary) + os.pathsep + os.defpath
-                self.assert_blocked(schema())
+                summary = self.assert_blocked(schema())
+                self.assertEqual(summary["diagnostics"]["content_scan"]["detector"],
+                                 "content-scan-error")
+
+    def test_scanner_reports_preserve_legacy_verdict_and_candidate_protocol(self) -> None:
+        self.write(environment_item())
+        self.commit_fixture("Synthetic scanner report fixture")
+        oid = self.git("rev-parse", "HEAD:" + self.path)
+        for kind, source in (("file", str(self.source)), ("blob", oid), ("candidate", self.path)):
+            with self.subTest(kind=kind):
+                command = [sys.executable, str(ROOT / "git-finalize-content-scan.py")]
+                arguments = [source, str(self.repo), "", ""]
+                legacy = subprocess.check_output([*command, kind, *arguments], text=True).split()
+                reported = subprocess.check_output([*command, "report-" + kind, *arguments],
+                                                   text=True).split()
+                self.assertEqual(legacy, reported[:5] if kind == "candidate" else reported[:1])
+                self.assertEqual(reported[3], hashlib.sha256(self.source.read_bytes()).hexdigest())
+                self.assertEqual(reported[4], "-" if kind == "file" else oid)
+                self.assertEqual(reported[5],
+                                 hashlib.sha256((ROOT / "git-finalize-content-scan.py").read_bytes()).hexdigest())
 
     def test_invalid_json_cannot_hide_escaped_signatures(self) -> None:
         signatures = (

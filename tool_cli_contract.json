@@ -523,7 +523,8 @@
       "--version",
       "--help"
     ],
-    "summary": "bounded_deterministic_json"
+    "summary": "bounded_deterministic_json",
+    "summary_diagnostics": "optional_metadata_only_runtime_identity_and_same_scan_refusal; no matched values or source excerpts; fixed fields, classification triple and exit codes unchanged"
   },
   "operation_classes": [
     "read_only",
@@ -540,5 +541,5 @@
   ],
   "schema_version": 1,
   "tool_name": "git-finalizer",
-  "tool_version": "1.8.17"
+  "tool_version": "1.8.18"
 }

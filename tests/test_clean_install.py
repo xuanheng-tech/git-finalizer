@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
 import runpy
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -162,6 +164,78 @@ class CleanInstallTests(unittest.TestCase):
         self.assertEqual(self.git("rev-parse", "HEAD"), committed)
         self.assertEqual(self.git("rev-parse", self.branch, repo=remote), committed)
         self.assertEqual(data["mode_result"]["post_verify"], "passed")
+
+    def test_runtime_identity_measures_installed_entry_and_changed_sidecar(self) -> None:
+        sidecar = self.bin / "git-finalize-content-scan.py"
+        sidecar.write_bytes(sidecar.read_bytes() + b"\n# Synthetic installation identity change.\n")
+        self.path.write_text("runtime observation candidate\n")
+        before = self.state()
+        data = self.run_cli("--mode", "verify-only", "--", "example.txt")
+        self.assertEqual(self.state(), before)
+        runtime = data["diagnostics"]["runtime"]
+        for key, path in (("entrypoint", Path(self.executable)), ("content_scanner", sidecar)):
+            self.assertEqual(runtime[key], {
+                "path": str(path.resolve()), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            })
+        self.assertNotEqual(runtime["content_scanner"]["sha256"],
+                            hashlib.sha256((ROOT / sidecar.name).read_bytes()).hexdigest())
+        self.assertIsNone(data["diagnostics"]["content_scan"])
+
+    def test_symlink_entry_uses_its_resolved_installation_identity(self) -> None:
+        target = Path(self.executable)
+        alias = self.bin / "synthetic-finalizer-link"
+        alias.symlink_to(target)
+        self.executable = str(alias)
+        self.path.write_text("symlink entry candidate\n")
+        data = self.run_cli("--mode", "verify-only", "--", "example.txt")
+        self.assertEqual(data["diagnostics"]["runtime"]["entrypoint"], {
+            "path": str(target.resolve()), "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        })
+
+    def test_invalid_sidecar_report_fails_closed_without_echoing_output(self) -> None:
+        sentinel = "SYNTHETIC_SIDECAR_OUTPUT_012345"
+        sidecar = self.bin / "git-finalize-content-scan.py"
+        sidecar.write_text(f"print({sentinel!r})\n")
+        self.path.write_text("invalid report candidate\n")
+        before = self.state()
+        data = self.run_cli("--mode", "verify-only", "--", "example.txt", succeeds=False)
+        self.assertEqual(self.state(), before)
+        self.assertFalse(data["commit"]["created"])
+        self.assertFalse(data["push"]["executed"])
+        self.assertEqual(data["diagnostics"]["content_scan"]["detector"], "content-scan-error")
+        self.assertNotIn(sentinel, json.dumps(data))
+
+    def test_symlink_sidecar_has_no_target_checksum_and_remains_blocked(self) -> None:
+        target = self.base / "synthetic-target.txt"
+        target.write_text("Synthetic unrelated file, never a scanner.\n")
+        sidecar = self.bin / "git-finalize-content-scan.py"
+        sidecar.unlink()
+        sidecar.symlink_to(target)
+        self.path.write_text("symlink scanner candidate\n")
+        before = self.state()
+        data = self.run_cli("--mode", "verify-only", "--", "example.txt", succeeds=False)
+        self.assertEqual(self.state(), before)
+        self.assertIsNone(data["diagnostics"]["runtime"]["content_scanner"]["sha256"])
+        self.assertEqual(data["diagnostics"]["content_scan"]["verdict"], "ERROR")
+
+    def test_candidate_scanner_failure_reports_no_byte_identity(self) -> None:
+        interpreter = self.bin / "python3"
+        interpreter.unlink()
+        interpreter.write_text(
+            '#!/bin/sh\ncase "$3" in report-candidate) exit 1;; esac\n'
+            f'exec {shlex.quote(sys.executable)} "$@"\n'
+        )
+        interpreter.chmod(0o755)
+        self.path.write_text("candidate classifier failure\n")
+        before = self.state()
+        data = self.run_cli("--mode", "verify-only", "--", "example.txt", succeeds=False)
+        self.assertEqual(self.state(), before)
+        diagnostic = data["diagnostics"]["content_scan"]
+        self.assertEqual(diagnostic["path"], "example.txt")
+        self.assertEqual(diagnostic["stage"], "candidate")
+        self.assertEqual(diagnostic["detector"], "content-scan-error")
+        self.assertIsNone(diagnostic["sha256"])
+        self.assertIsNone(diagnostic["blob_oid"])
 
     def test_unwritable_temporary_store_is_precise_and_preserves_git_state(self) -> None:
         blocked = self.base / "blocked-temporary"

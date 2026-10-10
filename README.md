@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.8.17**.
+Current source version: **1.8.18**.
 
-当前版本：`1.8.17`
+当前版本：`1.8.18`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
@@ -223,6 +223,10 @@ git-finalize --publish-existing-branch <full-head-oid> --remote origin \
 
 Ask for machine-readable output by adding `--summary` to any of the above. The result is one JSON
 object with `status`, `final_phase` and `next_action` even when the run is blocked.
+Its optional `diagnostics` object identifies the actual entrypoint and scanner by path and SHA-256,
+and identifies a content refusal by detector, file, scan stage and the exact scanned byte/blob
+digest. It never includes the matched value or a source excerpt. The existing result triple and
+scanner guards are unchanged; see [the diagnostics contract](docs/agent-contract.md#metadata-only-diagnostics).
 
 ## Modes
 

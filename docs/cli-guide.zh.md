@@ -307,6 +307,14 @@ git-finalize \
   -- path/to/file
 ```
 
+可选的 `diagnostics` 对象报告实际入口和 content scanner 的路径及 SHA-256。内容拒绝的
+`content_scan` 包含规则、仓库相对路径、扫描阶段和同一次扫描的大小、SHA-256、可用 blob OID；
+没有内容拒绝时为 null。它不输出命中值、源码片段或 filter stderr。工作树、clean-filter candidate、
+index、history 和 commit 的阶段分别标为 `worktree`、`candidate`、`index`、`history`、`commit`；
+读取或 classifier 失败仍拒绝，无法确认的字节摘要为 null。dry-run finding 仍仅是风险观察。
+消费者按可选字段读取，继续使用原 `(final_phase, status, next_action)` 判定。
+完整字段合同见 [Agent contract](agent-contract.md#metadata-only-diagnostics)。
+
 未指定时，stdout、stderr 和退出码沿用原合同。摘要直接来自本次执行状态，不会为构造结果
 重跑 Git 命令；成功、阻断和失败仍分别保留真实 `status`、`final_phase` 与 `exit_code`。
 公共字段包括仓库、branch/upstream、请求路径数、commit、push、post-verify、warning、失败原因

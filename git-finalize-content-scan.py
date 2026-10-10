@@ -219,17 +219,29 @@ def candidate(repo: str, path: str) -> tuple[bytes, str]:
 def main() -> int:
     try:
         kind, source, repo, excepted, only = sys.argv[1:]
+        report = kind.startswith("report-")
+        if report:
+            kind = kind.removeprefix("report-")
+        oid = None
         if kind == "candidate":
             raw, oid = candidate(repo, source)
-            print(scan(raw, excepted, only), len(raw), int(b"\0" in raw), hashlib.sha256(raw).hexdigest(), oid)
         else:
             if kind == "file":
                 raw = Path(source).read_bytes()
             elif kind == "blob":
                 raw = git(repo, "cat-file", "blob", source)
+                oid = source
             else:
                 raise ValueError("unknown scan kind")
-            print(scan(raw, excepted, only))
+        verdict = scan(raw, excepted, only)
+        if report:
+            # Bind metadata to these same bytes, never a second scan or source read.
+            print(verdict, len(raw), int(b"\0" in raw), hashlib.sha256(raw).hexdigest(),
+                  oid or "-", hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
+        elif kind == "candidate":
+            print(verdict, len(raw), int(b"\0" in raw), hashlib.sha256(raw).hexdigest(), oid)
+        else:
+            print(verdict)
         return 0
     except (OSError, ValueError, TypeError, RecursionError, subprocess.SubprocessError):
         # Never expose source bytes, filter diagnostics or exception values.

@@ -105,6 +105,24 @@ class AgentContractTests(unittest.TestCase):
             self.assertIs(run["commit"]["created"], False, label)
             self.assertIs(run["push"]["executed"], False, label)
 
+    def test_runtime_identity_is_available_before_repository_validation(self) -> None:
+        import hashlib
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="gf-agent-runtime-") as temporary:
+            repository = self.scratch_repository(Path(temporary))
+            summary = self.run_summary(repository, "--mode", "unsupported-mode")
+        self.assertEqual(summary["status"], "blocked")
+        self.assertEqual(summary["final_phase"], "cli")
+        self.assertEqual(summary["next_action"], "resolve_blocker_and_retry")
+        self.assertIsNone(summary["diagnostics"]["content_scan"])
+        for key, name in (("entrypoint", "git-finalize"),
+                          ("content_scanner", "git-finalize-content-scan.py")):
+            path = ROOT / name
+            self.assertEqual(summary["diagnostics"]["runtime"][key], {
+                "path": str(path.resolve()), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            })
+
 
     def setUp(self) -> None:
         self.source = FINALIZER.read_text(encoding="utf-8")
@@ -224,7 +242,7 @@ class AgentContractTests(unittest.TestCase):
             re.findall(r'^    result\["([a-z_]+)"\] = ', self.source, re.MULTILINE)
         ) - {"mode_result"}
         self.assertEqual(
-            optional, {"resume", "fixture_exceptions", "reviewed_sensitive_sources"}
+            optional, {"resume", "fixture_exceptions", "reviewed_sensitive_sources", "diagnostics"}
         )
         matrix = BOUNDARIES.read_text(encoding="utf-8")
         for key in optional:
