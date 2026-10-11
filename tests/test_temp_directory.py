@@ -275,6 +275,181 @@ class TempDirToolTest(unittest.TestCase):
                     allow_owned_fixture_fifo=False,
                 )
 
+    def test_exact_inactive_fixture_socket_cleanup_is_opt_in(self) -> None:
+        for relative in ("g/test_rpc_timeout0/rpc.sock", "project/pytest/test_rpc0/rpc.sock"):
+            with self.subTest(relative=relative):
+                _result, path = self.create("socket-stale")
+                marker = path / "keep.txt"
+                marker.write_text("keep")
+                fixture_socket = path / relative
+                fixture_socket.parent.mkdir(parents=True)
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+                    server.bind(str(fixture_socket))
+                self.assert_error("unsafe_entry", temp_tool.cleanup_directory, str(path))
+                preview = temp_tool.dry_run_cleanup(
+                    str(path), allow_owned_fixture_sockets=(relative,),
+                )
+                self.assertEqual(
+                    [entry["path"] for entry in preview["entries"] if entry["kind"] == "socket"],
+                    [relative],
+                )
+                self.assertEqual(marker.read_text(), "keep")
+                temp_tool.cleanup_directory(str(path), allow_owned_fixture_sockets=(relative,))
+                self.assertFalse(path.exists())
+
+    def test_bound_and_listening_fixture_sockets_are_preserved(self) -> None:
+        relative = "g/test_rpc0/rpc.sock"
+        for kind, listening, relative_bind in (
+            (socket.SOCK_STREAM, False, False),
+            (socket.SOCK_STREAM, True, False),
+            (socket.SOCK_DGRAM, False, False),
+            (socket.SOCK_STREAM, True, True),
+        ):
+            with self.subTest(kind=kind, listening=listening, relative_bind=relative_bind):
+                _result, path = self.create("socket-active")
+                marker = path / "keep.txt"
+                marker.write_text("keep")
+                fixture_socket = path / relative
+                fixture_socket.parent.mkdir(parents=True)
+                with socket.socket(socket.AF_UNIX, kind) as server:
+                    if relative_bind:
+                        previous_cwd = Path.cwd()
+                        try:
+                            os.chdir(fixture_socket.parent)
+                            server.bind(fixture_socket.name)
+                        finally:
+                            os.chdir(previous_cwd)
+                    else:
+                        server.bind(str(fixture_socket))
+                    if listening:
+                        server.listen()
+                    self.assert_error(
+                        "socket_active", temp_tool.cleanup_directory, str(path),
+                        allow_owned_fixture_sockets=(relative,),
+                    )
+                    self.assertTrue(fixture_socket.exists())
+                    self.assertEqual(marker.read_text(), "keep")
+                temp_tool.cleanup_directory(str(path), allow_owned_fixture_sockets=(relative,))
+
+    def test_unlisted_socket_blocks_cleanup_before_deletion(self) -> None:
+        _result, path = self.create("socket-exact")
+        fixture = path / "g/test_rpc0"
+        fixture.mkdir(parents=True)
+        paths = ("g/test_rpc0/one.sock", "g/test_rpc0/two.sock")
+        for relative in paths:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+                server.bind(str(path / relative))
+        marker = path / "keep.txt"
+        marker.write_text("keep")
+        self.assert_error(
+            "unsafe_entry", temp_tool.cleanup_directory, str(path),
+            allow_owned_fixture_sockets=(paths[0],),
+        )
+        self.assertEqual(marker.read_text(), "keep")
+        temp_tool.cleanup_directory(str(path), allow_owned_fixture_sockets=paths)
+
+    def test_socket_scope_rejects_traversal_wildcards_and_non_fixture_paths(self) -> None:
+        _result, path = self.create("socket-scope")
+        for relative in (
+            "", "rpc.sock", "/tmp/rpc.sock", "g/test_rpc0/../rpc.sock",
+            "g//test_rpc0/rpc.sock", "g/test_*/rpc.sock", "g/test_rpc0/rpc.sock\n",
+            "g/ordinary/rpc.sock", "g/test_rpc0/missing.sock",
+        ):
+            with self.subTest(relative=relative):
+                self.assert_error(
+                    "socket_scope_rejected", temp_tool.cleanup_directory, str(path),
+                    allow_owned_fixture_sockets=(relative,),
+                )
+        temp_tool.cleanup_directory(str(path))
+
+    def test_socket_option_rejects_symlink_and_regular_file(self) -> None:
+        _result, path = self.create("socket-symlink")
+        relative = "g/test_rpc0/rpc.sock"
+        target = path / relative
+        target.parent.mkdir(parents=True)
+        external = Path(self.temporary_state.name) / "keep.txt"
+        external.write_text("keep")
+        target.symlink_to(external)
+        self.assert_error(
+            "socket_scope_rejected", temp_tool.cleanup_directory, str(path),
+            allow_owned_fixture_sockets=(relative,),
+        )
+        self.assertEqual(external.read_text(), "keep")
+        target.unlink()
+        target.write_text("ordinary")
+        self.assert_error(
+            "socket_scope_rejected", temp_tool.cleanup_directory, str(path),
+            allow_owned_fixture_sockets=(relative,),
+        )
+        self.assertEqual(target.read_text(), "ordinary")
+        temp_tool.cleanup_directory(str(path))
+
+    def test_foreign_owned_fixture_socket_is_preserved(self) -> None:
+        _result, path = self.create("socket-owner")
+        relative = "g/test_rpc0/rpc.sock"
+        target = path / relative
+        target.parent.mkdir(parents=True)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(str(target))
+        original_stat = os.stat
+
+        def foreign_socket_stat(*arguments: Any, **keywords: Any) -> os.stat_result:
+            metadata = original_stat(*arguments, **keywords)
+            if arguments[0] == "rpc.sock" and keywords.get("dir_fd") is not None:
+                fields = list(metadata)
+                fields[4] = os.getuid() + 1
+                return os.stat_result(fields)
+            return metadata
+
+        with mock.patch.object(temp_tool.os, "stat", side_effect=foreign_socket_stat):
+            self.assert_error(
+                "owner_mismatch", temp_tool.cleanup_directory, str(path),
+                allow_owned_fixture_sockets=(relative,),
+            )
+        self.assertTrue(target.exists())
+        temp_tool.cleanup_directory(str(path), allow_owned_fixture_sockets=(relative,))
+
+    def test_fixture_socket_replacement_after_validation_preserves_tree(self) -> None:
+        _result, path = self.create("socket-drift")
+        relative = "g/test_rpc0/rpc.sock"
+        target = path / relative
+        target.parent.mkdir(parents=True)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(str(target))
+        marker = path / "keep.txt"
+        marker.write_text("keep")
+        original_validate = temp_tool.validate_cleanup
+
+        def replace_after_validation(*arguments: Any, **keywords: Any) -> Any:
+            validation = original_validate(*arguments, **keywords)
+            target.unlink()
+            target.write_text("replacement")
+            return validation
+
+        with mock.patch.object(temp_tool, "validate_cleanup", side_effect=replace_after_validation):
+            self.assert_error(
+                "socket_scope_rejected", temp_tool.cleanup_directory, str(path),
+                allow_owned_fixture_sockets=(relative,),
+            )
+        self.assertEqual(marker.read_text(), "keep")
+        self.assertEqual(target.read_text(), "replacement")
+        temp_tool.cleanup_directory(str(path))
+
+    def test_unknown_socket_activity_blocks_cleanup(self) -> None:
+        _result, path = self.create("socket-unknown")
+        relative = "g/test_rpc0/rpc.sock"
+        target = path / relative
+        target.parent.mkdir(parents=True)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(str(target))
+        with mock.patch.object(temp_tool.Path, "read_text", side_effect=PermissionError("proc denied")):
+            self.assert_error(
+                "socket_activity_unknown", temp_tool.cleanup_directory, str(path),
+                allow_owned_fixture_sockets=(relative,),
+            )
+        self.assertTrue(target.exists())
+        temp_tool.cleanup_directory(str(path), allow_owned_fixture_sockets=(relative,))
+
     def test_registered_exact_basename_survives_namespace_migration(self) -> None:
         result, path = self.create("migration")
         old_record = Path(result["record"])

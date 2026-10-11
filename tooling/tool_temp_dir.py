@@ -19,7 +19,7 @@ from typing import Any
 TMP_ROOT = Path("/tmp")
 STATE_ROOT = Path.home() / ".local/state/tool-temp-dir"
 RECORD_VERSION = 2
-TOOL_VERSION = "1.0.4"
+TOOL_VERSION = "1.0.5"
 PREFIX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 NAME_RE = re.compile(
     r"^tool-task-(?P<prefix>[A-Za-z0-9][A-Za-z0-9_-]{0,63})-"
@@ -49,6 +49,7 @@ class CleanupValidation:
     device: int
     inode: int
     entries: tuple["CleanupEntry", ...]
+    fixture_socket_paths: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -327,12 +328,73 @@ def _prefix_allows_fixture_fifo(prefix: str) -> bool:
     return bool(tokens & FIXTURE_PREFIX_TOKENS)
 
 
+def _fixture_socket_paths(raw_paths: tuple[str, ...]) -> frozenset[str]:
+    for relative in raw_paths:
+        parts = relative.split("/")
+        numbered_node = len(parts) >= 3 and re.fullmatch(r"test_.+\d+", parts[1])
+        nested_node = any(
+            (root == "pytest" or (root.startswith("pytest-") and root != "pytest-"))
+            and re.fullmatch(r"test_.+\d+", parts[index + 1])
+            for index, root in enumerate(parts[1:-2], start=1)
+        )
+        if (
+            not relative
+            or os.path.isabs(relative)
+            or os.path.normpath(relative) != relative
+            or any(ord(character) < 32 or ord(character) == 127 for character in relative)
+            or any(part in {"", ".", ".."} or part.strip() != part for part in parts)
+            or not (numbered_node or nested_node)
+        ):
+            raise TempDirError(
+                "socket_scope_rejected",
+                f"socket 必须显式指定为 numbered pytest fixture 中的规范相对路径：{relative}",
+            )
+    return frozenset(raw_paths)
+
+
+def _ensure_fixture_socket_inactive(path: Path) -> None:
+    try:
+        lines = Path("/proc/net/unix").read_text(
+            encoding="utf-8", errors="surrogateescape"
+        ).splitlines()
+    except OSError as exc:
+        raise TempDirError("socket_activity_unknown", f"无法读取 Unix socket 状态：{exc}") from exc
+    if not lines or not lines[0].startswith("Num"):
+        raise TempDirError("socket_activity_unknown", "Unix socket 状态格式异常")
+    for line in lines[1:]:
+        fields = line.split(maxsplit=7)
+        if len(fields) < 7:
+            raise TempDirError("socket_activity_unknown", "Unix socket 状态行格式异常")
+        if len(fields) == 7 or fields[7].startswith("@"):
+            continue
+        bound_path = os.path.normpath(fields[7])
+        # Relative bind paths have no cwd in /proc/net/unix: ambiguous matches fail closed.
+        matches = (
+            str(path) == bound_path
+            if os.path.isabs(bound_path)
+            else Path(bound_path).name == path.name
+        )
+        if matches:
+            raise TempDirError("socket_active", f"socket 仍被进程绑定：{path}")
+
+
+def _fixture_socket_entries(
+    entries: list[CleanupEntry] | tuple[CleanupEntry, ...],
+    paths: frozenset[str],
+) -> dict[str, CleanupEntry]:
+    selected = {entry.relative_path: entry for entry in entries if entry.relative_path in paths}
+    if set(selected) != paths or any(entry.kind != "socket" for entry in selected.values()):
+        raise TempDirError("socket_scope_rejected", "显式指定的 fixture socket 缺失或不是 socket")
+    return selected
+
+
 def _allowed_entry_kind(
     mode: int,
     relative_path: str,
     *,
     allow_owned_fixture_fifo: bool,
     fifo_requires_pytest_subtree: bool = False,
+    fixture_socket_paths: frozenset[str] = frozenset(),
 ) -> str:
     kind = _entry_kind(mode)
     if kind == "FIFO" and allow_owned_fixture_fifo and fifo_requires_pytest_subtree:
@@ -356,6 +418,8 @@ def _allowed_entry_kind(
     allowed = {"regular file", "directory", "symlink"}
     if allow_owned_fixture_fifo:
         allowed.add("FIFO")
+    if relative_path in fixture_socket_paths:
+        allowed.add("socket")
     if kind not in allowed:
         raise TempDirError(
             "unsafe_entry",
@@ -379,6 +443,8 @@ def _scan_tree(
     expected_device: int,
     allow_owned_fixture_fifo: bool,
     fifo_requires_pytest_subtree: bool = False,
+    fixture_socket_paths: frozenset[str] = frozenset(),
+    fixture_root: Path | None = None,
     relative_root: str = "",
     entries: list[CleanupEntry] | None = None,
 ) -> list[CleanupEntry]:
@@ -405,7 +471,12 @@ def _scan_tree(
             relative,
             allow_owned_fixture_fifo=allow_owned_fixture_fifo,
             fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
+            fixture_socket_paths=fixture_socket_paths,
         )
+        if kind == "socket":
+            if fixture_root is None:
+                raise TempDirError("socket_activity_unknown", "缺少 fixture 根目录")
+            _ensure_fixture_socket_inactive(fixture_root / relative)
         entries.append(
             CleanupEntry(
                 relative_path=relative,
@@ -430,6 +501,8 @@ def _scan_tree(
                 expected_device=expected_device,
                 allow_owned_fixture_fifo=allow_owned_fixture_fifo,
                 fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
+                fixture_socket_paths=fixture_socket_paths,
+                fixture_root=fixture_root,
                 relative_root=relative,
                 entries=entries,
             )
@@ -494,7 +567,9 @@ def validate_cleanup(
     raw_path: str,
     *,
     allow_owned_fixture_fifo: bool = False,
+    allow_owned_fixture_sockets: tuple[str, ...] = (),
 ) -> CleanupValidation:
+    socket_paths = _fixture_socket_paths(allow_owned_fixture_sockets)
     path = _normalize_cleanup_path(raw_path)
     try:
         metadata = path.lstat()
@@ -538,7 +613,10 @@ def validate_cleanup(
             expected_device=metadata.st_dev,
             allow_owned_fixture_fifo=allow_owned_fixture_fifo,
             fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
+            fixture_socket_paths=socket_paths,
+            fixture_root=path,
         )
+        _fixture_socket_entries(entries, socket_paths)
         if fifo_requires_pytest_subtree and not any(
             entry.kind == "FIFO" for entry in entries
         ):
@@ -557,6 +635,7 @@ def validate_cleanup(
         device=metadata.st_dev,
         inode=metadata.st_ino,
         entries=tuple(entries),
+        fixture_socket_paths=socket_paths,
     )
 
 
@@ -567,6 +646,8 @@ def _delete_contents(
     expected_device: int,
     allow_owned_fixture_fifo: bool,
     fifo_requires_pytest_subtree: bool = False,
+    fixture_sockets: dict[str, CleanupEntry] | None = None,
+    fixture_root: Path | None = None,
     relative_root: str = "",
 ) -> None:
     directory = os.fstat(descriptor)
@@ -604,7 +685,17 @@ def _delete_contents(
             relative,
             allow_owned_fixture_fifo=allow_owned_fixture_fifo,
             fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
+            fixture_socket_paths=frozenset(fixture_sockets or ()),
         )
+        if fixture_sockets and relative in fixture_sockets:
+            expected = fixture_sockets[relative]
+            if kind != "socket" or (metadata.st_dev, metadata.st_ino) != (
+                expected.device, expected.inode
+            ):
+                raise TempDirError("identity_mismatch", f"fixture socket identity 发生变化：{relative}")
+            if fixture_root is None:
+                raise TempDirError("socket_activity_unknown", "缺少 fixture 根目录")
+            _ensure_fixture_socket_inactive(fixture_root / relative)
         try:
             if kind == "directory":
                 child = _open_directory(name, dir_fd=descriptor)
@@ -624,6 +715,8 @@ def _delete_contents(
                         expected_device=expected_device,
                         allow_owned_fixture_fifo=allow_owned_fixture_fifo,
                         fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
+                        fixture_sockets=fixture_sockets,
+                        fixture_root=fixture_root,
                         relative_root=relative,
                     )
                 finally:
@@ -641,11 +734,14 @@ def cleanup_directory(
     raw_path: str,
     *,
     allow_owned_fixture_fifo: bool = False,
+    allow_owned_fixture_sockets: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     validation = validate_cleanup(
         raw_path,
         allow_owned_fixture_fifo=allow_owned_fixture_fifo,
+        allow_owned_fixture_sockets=allow_owned_fixture_sockets,
     )
+    fixture_sockets = _fixture_socket_entries(validation.entries, validation.fixture_socket_paths)
     fifo_requires_pytest_subtree = (
         allow_owned_fixture_fifo
         and not _prefix_allows_fixture_fifo(validation.prefix)
@@ -660,19 +756,25 @@ def cleanup_directory(
             validation.inode,
         ):
             raise TempDirError("identity_mismatch", "删除前目标 identity 与登记不一致")
-        _scan_tree(
+        current_entries = _scan_tree(
             descriptor,
             expected_uid=validation.uid,
             expected_device=validation.device,
             allow_owned_fixture_fifo=allow_owned_fixture_fifo,
             fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
+            fixture_socket_paths=validation.fixture_socket_paths,
+            fixture_root=validation.path,
         )
+        if _fixture_socket_entries(current_entries, validation.fixture_socket_paths) != fixture_sockets:
+            raise TempDirError("identity_mismatch", "删除前 fixture socket identity 发生变化")
         _delete_contents(
             descriptor,
             expected_uid=validation.uid,
             expected_device=validation.device,
             allow_owned_fixture_fifo=allow_owned_fixture_fifo,
             fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
+            fixture_sockets=fixture_sockets,
+            fixture_root=validation.path,
         )
     finally:
         os.close(descriptor)
@@ -710,10 +812,12 @@ def dry_run_cleanup(
     raw_path: str,
     *,
     allow_owned_fixture_fifo: bool = False,
+    allow_owned_fixture_sockets: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     validation = validate_cleanup(
         raw_path,
         allow_owned_fixture_fifo=allow_owned_fixture_fifo,
+        allow_owned_fixture_sockets=allow_owned_fixture_sockets,
     )
     entries = [
         {
@@ -754,20 +858,33 @@ def _parser() -> argparse.ArgumentParser:
     create_parser = subparsers.add_parser("create")
     create_parser.add_argument("task_prefix")
     fifo_help = "allow owned FIFOs in fixture task roots or pytest fixture subtrees"
+    socket_help = "allow one exact owned, inactive socket path below a numbered pytest fixture (repeatable)"
     cleanup_parser = subparsers.add_parser("cleanup")
     cleanup_parser.add_argument("absolute_path")
     cleanup_parser.add_argument(
         "--allow-owned-fixture-fifo", action="store_true", help=fifo_help
+    )
+    cleanup_parser.add_argument(
+        "--allow-owned-fixture-socket", action="append", default=[], metavar="RELATIVE_PATH",
+        help=socket_help,
     )
     dry_run_parser = subparsers.add_parser("dry-run-cleanup")
     dry_run_parser.add_argument("absolute_path")
     dry_run_parser.add_argument(
         "--allow-owned-fixture-fifo", action="store_true", help=fifo_help
     )
+    dry_run_parser.add_argument(
+        "--allow-owned-fixture-socket", action="append", default=[], metavar="RELATIVE_PATH",
+        help=socket_help,
+    )
     validate_parser = subparsers.add_parser("validate-cleanup")
     validate_parser.add_argument("absolute_path")
     validate_parser.add_argument(
         "--allow-owned-fixture-fifo", action="store_true", help=fifo_help
+    )
+    validate_parser.add_argument(
+        "--allow-owned-fixture-socket", action="append", default=[], metavar="RELATIVE_PATH",
+        help=socket_help,
     )
     return parser
 
@@ -781,16 +898,19 @@ def main(argv: list[str] | None = None) -> int:
             result = cleanup_directory(
                 arguments.absolute_path,
                 allow_owned_fixture_fifo=arguments.allow_owned_fixture_fifo,
+                allow_owned_fixture_sockets=tuple(arguments.allow_owned_fixture_socket),
             )
         elif arguments.command == "dry-run-cleanup":
             result = dry_run_cleanup(
                 arguments.absolute_path,
                 allow_owned_fixture_fifo=arguments.allow_owned_fixture_fifo,
+                allow_owned_fixture_sockets=tuple(arguments.allow_owned_fixture_socket),
             )
         else:
             validation = validate_cleanup(
                 arguments.absolute_path,
                 allow_owned_fixture_fifo=arguments.allow_owned_fixture_fifo,
+                allow_owned_fixture_sockets=tuple(arguments.allow_owned_fixture_socket),
             )
             result = {
                 "ok": True,
