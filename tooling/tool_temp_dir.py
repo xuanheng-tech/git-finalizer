@@ -19,7 +19,7 @@ from typing import Any
 TMP_ROOT = Path("/tmp")
 STATE_ROOT = Path.home() / ".local/state/tool-temp-dir"
 RECORD_VERSION = 2
-TOOL_VERSION = "1.0.5"
+TOOL_VERSION = "1.0.6"
 PREFIX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 NAME_RE = re.compile(
     r"^tool-task-(?P<prefix>[A-Za-z0-9][A-Za-z0-9_-]{0,63})-"
@@ -328,7 +328,9 @@ def _prefix_allows_fixture_fifo(prefix: str) -> bool:
     return bool(tokens & FIXTURE_PREFIX_TOKENS)
 
 
-def _fixture_socket_paths(raw_paths: tuple[str, ...]) -> frozenset[str]:
+def _fixture_socket_paths(
+    raw_paths: tuple[str, ...], *, fixture_root: bool = False,
+) -> frozenset[str]:
     for relative in raw_paths:
         parts = relative.split("/")
         numbered_node = len(parts) >= 3 and re.fullmatch(r"test_.+\d+", parts[1])
@@ -343,11 +345,11 @@ def _fixture_socket_paths(raw_paths: tuple[str, ...]) -> frozenset[str]:
             or os.path.normpath(relative) != relative
             or any(ord(character) < 32 or ord(character) == 127 for character in relative)
             or any(part in {"", ".", ".."} or part.strip() != part for part in parts)
-            or not (numbered_node or nested_node)
+            or not (fixture_root or numbered_node or nested_node)
         ):
             raise TempDirError(
                 "socket_scope_rejected",
-                f"socket 必须显式指定为 numbered pytest fixture 中的规范相对路径：{relative}",
+                f"socket 必须显式指定为 fixture task root 或 numbered pytest fixture 中的规范相对路径：{relative}",
             )
     return frozenset(raw_paths)
 
@@ -569,7 +571,9 @@ def validate_cleanup(
     allow_owned_fixture_fifo: bool = False,
     allow_owned_fixture_sockets: tuple[str, ...] = (),
 ) -> CleanupValidation:
-    socket_paths = _fixture_socket_paths(allow_owned_fixture_sockets)
+    # Check lexical scope before filesystem access; fixture-root authority comes
+    # only from the verified creation record below, never the supplied basename.
+    socket_paths = _fixture_socket_paths(allow_owned_fixture_sockets, fixture_root=True)
     path = _normalize_cleanup_path(raw_path)
     try:
         metadata = path.lstat()
@@ -592,6 +596,10 @@ def validate_cleanup(
     record = _read_record(record_path)
     _validate_record(record, path=path, metadata=metadata)
     prefix = record["prefix"]
+    _fixture_socket_paths(
+        allow_owned_fixture_sockets,
+        fixture_root=_prefix_allows_fixture_fifo(prefix),
+    )
     fifo_requires_pytest_subtree = (
         allow_owned_fixture_fifo and not _prefix_allows_fixture_fifo(prefix)
     )
@@ -858,7 +866,10 @@ def _parser() -> argparse.ArgumentParser:
     create_parser = subparsers.add_parser("create")
     create_parser.add_argument("task_prefix")
     fifo_help = "allow owned FIFOs in fixture task roots or pytest fixture subtrees"
-    socket_help = "allow one exact owned, inactive socket path below a numbered pytest fixture (repeatable)"
+    socket_help = (
+        "allow one exact owned, inactive socket in a registered fixture task root "
+        "or below a numbered pytest fixture (repeatable)"
+    )
     cleanup_parser = subparsers.add_parser("cleanup")
     cleanup_parser.add_argument("absolute_path")
     cleanup_parser.add_argument(

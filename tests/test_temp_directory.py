@@ -331,6 +331,85 @@ class TempDirToolTest(unittest.TestCase):
                     self.assertEqual(marker.read_text(), "keep")
                 temp_tool.cleanup_directory(str(path), allow_owned_fixture_sockets=(relative,))
 
+    def test_registered_fixture_root_accepts_exact_basetemp_sockets(self) -> None:
+        for relative in (
+            "project/pytest/s0",
+            "merge-focused/pytest/s1",
+            "shards/wcs.fixture/0/pt/s0",
+            "rpc.sock",
+        ):
+            with self.subTest(relative=relative):
+                result, path = self.create("fixture-basetemp")
+                record = Path(result["record"])
+                original_record = record.read_bytes()
+                marker = path / "keep.txt"
+                marker.write_text("keep")
+                target = path / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+                    server.bind(str(target))
+                self.assert_error("unsafe_entry", temp_tool.cleanup_directory, str(path))
+                preview = temp_tool.dry_run_cleanup(
+                    str(path), allow_owned_fixture_sockets=(relative,),
+                )
+                self.assertEqual(
+                    [entry["path"] for entry in preview["entries"] if entry["kind"] == "socket"],
+                    [relative],
+                )
+                self.assertEqual(record.read_bytes(), original_record)
+                self.assertEqual(marker.read_text(), "keep")
+                temp_tool.cleanup_directory(str(path), allow_owned_fixture_sockets=(relative,))
+                self.assertFalse(path.exists())
+
+    def test_fixture_root_socket_still_requires_inactivity_and_complete_scope(self) -> None:
+        _result, path = self.create("tests-basetemp")
+        marker = path / "keep.txt"
+        marker.write_text("keep")
+        one = path / "s0"
+        two = path / "s1"
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(str(one))
+            self.assert_error(
+                "socket_active", temp_tool.cleanup_directory, str(path),
+                allow_owned_fixture_sockets=("s0",),
+            )
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(str(two))
+        self.assert_error(
+            "unsafe_entry", temp_tool.cleanup_directory, str(path),
+            allow_owned_fixture_sockets=("s0",),
+        )
+        self.assertEqual(marker.read_text(), "keep")
+        temp_tool.cleanup_directory(str(path), allow_owned_fixture_sockets=("s0", "s1"))
+
+    def test_non_fixture_root_does_not_gain_basetemp_socket_scope(self) -> None:
+        _result, path = self.create("ordinary-basetemp")
+        marker = path / "keep.txt"
+        marker.write_text("keep")
+        target = path / "project/pytest/s0"
+        target.parent.mkdir(parents=True)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(str(target))
+        self.assert_error(
+            "socket_scope_rejected", temp_tool.cleanup_directory, str(path),
+            allow_owned_fixture_sockets=("project/pytest/s0",),
+        )
+        self.assertEqual(marker.read_text(), "keep")
+        self.assertTrue(target.exists())
+
+    def test_fixture_root_socket_scope_still_rejects_noncanonical_paths(self) -> None:
+        _result, path = self.create("fixture-scope")
+        marker = path / "keep.txt"
+        marker.write_text("keep")
+        for relative in ("", "../s0", "a/../s0", "/tmp/s0", "a//s0", "s0\n"):
+            with self.subTest(relative=relative):
+                self.assert_error(
+                    "socket_scope_rejected", temp_tool.cleanup_directory, str(path),
+                    allow_owned_fixture_sockets=(relative,),
+                )
+                self.assertEqual(marker.read_text(), "keep")
+        temp_tool.cleanup_directory(str(path))
+
     def test_unlisted_socket_blocks_cleanup_before_deletion(self) -> None:
         _result, path = self.create("socket-exact")
         fixture = path / "g/test_rpc0"

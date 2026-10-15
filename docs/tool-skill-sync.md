@@ -86,6 +86,15 @@ release_manifest.json
 
 Python package 工具绑定并验证现有 console-script identity，不复制 venv；Git Finalizer bundle
 绑定正式脚本、所有 sidecar、`tool-skill-sync` 和 `tool-temp-dir` 实现。
+
+`tool-temp-dir` 有独立版本。清理 socket 必须逐项使用 `--allow-owned-fixture-socket` 指定规范
+相对路径；普通登记根仍仅接受 numbered pytest fixture 内的路径。创建登记的 prefix 含
+`fixture`、`profile`、`profiling`、`pytest`、`test` 或 `tests` 独立 token 时，沿用 FIFO 的
+fixture 根分类，亦接受测试基目录中的精确 socket 路径（例如 `project/pytest/s0` 或
+`shards/run/0/pt/s0`）。分类只读取验证过的创建记录；不按当前目录名重新推断。全部路径仍须为
+本工具登记根内、同 UID/device 的实际 socket，且未被绑定；未知活动、漏列 socket、身份漂移
+或不完整扫描均拒绝删除。默认清理不接受 socket，源文件变更仍通过所属 bundle 安装后生效。
+
 `release_manifest.json` 记录 exact tool identity、binary/entry SHA、Skill SHA、CLI contract SHA 和
 materialized manifest SHA，且不含 timestamp 或 developer-specific path。
 

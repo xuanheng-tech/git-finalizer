@@ -13,6 +13,12 @@ section is invented for it.
 
 ## Unreleased
 
+- Update the independently versioned `tool-temp-dir` helper to 1.0.6. Its existing exact socket
+  option also accepts pytest basetemp sockets in registered fixture task roots, using the same
+  verified prefix classification as FIFO cleanup. Ordinary roots retain numbered-fixture scope;
+  registration, lexical paths, owner/device/inode, complete socket selection and inactivity checks
+  remain mandatory. The Git Finalizer executable and its public CLI contract are unchanged.
+
 ## 1.8.18
 
 - Add optional, metadata-only `--summary` diagnostics for the actual entrypoint and content
