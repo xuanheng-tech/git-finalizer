@@ -19,6 +19,15 @@ section is invented for it.
   registration, lexical paths, owner/device/inode, complete socket selection and inactivity checks
   remain mandatory. The Git Finalizer executable and its public CLI contract are unchanged.
 
+## 1.8.20
+
+- Handle Git's additional `new blank line at EOF` diagnostic when the final line of a complete
+  counted `.patch` hunk is exactly its required single-space empty context marker. The exact
+  final line and all hunk counts remain mandatory; no artifact bytes are changed.
+- Keep ordinary EOF blank lines, extra blank lines outside hunks, other whitespace, malformed
+  patches, sensitive content and clean-filter changes refused. Exercise verification, exact-byte
+  publication and history replay for the final-context case.
+
 ## 1.8.19
 
 - Recognize only the required single-space empty context marker inside a complete, counted

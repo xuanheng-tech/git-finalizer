@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.8.19**.
+Current source version: **1.8.20**.
 
-当前版本：`1.8.19`
+当前版本：`1.8.20`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
@@ -21,6 +21,8 @@ release or downloadable asset.
 A complete `.patch` artifact may contain a line consisting of the single space required for
 an empty context line. The whitespace check recognizes only that exact marker inside a counted
 unified-diff hunk, after Git parses the whole artifact with `apply --numstat` without applying it.
+That same required marker may end the patch; its accompanying Git EOF diagnostic is checked
+against the exact final context line. Extra blank lines outside a hunk still fail.
 The same classifier checks working candidates, staged blobs and unpublished commit ranges.
 It preserves the artifact bytes and adds no bypass flag or repository whitespace configuration.
 

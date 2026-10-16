@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.8.19"
+readonly VERSION="1.8.20"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -1430,17 +1430,28 @@ try:
     if any(c in path for c in "\r\n\t"):
         raise ValueError("ambiguous diagnostic path")
     diagnostics = sys.stdin.read().splitlines()
-    if not diagnostics or len(diagnostics) % 2:
+    if not diagnostics:
         raise ValueError("incomplete whitespace diagnostics")
     prefixes = (path, os.path.join(repo, path))
     errors = set()
-    for header, excerpt in zip(diagnostics[::2], diagnostics[1::2]):
-        matches = [re.fullmatch(re.escape(p) + r":([0-9]+): trailing whitespace\.", header)
+    eof_errors = set()
+    position = 0
+    while position < len(diagnostics):
+        header = diagnostics[position]
+        matches = [re.fullmatch(re.escape(p) + r":([0-9]+): (trailing whitespace|new blank line at EOF)\.", header)
                    for p in prefixes]
         match = next((m for m in matches if m is not None), None)
-        if match is None or excerpt != "+ ":
+        if match is None:
             raise ValueError("not an empty unified-diff context marker")
-        errors.add(int(match.group(1)))
+        number = int(match.group(1))
+        position += 1
+        if match.group(2) == "trailing whitespace":
+            if position >= len(diagnostics) or diagnostics[position] != "+ ":
+                raise ValueError("not an empty unified-diff context marker")
+            position += 1
+        else:
+            eof_errors.add(number)
+        errors.add(number)
     if kind == "worktree":
         fd = os.open(Path(repo) / path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
         with os.fdopen(fd, "rb") as source:
@@ -1494,7 +1505,8 @@ try:
             if hunk:
                 old = int(hunk.group(1) or b"1")
                 new = int(hunk.group(2) or b"1")
-    if old or new or not errors <= context:
+    last_line = raw.count(b"\n") + (not raw.endswith(b"\n"))
+    if old or new or not errors <= context or not eof_errors <= {last_line}:
         raise ValueError("whitespace outside verified empty context")
 except (OSError, ValueError, subprocess.SubprocessError):
     raise SystemExit(1)

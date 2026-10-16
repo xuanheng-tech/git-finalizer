@@ -10,6 +10,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 FINALIZER = ROOT / "git-finalize"
 PATCH = b"--- a/example.txt\n+++ b/example.txt\n@@ -1,3 +1,3 @@\n start\n \n-old\n+new\n"
+PATCH_EOF = b"--- a/example.txt\n+++ b/example.txt\n@@ -1,3 +1,3 @@\n start\n-old\n+new\n \n"
 
 
 class PatchWhitespaceTests(unittest.TestCase):
@@ -90,6 +91,24 @@ class PatchWhitespaceTests(unittest.TestCase):
         result = self.finalize("--resume-publish", oid)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_required_empty_context_at_patch_eof_preserves_exact_bytes(self):
+        path = self.repo / "change.patch"
+        path.write_bytes(PATCH_EOF)
+        before = (self.git("status", "--porcelain"), self.git("ls-files", "--stage"))
+        result = self.finalize("--mode", "verify-only", "--", path.name)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(before, (self.git("status", "--porcelain"), self.git("ls-files", "--stage")))
+        result = self.finalize("--message", "preserve final context", "--", path.name)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.command("git", "-C", str(self.repo), "show", "HEAD:change.patch").stdout.encode(), PATCH_EOF)
+        path.write_bytes(PATCH_EOF.replace(b"+new", b"+next"))
+        result = self.finalize("--mode", "verify-only", "--", path.name)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.git("add", path.name)
+        self.git("commit", "--quiet", "-m", "next final context")
+        result = self.finalize("--resume-publish", self.git("rev-parse", "HEAD").strip())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_existing_range_still_rejects_other_whitespace(self):
         (self.repo / "change.patch").write_bytes(PATCH)
         (self.repo / "bad.txt").write_text("ordinary trailing space \n")
@@ -109,6 +128,7 @@ class PatchWhitespaceTests(unittest.TestCase):
             "malformed": PATCH.replace(b"-1,3 +1,3", b"-1,4 +1,4"),
             "tab-context": PATCH.replace(b"\n \n", b"\n \t\n"),
             "oversized": PATCH + b"x" * 1_048_577 + b"\n",
+            "outside-eof": PATCH_EOF + b"\n",
         }
         for name, raw in cases.items():
             with self.subTest(name=name):
