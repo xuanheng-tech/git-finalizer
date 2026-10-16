@@ -344,6 +344,7 @@ record.
 | `v1.8.16` | GitHub + Gitea | `f29655c2668337f3b089fab3d729816e57eb4bcb` | `19f5ed500dbd287a10f1c224155b4de40b869467` | `b06aef49c3419a647cfa077bbac839039773aceaa2e5385af90c37b9b5cccafa` | 199050 |
 | `v1.8.17` | GitHub + Gitea | `24c4f53c0fa270beec9284b42222b71230a1b88a` | `5efb356ba6019ef425d5b3f3d571007709822f0f` | `71d639f92d40dd5a9f4775ad331c3b93fcade92747b0e1b1fa57ab969f4be7ba` | 199380 |
 | `v1.8.18` | GitHub | `8285ab34c443fac89e19a87a3d039fd39567cbea` | `e0e074044be94116c7314800d68c3510693b7559` | `705d4141c818a3f7c15f0accd1895b250cff9e6ae91fccb628a5cb8a8d0c4746` | 201348 |
+| `v1.8.19` | GitHub | `cda8c9727237a20118e522b4592ad1e36087bd5b` | `496c8f5c67310bec183fcd03e1714ba9ee5aec7d` | `b73ef4521f1b139036cccf3dfb3af6f87abae55663d0ccf5c118a30e3ee71e64` | 205017 |
 
 `v1.8.10` is a deliberate mirror. GitHub run `36883946683` published release `401104963`;
 Gitea run `851` independently built and verified the same candidate and digest. Its publication
@@ -459,6 +460,22 @@ and `5596b5c5c3a04f14ca651aa9eef3c1b2bbfb3207c47752ebf8ac88b2c98329e0`.
 Code publication receipt `c18db012-e14f-4df2-bf07-3d6c597288ff` is remote verified; source release
 receipt `f286695e-c063-45f0-8c7f-8cb495429546` has COMPLETE proof. No QP checkout was read or changed
 for this delivery.
+
+`v1.8.19` preserves the exact single-space marker required by empty unified-diff context lines.
+Only complete, bounded `.patch` artifacts with counted valid hunks receive that classification;
+ordinary trailing whitespace, malformed patches, changed-line whitespace, secret-content refusals
+and clean-filter guards remain active. GitHub run `38828905881` published and verified release
+`414401127`. Independent downloaded assets match the clean candidate's pre-tag `selfcheck` and
+the row above. The checksum file is 94 bytes with SHA-256
+`6f17d926227f05bf6d446cfff673a841959287c4bd6a065c12f8f9d1ff452116`; release notes match the
+Changelog. Controller main publication and exact synchronization of both main remotes preceded the
+annotated GitHub-only tag. The exact candidate passed `just release-check`: 16 PASS, 0 SKIP,
+0 FAIL, including 479 Python tests, 68 Skill tests and the real Controller suite with Controller
+`1.24.2`, CLI contract `56` and storage layout `4`. Supported installation activated bundle
+`1.8.19-cda8c9727237a20118e52-44021dd069f7`; nine positive/negative tests against the actual installed
+entry and the default four-tool doctor passed. Publication receipt
+`77218a5b-392b-40a1-953c-7593b0173faa` is remote verified; source checkout release receipt
+`2351a169-f64c-40c8-8f06-ad6ca2b7d75a` preserves its integration evidence.
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
