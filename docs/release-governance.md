@@ -345,6 +345,7 @@ record.
 | `v1.8.17` | GitHub + Gitea | `24c4f53c0fa270beec9284b42222b71230a1b88a` | `5efb356ba6019ef425d5b3f3d571007709822f0f` | `71d639f92d40dd5a9f4775ad331c3b93fcade92747b0e1b1fa57ab969f4be7ba` | 199380 |
 | `v1.8.18` | GitHub | `8285ab34c443fac89e19a87a3d039fd39567cbea` | `e0e074044be94116c7314800d68c3510693b7559` | `705d4141c818a3f7c15f0accd1895b250cff9e6ae91fccb628a5cb8a8d0c4746` | 201348 |
 | `v1.8.19` | GitHub | `cda8c9727237a20118e522b4592ad1e36087bd5b` | `496c8f5c67310bec183fcd03e1714ba9ee5aec7d` | `b73ef4521f1b139036cccf3dfb3af6f87abae55663d0ccf5c118a30e3ee71e64` | 205017 |
+| `v1.8.20` | GitHub | `20923c217f0a0c7b32f1e9478dc5f9aadcee2112` | `4756ff9f24ba09977f5233b93861e35004cf822b` | `ab8cb11e69d3de2d7f0daf03b8c49e09504e752c8cb784d62900181121ad62e9` | 205274 |
 
 `v1.8.10` is a deliberate mirror. GitHub run `36883946683` published release `401104963`;
 Gitea run `851` independently built and verified the same candidate and digest. Its publication
@@ -476,6 +477,20 @@ annotated GitHub-only tag. The exact candidate passed `just release-check`: 16 P
 entry and the default four-tool doctor passed. Publication receipt
 `77218a5b-392b-40a1-953c-7593b0173faa` is remote verified; source checkout release receipt
 `2351a169-f64c-40c8-8f06-ad6ca2b7d75a` preserves its integration evidence.
+
+`v1.8.20` handles the additional EOF diagnostic for the same required empty context marker when
+it is the exact final line of a complete counted patch. Extra EOF blank lines outside the hunk and
+all existing whitespace, secret and clean-filter refusals remain active. GitHub run `38832230077`
+published and verified release `414422247`; independently downloaded assets match the clean
+candidate's pre-tag `selfcheck` and the row above. The checksum file is 94 bytes with SHA-256
+`24ad5666c58f9fa8645a25a12247e174da419576db2fca6f22cbd2c17e23ea10`; notes match the Changelog.
+Both main remotes were synchronized before the annotated GitHub-only tag. The exact candidate
+passed `just release-check`: 16 PASS, 0 SKIP, 0 FAIL, including 480 Python tests, 68 Skill tests
+and the real Controller suite with Controller `1.24.2`, CLI contract `56` and storage layout `4`.
+Supported installation activated bundle `1.8.20-20923c217f0a0c7b32f1e-4730179a8eab`; ten tests
+against the installed entry passed. The default four-tool doctor passed after the separate
+dependency-RECORD verifier repair `6d5103d`; its earlier refusal for Controller's declared
+`websockets` dependency was preserved and independently checked, without changing that runtime.
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
