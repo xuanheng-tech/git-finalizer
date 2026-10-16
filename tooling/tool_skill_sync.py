@@ -21,7 +21,7 @@ import tomllib
 from typing import Any, Sequence
 
 
-VERSION = "2.1.1"
+VERSION = "2.1.2"
 SCHEMA_VERSION = 1
 TOOL_SKILL_MANIFEST_SCHEMA_VERSION = 2
 SKILL_NAME = "git-change-delivery"
@@ -839,37 +839,41 @@ def verify_installed_record(root: Path) -> dict[str, Any]:
         raise SyncError("uv tool installation has no single site-packages directory")
     site_packages = candidates[0]
     dist_infos = sorted(site_packages.glob("*.dist-info"))
-    if len(dist_infos) != 1:
-        raise SyncError("uv tool installation has no single dist-info directory")
-    dist_info = dist_infos[0]
-    record = dist_info / "RECORD"
-    require_regular(record, "installed RECORD")
+    if not dist_infos:
+        raise SyncError("uv tool installation has no dist-info directory")
     verified = 0
-    for line in record.read_text(encoding="utf-8").splitlines():
-        if not line:
-            continue
-        name, _, remainder = line.partition(",")
-        digest, _, _size = remainder.partition(",")
-        # Console scripts live outside site-packages and RECORD lists itself without a hash.
-        if not digest.startswith("sha256=") or name.startswith("../"):
-            continue
-        target = site_packages / name
-        if not target.is_file():
-            raise SyncError(f"installed file is missing: {name}")
-        expected = digest.split("=", 1)[1]
-        actual = (
-            base64.urlsafe_b64encode(hashlib.sha256(target.read_bytes()).digest())
-            .rstrip(b"=")
-            .decode()
-        )
-        if actual != expected:
-            raise SyncError(
-                f"installed file does not match the published artifact: {name}"
+    for dist_info in dist_infos:
+        record = dist_info / "RECORD"
+        require_regular(record, "installed RECORD")
+        distribution_verified = 0
+        for line in record.read_text(encoding="utf-8").splitlines():
+            if not line:
+                continue
+            name, _, remainder = line.partition(",")
+            digest, _, _size = remainder.partition(",")
+            # Console scripts live outside site-packages and RECORD lists itself without a hash.
+            if not digest.startswith("sha256=") or name.startswith("../"):
+                continue
+            target = site_packages / name
+            if not target.is_file():
+                raise SyncError(f"installed file is missing: {name}")
+            expected = digest.split("=", 1)[1]
+            actual = (
+                base64.urlsafe_b64encode(hashlib.sha256(target.read_bytes()).digest())
+                .rstrip(b"=")
+                .decode()
             )
-        verified += 1
-    if not verified:
-        raise SyncError("installed RECORD verified no files")
-    return {"dist_info": dist_info.name, "verified_files": verified}
+            if actual != expected:
+                raise SyncError(
+                    f"installed file does not match the published artifact: {name}"
+                )
+            distribution_verified += 1
+        if not distribution_verified:
+            raise SyncError(f"installed RECORD verified no files: {dist_info.name}")
+        verified += distribution_verified
+    if len(dist_infos) == 1:
+        return {"dist_info": dist_infos[0].name, "verified_files": verified}
+    return {"dist_infos": [path.name for path in dist_infos], "verified_files": verified}
 
 
 def install_python_tool(

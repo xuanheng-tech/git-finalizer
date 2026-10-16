@@ -13,6 +13,12 @@ section is invented for it.
 
 ## Unreleased
 
+- Update the independently versioned `tool-skill-sync` helper to 2.1.2. Verify every installed
+  distribution's wheel RECORD in a uv tool runtime, including declared dependencies, instead of
+  requiring exactly one distribution. Missing, empty or mismatched dependency records still fail;
+  single-distribution verification output is unchanged. This fixes WC's installed doctor check
+  with its `websockets` dependency. Git Finalizer's public CLI contract is unchanged.
+
 - Update the independently versioned `tool-temp-dir` helper to 1.0.6. Its existing exact socket
   option also accepts pytest basetemp sockets in registered fixture task roots, using the same
   verified prefix classification as FIFO cleanup. Ordinary roots retain numbered-fixture scope;

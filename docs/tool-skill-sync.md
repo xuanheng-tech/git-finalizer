@@ -63,6 +63,10 @@ canonical source contract 与已安装生产状态，`--source-only` 仅在无�
 canonical 字节一致，Python console scripts 的 runtime 必须匹配已安装 wheel `RECORD`。
 仅版本输出一致不能证明安装完整；这两条检查都不安装或修复文件。
 
+从 `tool-skill-sync` 2.1.2 起，同一 runtime 可有主包及其依赖的多个 distribution；检查逐一
+验证每份 `RECORD`，任一缺失、没有可验证文件或文件摘要不符仍拒绝。单包结果保留
+`dist_info`，多包结果使用 `dist_infos` 列表；`verified_files` 是全部已验证文件数。
+
 `upgrade` 是 `python_console_scripts` 工具的唯一生产升级入口，用于消除手工 `uv tool install`
 造成的 CLI 中断与符号链接修复。它先读取现有 uv receipt，保留 `UV_TOOL_BIN_DIR`、index 列表和
 `no-build`，再以 `uv tool install --force` 安装 manifest 声明的版本——`--reinstall` 会先卸载再

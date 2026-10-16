@@ -774,6 +774,49 @@ class SkillSyncTests(unittest.TestCase):
         self.assertEqual(captured["indexes"], ["https://pypi.org/simple"])
         self.assertEqual(report["verification"]["version"], "1.4.0")
 
+    def test_upgrade_verifies_every_runtime_distribution_record(self) -> None:
+        root = self._uv_tool_layout("1.4.0")
+        site = root / "lib/python3.12/site-packages"
+        module = site / "synthetic_dependency.py"
+        content = b"value = 1\n"
+        dist = site / "synthetic_dependency-1.0.0.dist-info"
+        dist.mkdir()
+        record = dist / "RECORD"
+        digest = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).rstrip(b"=").decode()
+        record_bytes = (
+            f"synthetic_dependency.py,sha256={digest},{len(content)}\n"
+            "synthetic_dependency-1.0.0.dist-info/RECORD,,\n"
+        ).encode()
+        module.write_bytes(content)
+        record.write_bytes(record_bytes)
+        report = self._upgrade()
+        self.assertEqual(report["status"], "UNCHANGED")
+        self.assertEqual(report["verification"]["record"], {
+            "dist_infos": ["snapshot_runner-1.4.0.dist-info", dist.name],
+            "verified_files": 2,
+        })
+        self.assertEqual(record.read_bytes(), record_bytes)
+        self.assertEqual(module.read_bytes(), content)
+        for drift, message in (
+            ("changed", "does not match the published artifact"),
+            ("missing", "installed file is missing"),
+            ("empty-record", "installed RECORD verified no files"),
+            ("missing-record", "installed RECORD"),
+        ):
+            with self.subTest(drift=drift):
+                module.write_bytes(content)
+                record.write_bytes(record_bytes)
+                if drift == "changed":
+                    module.write_bytes(b"local modification\n")
+                elif drift == "missing":
+                    module.unlink()
+                elif drift == "empty-record":
+                    record.write_text("synthetic_dependency-1.0.0.dist-info/RECORD,,\n")
+                else:
+                    record.unlink()
+                with self.assertRaisesRegex(sync.SyncError, message):
+                    self._upgrade()
+
     def test_failed_upgrade_restores_the_previous_working_installation(self) -> None:
         """An alias conflict or any install failure must not strand the CLIs."""
         self._uv_tool_layout("1.3.0")
