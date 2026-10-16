@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.8.18"
+readonly VERSION="1.8.19"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -1414,6 +1414,127 @@ resolve_local_commit_target() {
     local_commit_branch_ref=$head_ref
 }
 
+patch_context_whitespace_only() {
+    local kind=$1 ref=$2 path=$3 diagnostics=$4 checker
+    [[ "$path" == *.patch && -n "$diagnostics" ]] || return 1
+    checker=$(cat <<'PY'
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+import sys
+
+repo, kind, ref, path = sys.argv[1:]
+try:
+    if any(c in path for c in "\r\n\t"):
+        raise ValueError("ambiguous diagnostic path")
+    diagnostics = sys.stdin.read().splitlines()
+    if not diagnostics or len(diagnostics) % 2:
+        raise ValueError("incomplete whitespace diagnostics")
+    prefixes = (path, os.path.join(repo, path))
+    errors = set()
+    for header, excerpt in zip(diagnostics[::2], diagnostics[1::2]):
+        matches = [re.fullmatch(re.escape(p) + r":([0-9]+): trailing whitespace\.", header)
+                   for p in prefixes]
+        match = next((m for m in matches if m is not None), None)
+        if match is None or excerpt != "+ ":
+            raise ValueError("not an empty unified-diff context marker")
+        errors.add(int(match.group(1)))
+    if kind == "worktree":
+        fd = os.open(Path(repo) / path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as source:
+            info = os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 1_048_576:
+                raise ValueError("patch classifier bounds")
+            raw = source.read(1_048_577)
+    elif kind in ("blob", "commit"):
+        oid = ref
+        if kind == "commit":
+            oid = subprocess.run(["git", "-C", repo, "rev-parse", "--verify", f"{ref}:{path}"],
+                                 check=True, capture_output=True, text=True).stdout.strip()
+        if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", oid) is None:
+            raise ValueError("invalid patch blob")
+        size = subprocess.run(["git", "-C", repo, "cat-file", "-s", oid],
+                              check=True, capture_output=True, text=True).stdout.strip()
+        if int(size) > 1_048_576:
+            raise ValueError("patch classifier bounds")
+        raw = subprocess.run(["git", "-C", repo, "cat-file", "blob", oid],
+                             check=True, capture_output=True).stdout
+    else:
+        raise ValueError("unknown whitespace source")
+    if len(raw) > 1_048_576 or b"\x00" in raw:
+        raise ValueError("patch classifier bounds")
+    # Parse only: --numstat never applies the patch or opens its target files.
+    parsed = subprocess.run(["git", "-C", repo, "apply", "--numstat", "-"],
+                            input=raw, capture_output=True)
+    if parsed.returncode != 0 or not parsed.stdout:
+        raise ValueError("not a complete unified diff")
+    context = set()
+    old = new = 0
+    for number, line in enumerate(raw.split(b"\n"), 1):
+        if old or new:
+            if line == b"\\ No newline at end of file":
+                continue
+            if line.startswith(b" "):
+                old -= 1
+                new -= 1
+                if line == b" ":
+                    context.add(number)
+            elif line.startswith(b"-"):
+                old -= 1
+            elif line.startswith(b"+"):
+                new -= 1
+            else:
+                raise ValueError("invalid hunk body")
+            if old < 0 or new < 0:
+                raise ValueError("hunk count mismatch")
+        else:
+            hunk = re.fullmatch(rb"@@ -[0-9]+(?:,([0-9]+))? \+[0-9]+(?:,([0-9]+))? @@.*", line)
+            if hunk:
+                old = int(hunk.group(1) or b"1")
+                new = int(hunk.group(2) or b"1")
+    if old or new or not errors <= context:
+        raise ValueError("whitespace outside verified empty context")
+except (OSError, ValueError, subprocess.SubprocessError):
+    raise SystemExit(1)
+PY
+)
+    printf '%s' "$diagnostics" | "$PYTHON3_EXECUTABLE" -B -c "$checker" "$repo" "$kind" "$ref" "$path"
+}
+
+check_patch_whitespace_paths() {
+    local kind=$1 ref=$2 path output status source_kind source_ref
+    shift 2
+    for path in "$@"; do
+        case "$kind" in
+            worktree)
+                if output=$(git -C "$repo" --literal-pathspecs diff --no-ext-diff --no-textconv --check HEAD -- "$path" 2>&1); then status=0; else status=$?; fi
+                source_kind=worktree
+                source_ref=''
+                ;;
+            index)
+                if output=$(git -C "$repo" --literal-pathspecs diff --cached --check -- "$path" 2>&1); then status=0; else status=$?; fi
+                source_kind=blob
+                source_ref=''
+                ;;
+            commit)
+                if output=$(git -C "$repo" --literal-pathspecs diff-tree --root --diff-merges=first-parent --no-commit-id --no-renames -r --check "$ref" -- "$path" 2>&1); then status=0; else status=$?; fi
+                source_kind=commit
+                source_ref=$ref
+                ;;
+            *) return 1 ;;
+        esac
+        ((status == 0)) && [[ -z "$output" ]] && continue
+        ((status <= 2)) || return 1
+        if [[ "$kind" == index ]]; then
+            get_index_entry "$path" || return 1
+            source_ref=$index_oid
+        fi
+        patch_context_whitespace_only "$source_kind" "$source_ref" "$path" "$output" || return 1
+    done
+}
+
 verify_local_candidate() {
     local index
     local path
@@ -1467,10 +1588,14 @@ verify_local_candidate() {
             else
                 command_status=$?
             fi
-            ((command_status == 0 || command_status == 1)) ||
-                fail "无法只读检查候选文件 whitespace: $(printf '%q' "$path")"
-            [[ -z "$whitespace_output" ]] ||
-                fail 'git diff --check 失败；未执行 add、commit 或 push'
+            if ((command_status <= 3)) && patch_context_whitespace_only worktree '' "$path" "$whitespace_output"; then
+                :
+            else
+                ((command_status == 0 || command_status == 1)) ||
+                    fail "无法只读检查候选文件 whitespace: $(printf '%q' "$path")"
+                [[ -z "$whitespace_output" ]] ||
+                    fail 'git diff --check 失败；未执行 add、commit 或 push'
+            fi
         fi
 
         candidate_paths["$path"]=1
@@ -1540,7 +1665,8 @@ PY
     if ((${#paths_to_add[@]} > 0)) &&
         ! git -C "$repo" --literal-pathspecs diff --no-ext-diff --no-textconv \
             --check HEAD -- "${paths_to_add[@]}" >/dev/null; then
-        fail 'git diff --check 失败；未执行 add、commit 或 push'
+        check_patch_whitespace_paths worktree '' "${paths_to_add[@]}" ||
+            fail 'git diff --check 失败；未执行 add、commit 或 push'
     fi
 
     if ((${#test_fixture_paths[@]} > 0)); then
@@ -2846,8 +2972,18 @@ validate_existing_publish_range() {
             whitespace_status=$?
         fi
         if ((whitespace_status != 0)) || [[ -n "$whitespace_output" ]]; then
-            existing_range_error="待发布 commit 存在 whitespace 错误: $commit_oid"
-            return 1
+            if ! git -C "$repo" diff-tree --root --diff-merges=first-parent --no-commit-id \
+                --no-renames -r --name-only -z "$commit_oid" | (
+                whitespace_count=0
+                while IFS= read -r -d '' path; do
+                    whitespace_count=$((whitespace_count + 1))
+                    check_patch_whitespace_paths commit "$commit_oid" "$path" || exit 1
+                done
+                ((whitespace_count > 0))
+            ); then
+                existing_range_error="待发布 commit 存在 whitespace 错误: $commit_oid"
+                return 1
+            fi
         fi
 
         while IFS= read -r -d '' path; do
@@ -6549,7 +6685,8 @@ printf '$ git diff --cached --name-status\n'
 git -C "$repo" --literal-pathspecs diff --cached --name-status --no-renames
 printf '$ git diff --cached --check\n'
 if ! git -C "$repo" diff --cached --check >/dev/null; then
-    fail 'git diff --cached --check 失败；未执行 commit 或 push'
+    check_patch_whitespace_paths index '' "${staged_paths[@]}" ||
+        fail 'git diff --cached --check 失败；未执行 commit 或 push'
 fi
 printf '(passed)\n'
 

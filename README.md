@@ -9,12 +9,24 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.8.18**.
+Current source version: **1.8.19**.
 
-当前版本：`1.8.18`
+当前版本：`1.8.19`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
+
+## Preserving unified-diff artifacts
+
+A complete `.patch` artifact may contain a line consisting of the single space required for
+an empty context line. The whitespace check recognizes only that exact marker inside a counted
+unified-diff hunk, after Git parses the whole artifact with `apply --numstat` without applying it.
+The same classifier checks working candidates, staged blobs and unpublished commit ranges.
+It preserves the artifact bytes and adds no bypass flag or repository whitespace configuration.
+
+Ordinary trailing whitespace, added patch lines with trailing spaces, out-of-hunk spaces,
+malformed/oversized patches and ambiguous diagnostics still fail. Clean-filter output is checked
+again from the staged blob. Scope, secret-content, history and remote checks remain mandatory.
 
 ## Completing an already reviewed merge locally
 

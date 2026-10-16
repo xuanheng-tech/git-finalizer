@@ -19,6 +19,16 @@ section is invented for it.
   registration, lexical paths, owner/device/inode, complete socket selection and inactivity checks
   remain mandatory. The Git Finalizer executable and its public CLI contract are unchanged.
 
+## 1.8.19
+
+- Recognize only the required single-space empty context marker inside a complete, counted
+  unified-diff `.patch` artifact, using Git's parse-only `apply --numstat` validation. Preserve
+  exact artifact bytes in working-candidate verification, staging and unpublished history checks.
+- Retain refusal for ordinary whitespace, malformed hunks, added-line or out-of-hunk whitespace,
+  filtered whitespace drift and sensitive content. No bypass flag or whitespace-config change.
+- Verify the change in isolated synthetic repositories, including non-mutating verification,
+  commit/push, resume publication and negative cases. Public flags and summary schemas are unchanged.
+
 ## 1.8.18
 
 - Add optional, metadata-only `--summary` diagnostics for the actual entrypoint and content
