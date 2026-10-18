@@ -157,6 +157,7 @@ class AgentContractTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.source = FINALIZER.read_text(encoding="utf-8")
+        self.serializer = (ROOT / "git-finalize-runtime.py").read_text(encoding="utf-8")
         self.doc = DOC.read_text(encoding="utf-8")
 
     def documented(self, value: str) -> bool:
@@ -270,7 +271,7 @@ class AgentContractTests(unittest.TestCase):
 
     def test_conditional_keys_are_documented_in_both_places(self) -> None:
         optional = set(
-            re.findall(r'^    result\["([a-z_]+)"\] = ', self.source, re.MULTILINE)
+            re.findall(r'^        result\["([a-z_]+)"\] = ', self.serializer, re.MULTILINE)
         ) - {"mode_result"}
         self.assertEqual(
             optional, {"resume", "fixture_exceptions", "reviewed_sensitive_sources", "diagnostics"}

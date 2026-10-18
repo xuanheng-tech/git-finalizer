@@ -13,6 +13,14 @@ section is invented for it.
 
 ## Unreleased
 
+- Refuse failed or partially failed Git path/object enumeration before publication, including
+  history, staged scope, initial scope and post-commit checks. Preserve explicit NUL-delimited paths.
+- Retain integration-publication progress after a failed push, remote observation or Controller
+  completion, while preserving the existing failure classification and recovery gate.
+- Move core result serialization to a companion with named state fields. Add bounded Git execution,
+  a 64 MiB scanner input budget and production reader/writer coordination for activation/rollback.
+- Update the independently versioned `tool-skill-sync` helper to 2.1.3 for the production execution lock.
+
 - Update the independently versioned `tool-skill-sync` helper to 2.1.2. Verify every installed
   distribution's wheel RECORD in a uv tool runtime, including declared dependencies, instead of
   requiring exactly one distribution. Missing, empty or mismatched dependency records still fail;

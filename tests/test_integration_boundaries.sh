@@ -247,7 +247,7 @@ test_summary_vocabulary_is_closed() {
         [[ ",$fixed," == *",$key,"* ]] && continue
         grep -q -F -- "\`$key\`" "$doc" ||
             fail_assertion "conditional summary key is undocumented: $key"
-    done < <(grep -o '^    result\["[a-z_]*"\] = ' "$finalizer" |
+    done < <(grep -o '^        result\["[a-z_]*"\] = ' "$project_root/git-finalize-runtime.py" |
         sed 's/.*\["\([a-z_]*\)"\].*/\1/' | sort -u)
 }
 
@@ -290,12 +290,12 @@ assert document["status"] in {"blocked", "failed"}, document["status"]
 import json, sys
 document = json.load(open(sys.argv[1]))
 assert sorted(document) == sorted(
-    "final_phase finalizer_version mode next_action reason status summary_schema_version".split()
+    "final_phase finalizer_version mode next_action progress reason status summary_schema_version".split()
 ), sorted(document)
 assert document["status"] == "blocked", document["status"]
 assert document["next_action"] == "read_remote_fact_and_reenter_controller_publish_gate"
 ' "$case_dir/candidate.json" ||
-        fail_assertion 'integration publication companion drifted from its 7-key verdict shape'
+        fail_assertion 'integration publication companion drifted from its progress verdict shape'
     grep -q -F 'read_remote_fact_and_reenter_controller_publish_gate' "$doc" ||
         fail_assertion 'companion next_action vocabulary is undocumented'
 }

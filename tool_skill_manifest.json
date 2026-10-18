@@ -26,7 +26,8 @@
       "tooling/tool_skill_sync.py",
       "tooling/tool_temp_dir.py",
       "tooling/workflow_health.py",
-      "git-finalize-content-scan.py"
+      "git-finalize-content-scan.py",
+      "git-finalize-runtime.py"
     ],
     "production_targets": {
       "git-finalize": "bin/git-finalize",
@@ -34,6 +35,7 @@
       "git-finalize-integration-publish.py": "bin/git-finalize-integration-publish.py",
       "git-finalize-repo-bootstrap.py": "bin/git-finalize-repo-bootstrap.py",
       "git-finalize-retirement-plan.py": "bin/git-finalize-retirement-plan.py",
+      "git-finalize-runtime.py": "bin/git-finalize-runtime.py",
       "git-finalize-snapshot-verify.py": "bin/git-finalize-snapshot-verify.py",
       "git-finalize-source-review.py": "bin/git-finalize-source-review.py",
       "tool-skill-sync": "bin/tool-skill-sync",
@@ -48,7 +50,7 @@
       "git-finalize"
     ]
   },
-  "public_cli_contract_sha256": "e29c4496412dd9b33377e159c94727535260df8a1c9364065e90b27721c11a31",
+  "public_cli_contract_sha256": "df7f8d7fd9b83463a2c0f908da2fe304964a7e097f95e1149d9c6d0437003782",
   "schema_version": 2,
   "skill_contract_version": 2,
   "tool_commit": "@release",

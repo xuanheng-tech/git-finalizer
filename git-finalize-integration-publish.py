@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -32,6 +33,32 @@ IDENTITY_FIELDS = {
 
 class PublishError(Exception):
     """A failed publication gate; observe the remote before retrying."""
+
+
+@dataclass
+class PublicationProgress:
+    phase: str = "cli"
+    repository: str | None = None
+    candidate_oid: str | None = None
+    lease_id: str | None = None
+    run_id: str | None = None
+    record_id: str | None = None
+    identity: dict[str, Any] | None = None
+    mutation_attempted: bool = False
+    push_returncode: int | None = None
+    remote_oid: str | None = None
+    remote_verified: bool = False
+    controller_completed: bool = False
+
+    def document(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1, "phase": self.phase, "repository": self.repository,
+            "candidate_oid": self.candidate_oid, "lease_id": self.lease_id, "run_id": self.run_id,
+            "record_id": self.record_id, "identity": self.identity,
+            "mutation_attempted": self.mutation_attempted, "push_returncode": self.push_returncode,
+            "remote_oid": self.remote_oid, "remote_verified": self.remote_verified,
+            "controller_completed": self.controller_completed,
+        }
 
 
 def run_git(repo: Path, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -241,36 +268,54 @@ def live_remote_oid(repo: Path, remote: str, target_ref: str) -> str:
     return require_oid(parts[0], "live publication OID")
 
 
-def publish(arguments: argparse.Namespace) -> dict[str, Any]:
+def publish(arguments: argparse.Namespace, progress: PublicationProgress | None = None) -> dict[str, Any]:
+    if progress is None:
+        progress = PublicationProgress()
     candidate = require_oid(arguments.publish_integration_candidate, "candidate argument")
+    progress.candidate_oid = candidate
     lease_id = require_uuid(arguments.lease_id, "lease argument")
+    progress.lease_id = lease_id
     run_id = require_text(arguments.run_id, "run argument", maximum=256)
+    progress.run_id = run_id
+    progress.phase = "preflight"
     repo = resolve_repo(arguments.repo)
+    progress.repository = str(repo)
     program = controller_program()
     push_executed = False
     record_id = f"git-finalizer-integration-{lease_id}-{candidate}"
+    progress.record_id = record_id
+    progress.phase = "controller_verify"
     with controller_session(program, repo, candidate, lease_id, run_id) as channel:
         verified = channel.read("verified")
         identity = validate_identity(verified.get("identity"), repo, candidate, lease_id, run_id)
+        progress.identity = dict(identity)
         validate_action(verified, identity)
+        progress.phase = "controller_authorize"
         channel.send("authorize", identity)
         action = validate_action(channel.read("authorized"), identity)
         if channel.process.poll() is not None:
             raise PublishError("Controller authorization session ended before the mutation gate")
         remote, target_ref = identity["remote"], identity["target_ref"]
         if action == "PUSH_CANDIDATE":
+            progress.phase = "push"
+            progress.mutation_attempted = True
             push = run_git(repo, "push", "--porcelain", "--no-follow-tags", remote, f"{candidate}:{target_ref}", check=False)
             push_executed = True
+            progress.push_returncode = push.returncode
             if os.environ.get("GIT_FINALIZER_TEST_CRASH_AFTER_PUSH") == "1":
                 os._exit(97)
-            if push.returncode and live_remote_oid(repo, remote, target_ref) != candidate:
-                raise PublishError(f"integration push failed (exit {push.returncode}); remote candidate was not verified")
             result = "published"
         else:
             result = "already_published_recovered"
+        progress.phase = "remote_verify"
         remote_oid = live_remote_oid(repo, remote, target_ref)
+        progress.remote_oid = remote_oid
         if remote_oid != candidate:
+            if push_executed and progress.push_returncode:
+                raise PublishError(f"integration push failed (exit {progress.push_returncode}); remote candidate was not verified")
             raise PublishError("remote verification does not equal the exact candidate OID")
+        progress.remote_verified = True
+        progress.phase = "controller_complete"
         channel.send("complete", identity, result={
             "record_id": record_id, "executor": {"name": "git-finalizer", "version": VERSION},
             "push_executed": push_executed, "remote_oid": remote_oid,
@@ -284,6 +329,8 @@ def publish(arguments: argparse.Namespace) -> dict[str, Any]:
             raise PublishError("Controller publication completion receipt differs")
         if channel.process.wait(timeout=3) != 0:
             raise PublishError("Controller publication session failed after result verification")
+        progress.controller_completed = True
+        progress.phase = "complete"
     return {
         "summary_schema_version": 1, "finalizer_version": VERSION,
         "mode": "integration_candidate_publish", "status": "success", "final_phase": "remote_verified",
@@ -307,12 +354,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def fail(exc: Exception, *, summary: bool) -> NoReturn:
+def fail(exc: Exception, *, summary: bool, progress: PublicationProgress) -> NoReturn:
     if summary:
         print(json.dumps({
             "summary_schema_version": 1, "finalizer_version": VERSION, "mode": "integration_candidate_publish",
             "status": "blocked", "final_phase": "pre_publish_or_verify", "reason": str(exc)[:512],
             "next_action": "read_remote_fact_and_reenter_controller_publish_gate",
+            "progress": progress.document(),
         }, ensure_ascii=False, separators=(",", ":")))
     else:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -322,11 +370,12 @@ def fail(exc: Exception, *, summary: bool) -> NoReturn:
 def main(argv: Sequence[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     summary = "--summary" in raw
+    progress = PublicationProgress()
     try:
         arguments = build_parser().parse_args(raw)
-        result = publish(arguments)
+        result = publish(arguments, progress)
     except (PublishError, OSError, UnicodeError, ValueError, subprocess.TimeoutExpired) as exc:
-        fail(exc, summary=summary)
+        fail(exc, summary=summary, progress=progress)
     if arguments.summary:
         print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
     else:

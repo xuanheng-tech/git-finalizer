@@ -232,6 +232,130 @@ class DeliveryInvariantTests(unittest.TestCase):
         self.assertEqual(self.git("rev-parse", "HEAD").strip(), unpublished)
         self.assertEqual((self.repo / ".git/index").read_bytes(), before_index)
 
+    def test_history_git_reader_failure_never_authorizes_publication(self) -> None:
+        self.git("add", "--", "wanted.txt")
+        self.git("commit", "-qm", "Unpublished candidate")
+        unpublished = self.git("rev-parse", "HEAD").strip()
+        binary = self.root / "bin"
+        binary.mkdir()
+        wrapper = binary / "git"
+        for command, reason in (("diff-tree", "文件范围"), ("ls-tree", "文件对象")):
+            for partial in (False, True):
+                for mode in ("resume", "normal"):
+                    with self.subTest(command=command, partial=partial, mode=mode):
+                        wrapper.write_text(
+                            f"#!{sys.executable}\nimport os, subprocess, sys\n"
+                            f"args=sys.argv[1:]\nmatch={command!r} in args and '-z' in args\n"
+                            "if match:\n"
+                            + ("    subprocess.run(['/usr/bin/git', *args], check=True)\n" if partial else "")
+                            + "    sys.exit(128)\nos.execv('/usr/bin/git', ['git', *args])\n"
+                        )
+                        wrapper.chmod(0o755)
+                        self.environment["PATH"] = str(binary) + os.pathsep + os.defpath
+                        (self.repo / "wanted.txt").write_text(
+                            "next reviewed candidate\n" if mode == "normal" else "reviewed candidate\n"
+                        )
+                        before_index = (self.repo / ".git/index").read_bytes()
+                        result, data = self.resume() if mode == "resume" else self.finalize()
+                        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                        self.assertIn(reason, data["reason"])
+                        self.assertFalse(data["push"]["executed"])
+                        self.assertFalse(data["commit"]["created"])
+                        self.assertEqual(self.remote_head(), self.base)
+                        self.assertEqual(self.git("rev-parse", "HEAD").strip(), unpublished)
+                        self.assertEqual((self.repo / ".git/index").read_bytes(), before_index)
+
+    def test_staged_reader_failure_preserves_index_and_never_commits(self) -> None:
+        self.git("add", "--", "wanted.txt")
+        binary = self.root / "bin"
+        binary.mkdir()
+        wrapper = binary / "git"
+        wrapper.write_text(
+            '#!/bin/sh\ncase " $* " in\n'
+            '  *" --cached --name-only --no-renames -z "*) /usr/bin/git "$@"; exit 128 ;;\n'
+            'esac\nexec /usr/bin/git "$@"\n'
+        )
+        wrapper.chmod(0o755)
+        self.environment["PATH"] = str(binary) + os.pathsep + os.defpath
+        before = self.readonly_state()
+        result, data = self.finalize("commit-only")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertFalse(data["commit"]["created"])
+        self.assertIn("staged 文件范围", data["reason"])
+        self.assertEqual(self.readonly_state(), before)
+
+    def test_push_deadline_retains_the_local_commit_and_reports_uncertainty(self) -> None:
+        binary = self.root / "bin"
+        binary.mkdir()
+        git_wrapper = binary / "git"
+        git_wrapper.write_text(
+            f"#!{sys.executable}\nimport os, sys, time\n"
+            "if 'push' in sys.argv[1:]: time.sleep(60)\n"
+            "os.execv('/usr/bin/git', ['git', *sys.argv[1:]])\n"
+        )
+        deadline_wrapper = binary / "timeout"
+        deadline_wrapper.write_text(
+            f"#!{sys.executable}\nimport os, sys\nargs=sys.argv[1:]\n"
+            "if 'push' in args: args[1]='0.1s'\n"
+            "os.execv('/usr/bin/timeout', ['timeout', *args])\n"
+        )
+        for wrapper in (git_wrapper, deadline_wrapper):
+            wrapper.chmod(0o755)
+        self.environment["PATH"] = str(binary) + os.pathsep + os.defpath
+        result, data = self.finalize()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertTrue(data["commit"]["created"])
+        self.assertTrue(data["push"]["executed"])
+        self.assertEqual(data["push"]["result"], "uncertain")
+        self.assertEqual(self.remote_head(), self.base)
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), data["commit"]["sha"])
+
+    def test_failed_post_commit_enumeration_retains_commit_without_push(self) -> None:
+        binary = self.root / "bin"
+        binary.mkdir()
+        wrapper = binary / "git"
+        wrapper.write_text(
+            f"#!{sys.executable}\nimport os, sys\nargs=sys.argv[1:]\n"
+            "if 'diff-tree' in args and '--name-only' in args and '-z' in args: sys.exit(128)\n"
+            "os.execv('/usr/bin/git', ['git', *args])\n"
+        )
+        wrapper.chmod(0o755)
+        self.environment["PATH"] = str(binary) + os.pathsep + os.defpath
+        result, data = self.finalize()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertTrue(data["commit"]["created"])
+        self.assertFalse(data["push"]["executed"])
+        self.assertIn("commit 文件范围", data["reason"])
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), data["commit"]["sha"])
+        self.assertEqual(self.remote_head(), self.base)
+
+    def test_failed_initial_scope_enumeration_never_creates_a_root_commit(self) -> None:
+        initial = self.root / "initial"
+        self.git("init", "-q", "--initial-branch=feature", str(initial))
+        self.git("-C", str(initial), "config", "user.name", "Synthetic Author")
+        self.git("-C", str(initial), "config", "user.email", "synthetic@example.invalid")
+        (initial / "wanted.txt").write_text("initial candidate\n")
+        binary = self.root / "bin"
+        binary.mkdir()
+        wrapper = binary / "git"
+        wrapper.write_text(
+            f"#!{sys.executable}\nimport os, sys\nargs=sys.argv[1:]\n"
+            "if 'status' in args and '--porcelain=v1' in args and '-z' in args: sys.exit(128)\n"
+            "os.execv('/usr/bin/git', ['git', *args])\n"
+        )
+        wrapper.chmod(0o755)
+        self.environment["PATH"] = str(binary) + os.pathsep + os.defpath
+        result = subprocess.run(
+            [str(ROOT / "git-finalize"), "--summary", "--initial-commit-only", "--repo", str(initial),
+             "--message", "Initial candidate", "--", "wanted.txt"],
+            env=self.environment, capture_output=True, text=True, timeout=30,
+        )
+        data = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertFalse(data["commit"]["created"])
+        self.assertFalse((initial / ".git/index").exists())
+        self.assertIn("initial root worktree 状态", data["reason"])
+
     def test_summary_uses_the_python_selected_from_path(self) -> None:
         binary = self.root / "bin"
         binary.mkdir()
@@ -269,7 +393,8 @@ class DeliveryInvariantTests(unittest.TestCase):
         self.assertEqual(self.git("ls-remote", "--refs", "origin", "refs/heads/feature"), "")
 
     def test_quoted_json_credential_assignment_is_checked(self) -> None:
-        (self.repo / "wanted.txt").write_text(json.dumps({"password": "synthetic-fixture-value"}))
+        synthetic_value = "synthetic-" + "fixture-value"
+        (self.repo / "wanted.txt").write_text(json.dumps({"password": synthetic_value}))
         result, summary = self.finalize("verify-only")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertFalse(summary["commit"]["created"])

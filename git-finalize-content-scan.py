@@ -13,6 +13,9 @@ import subprocess
 import sys
 import tempfile
 
+MAX_SCAN_BYTES = 64 * 1024 * 1024
+GIT_TIMEOUT_SECONDS = 120
+
 
 PATTERNS = (
     ("private-key-header-v1", rb"-----BEGIN ([A-Z0-9]+[\x09-\x0d ]+)*PRIVATE KEY-----", "PRIVATE"),
@@ -135,6 +138,8 @@ def decoded_assignment(value):
 
 
 def scan(raw: bytes, excepted: str = "", only: str = "") -> str:
+    if len(raw) > MAX_SCAN_BYTES:
+        raise ValueError("content scan byte budget exceeded")
     document = None
     valid_json = False
     try:
@@ -202,8 +207,18 @@ def scan(raw: bytes, excepted: str = "", only: str = "") -> str:
 def git(repo: str, *args: str, env=None) -> bytes:
     return subprocess.check_output(
         ["git", "--no-optional-locks", "-C", repo, *args],
-        env=env, stderr=subprocess.DEVNULL,
+        env=env, stderr=subprocess.DEVNULL, timeout=GIT_TIMEOUT_SECONDS,
     )
+
+
+def read_blob(repo: str, oid: str, *, env=None) -> bytes:
+    size = int(git(repo, "cat-file", "-s", oid, env=env))
+    if not 0 <= size <= MAX_SCAN_BYTES:
+        raise ValueError("content scan byte budget exceeded")
+    raw = git(repo, "cat-file", "blob", oid, env=env)
+    if len(raw) != size:
+        raise ValueError("content scan blob size differs")
+    return raw
 
 
 def candidate(repo: str, path: str) -> tuple[bytes, str]:
@@ -213,7 +228,7 @@ def candidate(repo: str, path: str) -> tuple[bytes, str]:
     with tempfile.TemporaryDirectory(prefix="gf-candidate-objects-") as objects:
         environment = dict(os.environ, GIT_OBJECT_DIRECTORY=objects, GIT_OPTIONAL_LOCKS="0")
         oid = git(repo, "hash-object", "-w", "--path=" + path, "--", path, env=environment).decode().strip()
-        return git(repo, "cat-file", "blob", oid, env=environment), oid
+        return read_blob(repo, oid, env=environment), oid
 
 
 def main() -> int:
@@ -227,9 +242,10 @@ def main() -> int:
             raw, oid = candidate(repo, source)
         else:
             if kind == "file":
-                raw = Path(source).read_bytes()
+                with Path(source).open("rb") as stream:
+                    raw = stream.read(MAX_SCAN_BYTES + 1)
             elif kind == "blob":
-                raw = git(repo, "cat-file", "blob", source)
+                raw = read_blob(repo, source)
                 oid = source
             else:
                 raise ValueError("unknown scan kind")
