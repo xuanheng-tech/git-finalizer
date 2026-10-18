@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import signal
 import shutil
 import subprocess
 import sys
@@ -119,6 +120,40 @@ class RuntimeGuardTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 with sync.finalizer_execution_lock([entry]):
                     self.fail("unsafe lock was accepted")
+
+    def test_summary_shell_keeps_the_lock_after_launcher_interruption(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            entry = Path(temporary) / "git-finalize"
+            entry.write_text(
+                "#!/bin/bash\nexec 3>&1 4>&2\nprintf '%s\\n' \"$BASHPID\"\nread -r line\n"
+            )
+            with sync.finalizer_execution_lock([entry]):
+                pass
+            process = subprocess.Popen(
+                [sys.executable, "-B", str(ROOT / "git-finalize-runtime.py"),
+                 "locked-entrypoint", str(entry)],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            child = None
+            try:
+                child = int(process.stdout.readline())
+                process.kill()
+                process.wait(timeout=10)
+                with entry.with_name(".git-finalizer-execution.lock").open("rb") as lock:
+                    with self.assertRaises(BlockingIOError):
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    process.communicate(b"finish\n", timeout=10)
+                    child = None
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                if child is not None:
+                    try:
+                        os.kill(child, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                process.communicate(timeout=10)
 
 
 if __name__ == "__main__":

@@ -488,7 +488,12 @@ def main() -> int:
 def locked_entrypoint(entrypoint: Path, arguments: list[str]) -> int:
     entrypoint = entrypoint.resolve(strict=True)
     lock_path = entrypoint.with_name(".git-finalizer-execution.lock")
-    descriptor = os.open(lock_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    opened = os.open(lock_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        # The core reserves FD 3/4 for summary output; inherit outside that range.
+        descriptor = fcntl.fcntl(opened, fcntl.F_DUPFD_CLOEXEC, 10)
+    finally:
+        os.close(opened)
     try:
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
