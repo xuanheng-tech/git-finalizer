@@ -523,7 +523,7 @@
       ]
     }
   ],
-  "contract_version": 7,
+  "contract_version": 8,
   "exit_codes": {
     "0": "success or verification passed",
     "1": "blocked, failed verification, or Finalizer preflight refusal",
@@ -533,10 +533,12 @@
   },
   "flags": {
     "entrypoint": "git-finalize",
+    "integration_publication_progress": "blocked verdicts add schema-versioned progress with validated request identity, exact execution phase, mutation_attempted, push_returncode, independent remote observation and Controller completion; blocked never implies no remote write",
     "metadata": [
       "--version",
       "--help"
     ],
+    "resource_limits": "core Git commands have a 120-second deadline and five-second forced-stop grace; content scanning refuses raw files and blobs above 64 MiB; managed production readers coordinate with activation and rollback",
     "summary": "bounded_deterministic_json",
     "summary_diagnostics": "optional metadata-only runtime identity and same-scan refusal; automatic for content refusals/risks, otherwise core --summary --diagnostics; no matched values or source excerpts; fixed fields, classification triple and exit codes unchanged"
   },
@@ -555,5 +557,5 @@
   ],
   "schema_version": 1,
   "tool_name": "git-finalizer",
-  "tool_version": "1.8.20"
+  "tool_version": "1.9.0"
 }

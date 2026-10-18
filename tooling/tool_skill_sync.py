@@ -21,7 +21,7 @@ import tomllib
 from typing import Any, Sequence
 
 
-VERSION = "2.1.2"
+VERSION = "2.1.3"
 SCHEMA_VERSION = 1
 TOOL_SKILL_MANIFEST_SCHEMA_VERSION = 2
 SKILL_NAME = "git-change-delivery"
@@ -1703,7 +1703,12 @@ def capture_production_pair(
         raise
 
 
-def restore_production_pair(backup: Path, expected_targets: Sequence[Path]) -> None:
+def restore_production_pair(
+    backup: Path, expected_targets: Sequence[Path], *, execution_locked: bool = False,
+) -> None:
+    if not execution_locked:
+        with finalizer_execution_lock(expected_targets):
+            return restore_production_pair(backup, expected_targets, execution_locked=True)
     receipt = verify_production_backup(backup)
     entries = {Path(entry["target"]): entry for entry in receipt["entries"]}
     if set(entries) != set(expected_targets):
@@ -1828,6 +1833,28 @@ def replace_production_pair(targets: dict[Path, Path]) -> None:
                 temporary.unlink()
 
 
+@contextmanager
+def finalizer_execution_lock(targets: Sequence[Path]):
+    """Keep active CLI readers out of a production activation or rollback."""
+    entries = [target for target in targets if target.name == "git-finalize"]
+    if not entries:
+        yield
+        return
+    if len(entries) != 1:
+        raise SyncError("ambiguous Finalizer execution lock target")
+    lock_path = entries[0].with_name(".git-finalizer-execution.lock")
+    require_owned_directory(lock_path.parent)
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise SyncError("unsafe Finalizer execution lock")
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def activate_production_bundle(
     bundle: Path,
     tool: str,
@@ -1884,23 +1911,24 @@ def activate_production_bundle(
             bin_dir=live_bin_dir,
             hooks_dir=hooks_dir,
         )
-    backup = capture_production_pair(tool, all_targets, production_root)
-    try:
-        replace_production_pair(targets)
-        verified = verify_production_bundle(
-            bundle,
-            agents_root=agents_root,
-            bin_dir=live_bin_dir,
-            hooks_dir=hooks_dir,
-        )
-        for target in retired:
-            if target.exists():
-                target.unlink()
-                fsync_directory(target.parent)
-        verified["retired_targets"] = sorted(map(str, retired))
-    except BaseException:
-        restore_production_pair(backup, all_targets)
-        raise
+    with finalizer_execution_lock(all_targets):
+        backup = capture_production_pair(tool, all_targets, production_root)
+        try:
+            replace_production_pair(targets)
+            verified = verify_production_bundle(
+                bundle,
+                agents_root=agents_root,
+                bin_dir=live_bin_dir,
+                hooks_dir=hooks_dir,
+            )
+            for target in retired:
+                if target.exists():
+                    target.unlink()
+                    fsync_directory(target.parent)
+            verified["retired_targets"] = sorted(map(str, retired))
+        except BaseException:
+            restore_production_pair(backup, all_targets, execution_locked=True)
+            raise
     return backup, verified
 
 

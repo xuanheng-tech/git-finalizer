@@ -118,6 +118,13 @@ install/rollback 在整个读旧状态、备份、替换、验证与指针更新
 事务与 standalone `skills/git-change-delivery/deploy.py install` 共用 Skill 根目录锁；
 后者也复用 pair 备份/恢复实现，文件中途写入失败会恢复全部旧 payload 与权限后才能重试。
 
+Git Finalizer 的生产文件集另外使用 stable bin 目录中的 `.git-finalizer-execution.lock`：
+安装、恢复和 rollback 替换文件期间持有 exclusive lock，支持该协议的 CLI 调用持有 shared
+lock 直到整个进程结束，避免运行中混用 companion 版本。锁文件是持久的 owned regular file，
+不纳入可替换 payload；安装不会删除它。新调用等待部署最多 30 秒，metadata-only
+`--version` / `--help` 不进入执行锁。尚未实现 reader 协议的旧进程不受该锁保护；
+首次升级应在这些旧调用结束后执行。该协议协调正常本机安装，不防御任意同 UID 修改。
+
 production Skill 写入受 trusted-state gate 约束，与 `deploy.py install` 共用同一判定语义
 （payload tree digest 公式与 accepted registry 由测试锁定一致）：任一激活写入前，installed
 payload tree 必须等于本次 bundle、等于 `RELEASED_CANONICAL_SKILL_SHA256` 中已发布 canonical

@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TOOLS = (
     "env", "bash", "git", "realpath", "stat", "grep", "sed", "head", "tail",
     "cat", "cut", "tr", "sort", "wc", "date", "dirname", "basename", "sha256sum",
-    "readlink", "rm", "awk", "od", "cmp", "comm", "find", "chmod",
+    "readlink", "rm", "awk", "od", "cmp", "comm", "find", "chmod", "timeout",
 )
 
 

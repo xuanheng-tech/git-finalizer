@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.8.20**.
+Current source version: **1.9.0**.
 
-当前版本：`1.8.20`
+当前版本：`1.9.0`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
@@ -126,7 +126,7 @@ Local verify-only and commit-only modes do not accept these Python prose reviews
 
 ## Requirements
 
-- GNU Bash, Git and GNU command-line utilities (`realpath`, `stat`, `grep`, `sed`). Verified baseline:
+- GNU Bash, Git and GNU command-line utilities (`realpath`, `stat`, `grep`, `sed`, `timeout`). Verified baseline:
   **Ubuntu 24.04 LTS** with its system Git. Plan-bound retirement also requires a Controller that
   advertises the public verification and execution protocols. Integration publication requires
   `integration_publication_execution_version` 1 and the public locked stdio session.
@@ -139,6 +139,18 @@ Local verify-only and commit-only modes do not accept these Python prose reviews
 - Nothing else. No remote hosting service, no Worktree Controller, no Snapshot Runner, no Context
   Loader, no installed Skill and no agent runtime is required for the core lifecycle. See
   [Standalone contract](#standalone-contract).
+
+Core Git commands have a 120-second deadline followed by a five-second forced-stop grace period.
+A timed-out push remains uncertain and retains its local commit for explicit recovery. Content
+scanning accepts at most 64 MiB per raw file or Git blob, including clean-filter output; larger
+inputs fail closed without excerpts. This bounds scanner input, not arbitrary hook/filter code
+or its temporary object output. Existing 5 MiB/25 MiB binary rules remain separate.
+
+The managed production installer coordinates activation and rollback with running Finalizer
+invocations through a shared execution lock. Active invocations finish before production files
+are replaced; new invocations wait up to 30 seconds. Source checkouts and manual tarball installs
+without that lock retain their ordinary installation behavior. The first upgrade from a version
+without the reader protocol cannot protect invocations already running that older version.
 
 ## Installation
 

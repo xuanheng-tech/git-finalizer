@@ -184,14 +184,31 @@ assume the same keys:
   decision could not be classified (`status=failed`). Whether any remote change already happened is
   reported by `bootstrap.executed`, not by the exit code: a `BLOCK_REMOTE_MISMATCH` can be raised
   after a repository was created.
-- `--publish-integration-candidate`: a seven-key blocked verdict object
-  (`final_phase, finalizer_version, mode, next_action, reason, status, summary_schema_version`)
+- `--publish-integration-candidate`: a blocked verdict object
+  (`final_phase, finalizer_version, mode, next_action, progress, reason, status, summary_schema_version`)
   with its own `next_action` vocabulary, for example
   `read_remote_fact_and_reenter_controller_publish_gate`. Success instead includes exact repository,
   allocation, lease/run, target/expected main/candidate identities, `record_id`, `push`,
   `remote_verify` and `controller_execution`. The latter identifies the public Controller session
   and `lifecycle_completion_required=true`; pass `record_id` to Controller `lease-complete`.
   Exit codes `0`, `1`, and argparse `2`.
+
+Integration refusals retain the existing classification and add `progress` (schema version 1).
+Its `phase` is one of `cli`, `preflight`, `controller_verify`, `controller_authorize`, `push`,
+`remote_verify`, `controller_complete`, or `complete`. Validated request fields are retained as
+`repository`, `candidate_oid`, `lease_id`, `run_id`, and `record_id`; unavailable values are null.
+`identity` is the validated public Controller identity or null. `mutation_attempted` is set before
+starting push, so a transport timeout cannot erase an uncertain mutation. `push_returncode` is null
+until the command returns. `remote_oid` and `remote_verified` report the independent live observation;
+`controller_completed` requires a matching completed receipt and a successful session exit.
+Thus a completion refusal may be `blocked` while `mutation_attempted=true` and
+`remote_verified=true`. Keep the same candidate/lease/run and reenter the Controller gate; do not
+infer absence of remote writes from the top-level status. No protocol capability token, Git output
+or matched source content is added to this object.
+
+The Bash core sends named internal state to `git-finalize-runtime.py`; argument order has no
+meaning. Unknown, duplicate or missing fields fail serialization and retain the documented
+serialization-failure fallback. The public core envelope and its schema version are unchanged.
 
 `1` is also possible on either companion when the entrypoint's pre-execution guard finds the
 companion file missing or unsafe, or when an uncaught traceback occurs.

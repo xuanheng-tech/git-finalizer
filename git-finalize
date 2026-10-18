@@ -18,11 +18,26 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.8.20"
+readonly VERSION="1.9.0"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
 readonly MAX_SUMMARY_WARNINGS=5
+
+execution_entrypoint=$(realpath -e -- "${BASH_SOURCE[0]}" 2>/dev/null) || execution_entrypoint=''
+if [[ -n "$execution_entrypoint" &&
+      ! ( $# == 1 && ( $1 == --version || $1 == --help ) ) &&
+      ( -e "${execution_entrypoint%/*}/.git-finalizer-execution.lock" ||
+        -L "${execution_entrypoint%/*}/.git-finalizer-execution.lock" ) &&
+      ${GF_EXECUTION_LOCK_ENTRY:-} != "$execution_entrypoint" ]]; then
+    python3_available || { printf 'ERROR: execution lock requires Python 3.11+\n' >&2; exit 1; }
+    execution_helper=${execution_entrypoint%/*}/git-finalize-runtime.py
+    [[ -f "$execution_helper" && ! -L "$execution_helper" ]] || {
+        printf 'ERROR: execution lock companion is missing\n' >&2
+        exit 1
+    }
+    exec "$PYTHON3_EXECUTABLE" -B "$execution_helper" locked-entrypoint "$execution_entrypoint" "$@"
+fi
 
 integration_publish_requested=0
 for integration_publish_argument in "$@"; do
@@ -223,397 +238,102 @@ PY
 }
 
 render_summary() {
-    "$PYTHON3_EXECUTABLE" -B - \
-        "$SUMMARY_SCHEMA_VERSION" "$VERSION" "$summary_mode" "$summary_status" "$summary_phase" \
-        "$summary_exit_code" "$summary_repo" "$summary_repository_id" \
-        "$summary_allocation_id" "$summary_task_key" "$summary_authority_key" \
-        "$summary_worktree_path" "$summary_role" "$summary_branch" "$summary_upstream" \
-        "$summary_path_count" "$summary_dry_run" "$summary_commit_created" \
-        "$summary_commit_sha" "$summary_push_executed" "$summary_push_result" \
-        "$summary_push_branch_refspec_only" "$summary_push_follow_tags_disabled" \
-        "$summary_post_verify" "$summary_reason" "$summary_next_action" \
-        "$summary_warnings_omitted" "$summary_mode_state" \
-        "$summary_snapshot_verification" "$summary_remote_conclusion" \
-        "$summary_recovery_start" "$summary_commit_reused" \
-        "$summary_completed_through" "$summary_resume_required" \
-        "$summary_resume_oid" "$summary_resume_remote" "$summary_worktree_state" \
-        "$summary_worktree_before_state" "$summary_commit_result" \
-        "$summary_head_before" "$summary_head_after" "$summary_head_unchanged" \
-        "$summary_index_unchanged" "$summary_worktree_unchanged" \
-        "$summary_resume_publish_kind" "$summary_publish_ahead" \
-        "$summary_publish_behind" "$summary_publish_commit_count" \
-        "$summary_publish_range" "$summary_push_target" \
-        "$summary_final_head" "$summary_final_remote_oid" \
-        "$summary_sync_source_remote" "$summary_sync_expected_target_oid" \
-        "$summary_retirement_operation" "$summary_retirement_remote" \
-        "$summary_retirement_branch" "$summary_retirement_ref" \
-        "$summary_retirement_expected_oid" "$summary_retirement_integrated_ref" \
-        "$summary_retirement_integrated_oid" "$summary_retirement_ancestry" \
-        "$summary_retirement_ci_required" "$summary_retirement_ci_status" \
-        "$summary_retirement_ci_commit_oid" "$summary_retirement_ci_source" \
-        "$summary_retirement_ci_verified_at" \
-        "$summary_retirement_remote_absent_after" "$summary_retirement_result" \
-        "$summary_retirement_lease_bound" "$summary_retirement_tags_unchanged" \
-        "$summary_retirement_remote_tracking_absent" \
-        "$summary_retirement_local_absent_after" "$summary_retirement_plan_id" \
-        "$summary_retirement_receipt_id" \
-        "$(printf '%s\n' "${summary_fixture_exceptions[@]}")" \
-        "$(printf '%s\n' "${summary_source_reviews[@]}")" \
-        "$summary_runtime_identity" "$summary_diagnostics_requested" "$summary_scan_path" "$summary_scan_stage" \
-        "$summary_scan_verdict" "$summary_scan_size" "$summary_scan_binary" \
-        "$summary_scan_sha256" "$summary_scan_blob_oid" "$summary_scanner_sha256" \
-        "${summary_warnings[@]}" <<'PY'
-import json
-import sys
-
-
-def take(values):
-    return next(values)
-
-
-def boolean(value):
-    return value == "true"
-
-
-def bounded(value, limit):
-    omitted = max(0, len(value) - limit)
-    return value[:limit], omitted
-
-
-values = iter(sys.argv[1:])
-schema_version = int(take(values))
-version = take(values)
-mode = take(values)
-status = take(values)
-phase = take(values)
-exit_code = int(take(values))
-repository = take(values)
-repository_id = take(values)
-allocation_id = take(values)
-task_key = take(values)
-authority_key = take(values)
-worktree_path = take(values)
-role = take(values)
-branch = take(values)
-upstream = take(values)
-path_count = int(take(values))
-dry_run = boolean(take(values))
-commit_created = boolean(take(values))
-commit_sha = take(values)
-push_executed = boolean(take(values))
-push_result = take(values)
-push_branch_refspec_only_raw = take(values)
-push_follow_tags_disabled_raw = take(values)
-push_branch_refspec_only = (
-    boolean(push_branch_refspec_only_raw) if push_branch_refspec_only_raw else None
-)
-push_follow_tags_requested = (
-    False if boolean(push_follow_tags_disabled_raw) else None
-)
-post_verify = take(values)
-reason, reason_omitted = bounded(take(values), 512)
-next_action, next_action_omitted = bounded(take(values), 256)
-warnings_omitted = int(take(values))
-mode_state = take(values)
-snapshot_verification = take(values)
-remote_conclusion = take(values)
-recovery_start = take(values)
-commit_reused = boolean(take(values))
-completed_through = take(values)
-resume_required = boolean(take(values))
-resume_oid = take(values)
-resume_remote = take(values)
-worktree_state = take(values)
-worktree_before_state = take(values)
-commit_result = take(values)
-head_before = take(values)
-head_after = take(values)
-head_unchanged = boolean(take(values))
-index_unchanged = boolean(take(values))
-worktree_unchanged = boolean(take(values))
-resume_publish_kind = take(values)
-publish_ahead_raw = take(values)
-publish_behind_raw = take(values)
-publish_commit_count_raw = take(values)
-publish_range = take(values)
-push_target = take(values)
-final_head = take(values)
-final_remote_oid = take(values)
-sync_source_remote = take(values)
-sync_expected_target_oid = take(values)
-retirement_operation = take(values)
-retirement_remote = take(values)
-retirement_branch = take(values)
-retirement_ref = take(values)
-retirement_expected_oid = take(values)
-retirement_integrated_ref = take(values)
-retirement_integrated_oid = take(values)
-retirement_ancestry_raw = take(values)
-retirement_ci_required = boolean(take(values))
-retirement_ci_status = take(values)
-retirement_ci_commit_oid = take(values)
-retirement_ci_source = take(values)
-retirement_ci_verified_at = take(values)
-retirement_remote_absent_after_raw = take(values)
-retirement_result = take(values)
-retirement_lease_bound = boolean(take(values))
-retirement_tags_unchanged = boolean(take(values))
-retirement_remote_tracking_absent = boolean(take(values))
-retirement_local_absent_after_raw = take(values)
-retirement_plan_id = take(values)
-retirement_receipt_id = take(values)
-fixture_exceptions = [json.loads(line) for line in take(values).splitlines() if line]
-source_reviews = [json.loads(line) for line in take(values).splitlines() if line]
-runtime_raw = take(values)
-runtime = json.loads(runtime_raw) if runtime_raw else None
-diagnostics_requested = take(values) == "1"
-scan_path = take(values)
-scan_stage = take(values)
-scan_verdict = take(values)
-scan_size = take(values)
-scan_binary = take(values)
-scan_sha256 = take(values)
-scan_blob_oid = take(values)
-scanner_sha256 = take(values)
-
-
-def optional_integer(value):
-    return int(value) if value else None
-
-
-def optional_boolean(value):
-    return boolean(value) if value else None
-
-warnings = []
-warning_characters_omitted = 0
-for raw_warning in values:
-    warning, omitted = bounded(raw_warning, 256)
-    warnings.append(warning)
-    warning_characters_omitted += omitted
-
-result = {
-    "summary_schema_version": schema_version,
-    "finalizer_version": version,
-    "mode": mode,
-    "status": status,
-    "final_phase": phase,
-    "exit_code": exit_code,
-    "repository": repository or None,
-    "repository_id": repository_id or None,
-    "allocation_id": allocation_id or None,
-    "task_key": task_key or None,
-    "authority_key": authority_key or None,
-    "worktree_path": worktree_path or None,
-    "role": role or None,
-    "branch": branch or None,
-    "upstream": upstream or None,
-    "requested_path_count": path_count,
-    "dry_run": dry_run,
-    "commit": {"created": commit_created, "sha": commit_sha or None},
-    "push": {
-        "executed": push_executed,
-        "result": push_result,
-        "branch_refspec_only": push_branch_refspec_only,
-        "follow_tags_requested": push_follow_tags_requested,
-    },
-    "warnings": warnings,
-    "warnings_omitted": warnings_omitted,
-    "warning_characters_omitted": warning_characters_omitted,
-    "reason": reason or None,
-    "reason_omitted_characters": reason_omitted,
-    "next_action": next_action,
-    "next_action_omitted_characters": next_action_omitted,
-}
-if fixture_exceptions:
-    result["fixture_exceptions"] = fixture_exceptions
-if source_reviews:
-    if status == "success" and not dry_run:
-        for review in source_reviews:
-            review["content_scan"] = "passed"
-    result["reviewed_sensitive_sources"] = source_reviews
-if mode == "initial":
-    result["mode_result"] = {
-        "initial_publish": mode_state,
-        "snapshot_verification": snapshot_verification,
-        "remote_conclusion": remote_conclusion,
-        "post_verify": post_verify,
-    }
-elif mode == "initial_branch":
-    result["mode_result"] = {
-        "initial_branch_publish": mode_state,
-        "remote_conclusion": remote_conclusion,
-        "post_verify": post_verify,
-    }
-elif mode in {"publish_existing_branch", "publish_existing_history"}:
-    interface = (
-        "publish-existing-history"
-        if mode == "publish_existing_history"
-        else "publish-existing-branch"
+    local helper=${content_scan_entrypoint%/*}/git-finalize-runtime.py
+    local warning
+    [[ -f "$helper" && ! -L "$helper" ]] || return 1
+    local -a summary_arguments=(
+        "SUMMARY_SCHEMA_VERSION=$SUMMARY_SCHEMA_VERSION"
+        "VERSION=$VERSION"
+        "summary_mode=$summary_mode"
+        "summary_status=$summary_status"
+        "summary_phase=$summary_phase"
+        "summary_exit_code=$summary_exit_code"
+        "summary_repo=$summary_repo"
+        "summary_repository_id=$summary_repository_id"
+        "summary_allocation_id=$summary_allocation_id"
+        "summary_task_key=$summary_task_key"
+        "summary_authority_key=$summary_authority_key"
+        "summary_worktree_path=$summary_worktree_path"
+        "summary_role=$summary_role"
+        "summary_branch=$summary_branch"
+        "summary_upstream=$summary_upstream"
+        "summary_path_count=$summary_path_count"
+        "summary_dry_run=$summary_dry_run"
+        "summary_commit_created=$summary_commit_created"
+        "summary_commit_sha=$summary_commit_sha"
+        "summary_push_executed=$summary_push_executed"
+        "summary_push_result=$summary_push_result"
+        "summary_push_branch_refspec_only=$summary_push_branch_refspec_only"
+        "summary_push_follow_tags_disabled=$summary_push_follow_tags_disabled"
+        "summary_post_verify=$summary_post_verify"
+        "summary_reason=$summary_reason"
+        "summary_next_action=$summary_next_action"
+        "summary_warnings_omitted=$summary_warnings_omitted"
+        "summary_mode_state=$summary_mode_state"
+        "summary_snapshot_verification=$summary_snapshot_verification"
+        "summary_remote_conclusion=$summary_remote_conclusion"
+        "summary_recovery_start=$summary_recovery_start"
+        "summary_commit_reused=$summary_commit_reused"
+        "summary_completed_through=$summary_completed_through"
+        "summary_resume_required=$summary_resume_required"
+        "summary_resume_oid=$summary_resume_oid"
+        "summary_resume_remote=$summary_resume_remote"
+        "summary_worktree_state=$summary_worktree_state"
+        "summary_worktree_before_state=$summary_worktree_before_state"
+        "summary_commit_result=$summary_commit_result"
+        "summary_head_before=$summary_head_before"
+        "summary_head_after=$summary_head_after"
+        "summary_head_unchanged=$summary_head_unchanged"
+        "summary_index_unchanged=$summary_index_unchanged"
+        "summary_worktree_unchanged=$summary_worktree_unchanged"
+        "summary_resume_publish_kind=$summary_resume_publish_kind"
+        "summary_publish_ahead=$summary_publish_ahead"
+        "summary_publish_behind=$summary_publish_behind"
+        "summary_publish_commit_count=$summary_publish_commit_count"
+        "summary_publish_range=$summary_publish_range"
+        "summary_push_target=$summary_push_target"
+        "summary_final_head=$summary_final_head"
+        "summary_final_remote_oid=$summary_final_remote_oid"
+        "summary_sync_source_remote=$summary_sync_source_remote"
+        "summary_sync_expected_target_oid=$summary_sync_expected_target_oid"
+        "summary_retirement_operation=$summary_retirement_operation"
+        "summary_retirement_remote=$summary_retirement_remote"
+        "summary_retirement_branch=$summary_retirement_branch"
+        "summary_retirement_ref=$summary_retirement_ref"
+        "summary_retirement_expected_oid=$summary_retirement_expected_oid"
+        "summary_retirement_integrated_ref=$summary_retirement_integrated_ref"
+        "summary_retirement_integrated_oid=$summary_retirement_integrated_oid"
+        "summary_retirement_ancestry=$summary_retirement_ancestry"
+        "summary_retirement_ci_required=$summary_retirement_ci_required"
+        "summary_retirement_ci_status=$summary_retirement_ci_status"
+        "summary_retirement_ci_commit_oid=$summary_retirement_ci_commit_oid"
+        "summary_retirement_ci_source=$summary_retirement_ci_source"
+        "summary_retirement_ci_verified_at=$summary_retirement_ci_verified_at"
+        "summary_retirement_remote_absent_after=$summary_retirement_remote_absent_after"
+        "summary_retirement_result=$summary_retirement_result"
+        "summary_retirement_lease_bound=$summary_retirement_lease_bound"
+        "summary_retirement_tags_unchanged=$summary_retirement_tags_unchanged"
+        "summary_retirement_remote_tracking_absent=$summary_retirement_remote_tracking_absent"
+        "summary_retirement_local_absent_after=$summary_retirement_local_absent_after"
+        "summary_retirement_plan_id=$summary_retirement_plan_id"
+        "summary_retirement_receipt_id=$summary_retirement_receipt_id"
+        "summary_fixture_exceptions=$(printf '%s\n' "${summary_fixture_exceptions[@]}")"
+        "summary_source_reviews=$(printf '%s\n' "${summary_source_reviews[@]}")"
+        "summary_runtime_identity=$summary_runtime_identity"
+        "summary_diagnostics_requested=$summary_diagnostics_requested"
+        "summary_scan_path=$summary_scan_path"
+        "summary_scan_stage=$summary_scan_stage"
+        "summary_scan_verdict=$summary_scan_verdict"
+        "summary_scan_size=$summary_scan_size"
+        "summary_scan_binary=$summary_scan_binary"
+        "summary_scan_sha256=$summary_scan_sha256"
+        "summary_scan_blob_oid=$summary_scan_blob_oid"
+        "summary_scanner_sha256=$summary_scanner_sha256"
     )
-    result["mode_result"] = {
-        "interface": interface,
-        "commit_reused": commit_reused,
-        "remote_conclusion": remote_conclusion,
-        "pre_publish": {
-            "commit_count": optional_integer(publish_commit_count_raw),
-            "commit_range": publish_range or None,
-        },
-        "push_target": push_target or None,
-        "post_verify": post_verify,
-        "head": {
-            "before": head_before or None,
-            "after": head_after or None,
-            "unchanged": head_unchanged,
-        },
-        "index_unchanged": index_unchanged,
-        "worktree": {
-            "before": worktree_before_state or None,
-            "after": worktree_state or None,
-            "unchanged": worktree_unchanged,
-        },
-        "final": {
-            "head": final_head or None,
-            "remote_ref_oid": final_remote_oid or None,
-        },
-    }
-    if mode == "publish_existing_history":
-        result["mode_result"]["bootstrap_prerequisite"] = "repo-plan/repo-ensure"
-elif mode == "sync_published_branch":
-    result["mode_result"] = {
-        "interface": "sync-published-branch",
-        "source_remote": sync_source_remote or None,
-        "published_oid": commit_sha or None,
-        "expected_target_oid": sync_expected_target_oid or None,
-        "push_target": push_target or None,
-        "commit_count": optional_integer(publish_commit_count_raw),
-        "post_verify": post_verify,
-        "remote_conclusion": remote_conclusion,
-        "final_remote_oid": final_remote_oid or None,
-        "local_head_unchanged": head_unchanged,
-        "local_upstream_unchanged": head_unchanged and index_unchanged and worktree_unchanged,
-    }
-elif mode == "resume":
-    resume_interface = {
-        "initial_root": "resume-initial-publish",
-        "existing_commits": "resume-publish",
-        "existing_history_first": "resume-existing-history-publish",
-    }.get(resume_publish_kind)
-    result["mode_result"] = {
-        "interface": resume_interface,
-        "publish_kind": resume_publish_kind or None,
-        "recovery_start": recovery_start or None,
-        "commit_reused": commit_reused,
-        "completed_through": completed_through,
-        "resume_required": resume_required,
-        "pre_publish": {
-            "ahead": optional_integer(publish_ahead_raw),
-            "behind": optional_integer(publish_behind_raw),
-            "commit_count": optional_integer(publish_commit_count_raw),
-            "commit_range": publish_range or None,
-        },
-        "push_target": push_target or None,
-        "post_verify": post_verify,
-        "final": {
-            "head": final_head or None,
-            "remote_ref_oid": final_remote_oid or None,
-            "worktree": worktree_state or None,
-        },
-    }
-elif mode == "initial-commit-only":
-    result["mode_result"] = {
-        "initial_root_commit": mode_state,
-        "remote_verification": remote_conclusion,
-        "post_verify": post_verify,
-        "worktree": worktree_state or None,
-    }
-elif mode == "commit-only":
-    result["mode_result"] = {
-        "remote_verification": remote_conclusion,
-        "post_verify": post_verify,
-        "worktree": worktree_state or None,
-    }
-elif mode == "verify-only":
-    result["mode_result"] = {
-        "local_validation": mode_state,
-        "commit": commit_result,
-        "remote_verification": remote_conclusion,
-        "post_verify": post_verify,
-        "head": {
-            "before": head_before or None,
-            "after": head_after or None,
-            "unchanged": head_unchanged,
-        },
-        "index_unchanged": index_unchanged,
-        "worktree": {
-            "before": worktree_before_state or None,
-            "after": worktree_state or None,
-            "unchanged": worktree_unchanged,
-        },
-    }
-elif mode in {"retire_local_branch", "retire_remote_branch"}:
-    operation_name = "local" if mode == "retire_local_branch" else "remote"
-    result["mode_result"] = {
-        "interface": f"retire-{operation_name}-branch",
-        "operation": retirement_operation or None,
-        "remote": retirement_remote or None,
-        "branch": retirement_branch or None,
-        f"{operation_name}_ref": retirement_ref or None,
-        f"expected_{operation_name}_oid": retirement_expected_oid or None,
-        "expected_oid": retirement_expected_oid or None,
-        "retirement_plan_id": retirement_plan_id or None,
-        "integrated_into_ref": retirement_integrated_ref or None,
-        "integrated_into_oid": retirement_integrated_oid or None,
-        "ancestry_verified": optional_boolean(retirement_ancestry_raw),
-        "ci_required": retirement_ci_required,
-        "ci_status": retirement_ci_status,
-        "ci_commit_oid": retirement_ci_commit_oid or None,
-        "ci_verification_source": retirement_ci_source,
-        "ci_verified_at": retirement_ci_verified_at or None,
-        "expected_oid_lease_bound": retirement_lease_bound,
-        "remote_absent_after": optional_boolean(retirement_remote_absent_after_raw),
-        "local_absent_after": optional_boolean(retirement_local_absent_after_raw),
-        "remote_tracking_ref_absent": retirement_remote_tracking_absent,
-        "head": {
-            "before": head_before or None,
-            "after": head_after or None,
-            "unchanged": head_unchanged,
-        },
-        "index_unchanged": index_unchanged,
-        "worktree": {
-            "clean_before": worktree_before_state == "clean",
-            "clean_after": worktree_state == "clean",
-            "unchanged": worktree_unchanged,
-        },
-        "tags_unchanged": retirement_tags_unchanged,
-        "result": retirement_result,
-    }
-    if retirement_receipt_id:
-        result["mode_result"]["retirement_receipt_id"] = retirement_receipt_id
-else:
-    result["mode_result"] = {"post_verify": post_verify}
-if resume_required:
-    result["resume"] = {
-        "head_oid": resume_oid,
-        "remote": resume_remote,
-    }
-if runtime is not None and (diagnostics_requested or scan_verdict):
-    if scanner_sha256:
-        runtime["content_scanner"]["sha256"] = scanner_sha256
-    content_scan = None
-    if scan_verdict:
-        detectors = {"PRIVATE": "private-key-header-v1", "KNOWN": "known-token-v1",
-                     "SSH": "ssh-key", "ASSIGNMENT": "credential-assignment-v1",
-                     "ERROR": "content-scan-error"}
-        content_scan = {"path": scan_path, "stage": scan_stage,
-                        "verdict": scan_verdict, "detector": detectors[scan_verdict],
-                        "byte_length": optional_integer(scan_size),
-                        "binary": optional_boolean(scan_binary),
-                        "sha256": scan_sha256 or None, "blob_oid": scan_blob_oid or None}
-    result["diagnostics"] = {"schema_version": 1, "runtime": runtime,
-                             "content_scan": content_scan}
-
-print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
-PY
+    for warning in "${summary_warnings[@]}"; do
+        summary_arguments+=("warning=$warning")
+    done
+    "$PYTHON3_EXECUTABLE" -B "$helper" summary "${summary_arguments[@]}"
 }
 
 emit_summary() {
@@ -1169,10 +889,23 @@ is_staged_large_binary() {
     [[ "$numstat" == $'-\t-\t'* ]]
 }
 
+read_nul_records() {
+    local records_output_name=$1 records_reader_status=0 records_producer_pid
+    shift
+    # Process substitution does not propagate its producer's status through mapfile.
+    mapfile -d '' -t "$records_output_name" < <("$@") || records_reader_status=$?
+    records_producer_pid=$!
+    if ! wait "$records_producer_pid"; then
+        mapfile -t "$records_output_name" </dev/null
+        return 1
+    fi
+    return "$records_reader_status"
+}
+
 collect_staged_paths() {
-    mapfile -d '' -t staged_paths < <(
-        git -C "$repo" --literal-pathspecs diff --cached --name-only --no-renames -z
-    )
+    read_nul_records staged_paths \
+        git -C "$repo" --literal-pathspecs diff --cached --name-only --no-renames -z ||
+        fail '无法读取 staged 文件范围；未执行 commit 或 push'
 }
 
 is_staged_deletion() {
@@ -1327,14 +1060,20 @@ classify_branch_upstream() {
         return 0
     fi
     if ((remote_status == 0)); then
-        mapfile -d '' -t remote_values < <(
-            git -C "$repo" config --null --get-all "branch.$branch_name.remote"
-        )
+        if ! read_nul_records remote_values \
+            git -C "$repo" config --null --get-all "branch.$branch_name.remote"; then
+            branch_upstream_state='conflicting'
+            branch_upstream_error='upstream remote 配置无法安全读取'
+            return 0
+        fi
     fi
     if ((merge_status == 0)); then
-        mapfile -d '' -t merge_values < <(
-            git -C "$repo" config --null --get-all "branch.$branch_name.merge"
-        )
+        if ! read_nul_records merge_values \
+            git -C "$repo" config --null --get-all "branch.$branch_name.merge"; then
+            branch_upstream_state='conflicting'
+            branch_upstream_error='upstream merge 配置无法安全读取'
+            return 0
+        fi
     fi
 
     if ((${#remote_values[@]} == 0 && ${#merge_values[@]} == 0)); then
@@ -1995,9 +1734,15 @@ resolve_initial_target() {
 check_initial_worktree_scope() {
     local entry
     local path
+    local -a initial_entries=()
 
     initial_scope_error=''
-    while IFS= read -r -d '' entry; do
+    if ! read_nul_records initial_entries git -C "$repo" --literal-pathspecs \
+        status --porcelain=v1 -z --untracked-files=all; then
+        initial_scope_error='无法读取 initial root worktree 状态'
+        return 1
+    fi
+    for entry in "${initial_entries[@]}"; do
         if ((${#entry} < 4)); then
             initial_scope_error='无法解析 initial root worktree 状态'
             return 1
@@ -2007,9 +1752,7 @@ check_initial_worktree_scope() {
             initial_scope_error="initial root 存在显式范围外改动: $(printf '%q' "$path")"
             return 1
         fi
-    done < <(
-        git -C "$repo" --literal-pathspecs status --porcelain=v1 -z --untracked-files=all
-    )
+    done
 }
 
 check_initial_remote_empty() {
@@ -2943,6 +2686,7 @@ validate_existing_publish_range() {
     local detector
     local -a commit_oids=()
     local -a tree_entries=()
+    local -a changed_paths=()
     declare -A publish_paths=()
     declare -A reviewed_fixture_paths_seen=()
 
@@ -2998,7 +2742,12 @@ validate_existing_publish_range() {
             fi
         fi
 
-        while IFS= read -r -d '' path; do
+        if ! read_nul_records changed_paths git -C "$repo" diff-tree --root \
+            --diff-merges=first-parent --no-commit-id --no-renames -r --name-only -z "$commit_oid"; then
+            existing_range_error="无法读取待发布 commit 文件范围: $commit_oid"
+            return 1
+        fi
+        for path in "${changed_paths[@]}"; do
             if [[ -z "$path" || "$path" == /* || "$path" == '../'* ||
                 "$path" == *'/../'* || "$path" == *$'\n'* || "$path" == *$'\r'* ||
                 "$path" == *$'\t'* || "$path" == '.git' || "$path" == .git/* ]]; then
@@ -3006,9 +2755,11 @@ validate_existing_publish_range() {
                 return 1
             fi
             tree_entries=()
-            mapfile -d '' -t tree_entries < <(
-                git -C "$repo" --literal-pathspecs ls-tree -z "$commit_oid" -- "$path"
-            )
+            if ! read_nul_records tree_entries git -C "$repo" --literal-pathspecs \
+                ls-tree -z "$commit_oid" -- "$path"; then
+                existing_range_error="无法读取待发布 commit 文件对象: $(printf '%q' "$path")"
+                return 1
+            fi
             if ((${#tree_entries[@]} == 0)); then
                 # A deletion adds no blob. Earlier unpublished additions are
                 # still examined separately, even when HEAD now ignores them.
@@ -3090,10 +2841,7 @@ validate_existing_publish_range() {
                 fi
             done
             publish_paths["$path"]=1
-        done < <(
-            git -C "$repo" diff-tree --root --diff-merges=first-parent --no-commit-id --no-renames \
-                -r --name-only -z "$commit_oid"
-        )
+        done
     done
 
     for fixture_key in "${!history_fixture_exceptions[@]}"; do
@@ -5469,6 +5217,7 @@ source_review_file=''
 source_review_seen=0
 declare -A reviewed_source_paths=()
 declare -a paths=()
+declare -a committed_paths=()
 declare -A history_large_binary_overrides=()
 declare -A history_large_binary_applied=()
 declare -A history_fixture_exceptions=()
@@ -6097,9 +5846,15 @@ fi
 [[ "$repo_arg" == /* ]] || fail '--repo 必须是绝对路径'
 [[ -d "$repo_arg" ]] || fail "repo 路径不存在或不是目录: $repo_arg"
 
-for command_name in git realpath stat grep sed; do
+for command_name in git realpath stat grep sed timeout; do
     require_command "$command_name"
 done
+GIT_EXECUTABLE=$(type -P git) || fail 'Git executable is unavailable'
+TIMEOUT_EXECUTABLE=$(type -P timeout) || fail 'GNU timeout executable is unavailable'
+readonly GIT_EXECUTABLE TIMEOUT_EXECUTABLE
+git() {
+    "$TIMEOUT_EXECUTABLE" --kill-after=5s 120s "$GIT_EXECUTABLE" "$@"
+}
 python3_available || fail 'Git Finalizer 要求 Python 3.11+ on PATH'
 if ((retirement_plan_id_seen == 1)); then
     python3_available || fail 'Controller retirement plan 验证要求 Python 3.11+ on PATH'
@@ -6772,9 +6527,10 @@ committed_parents=$(git -C "$repo" rev-list --parents -n 1 "$commit_hash") ||
 [[ "$committed_parents" == "$commit_hash${commit_head_before:+ $commit_head_before}${merge_parent_arg:+ $merge_parent_arg}" ]] ||
     fail_created_commit 'commit parents 与已验证 HEAD 不一致；未执行 push'
 commit_message=$(git -C "$repo" log -1 --format=%B)
-mapfile -d '' -t committed_paths < <(
-    git -C "$repo" diff-tree --root --diff-merges=first-parent --no-commit-id --name-only -r --no-renames -z "$commit_hash"
-)
+if ! read_nul_records committed_paths git -C "$repo" diff-tree --root \
+    --diff-merges=first-parent --no-commit-id --name-only -r --no-renames -z "$commit_hash"; then
+    fail_created_commit '无法读取 commit 文件范围；保留本地 commit，未执行 push'
+fi
 for path in "${committed_paths[@]}"; do
     if [[ -z ${allowed_paths[$path]+present} ]]; then
         fail_created_commit "commit 包含超出显式范围的文件: $(printf '%q' "$path")"

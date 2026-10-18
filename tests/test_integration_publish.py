@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import uuid
+from contextlib import redirect_stdout
 
 ROOT = Path(__file__).resolve().parents[1]
 FINALIZER = ROOT / "git-finalize"
@@ -170,7 +172,12 @@ class IntegrationPublishTests(unittest.TestCase):
         hook.write_text("#!/bin/sh\nexit 1\n")
         hook.chmod(0o755)
         before = self.fixture.remote_reflog_count()
-        self.assert_blocked(self.fixture.run(), "integration push failed")
+        blocked = self.assert_blocked(self.fixture.run(), "integration push failed")
+        progress = blocked["progress"]
+        self.assertTrue(progress["mutation_attempted"])
+        self.assertNotEqual(progress["push_returncode"], 0)
+        self.assertEqual(progress["remote_oid"], self.fixture.expected_main)
+        self.assertFalse(progress["remote_verified"])
         self.assertEqual(self.fixture.remote_reflog_count(), before)
         hook.unlink()
         recovered = self.fixture.run()
@@ -181,7 +188,17 @@ class IntegrationPublishTests(unittest.TestCase):
         self.fixture.config["refusal"] = "completed"
         self.fixture.write_config()
         before = self.fixture.remote_reflog_count()
-        self.assert_blocked(self.fixture.run(), "FIXTURE_REFUSAL")
+        blocked = self.assert_blocked(self.fixture.run(), "FIXTURE_REFUSAL")
+        progress = blocked["progress"]
+        self.assertEqual(progress["phase"], "controller_complete")
+        self.assertEqual(progress["candidate_oid"], self.fixture.candidate_oid)
+        self.assertEqual(progress["lease_id"], self.fixture.lease_id)
+        self.assertEqual(progress["identity"], self.fixture.identity)
+        self.assertTrue(progress["mutation_attempted"])
+        self.assertEqual(progress["push_returncode"], 0)
+        self.assertTrue(progress["remote_verified"])
+        self.assertFalse(progress["controller_completed"])
+        self.assertEqual(progress["remote_oid"], self.fixture.candidate_oid)
         self.assertEqual(self.fixture.remote_reflog_count(), before + 1)
         del self.fixture.config["refusal"]
         self.fixture.write_config()
@@ -201,7 +218,10 @@ class IntegrationPublishTests(unittest.TestCase):
 
     def test_missing_controller_refuses_before_push(self) -> None:
         before = self.fixture.remote_reflog_count()
-        self.assert_blocked(self.fixture.run(PATH="/usr/bin:/bin"), "Worktree Controller is required")
+        blocked = self.assert_blocked(self.fixture.run(PATH="/usr/bin:/bin"), "Worktree Controller is required")
+        self.assertEqual(blocked["progress"]["phase"], "preflight")
+        self.assertFalse(blocked["progress"]["mutation_attempted"])
+        self.assertIsNone(blocked["progress"]["push_returncode"])
         self.assertEqual(self.fixture.remote_reflog_count(), before)
 
     def test_unsafe_remote_and_wrong_candidate_identity_are_rejected(self) -> None:
@@ -251,12 +271,47 @@ class IntegrationPublishTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("publication_consumer", ROOT / "git-finalize-integration-publish.py")
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        self.addCleanup(sys.modules.pop, spec.name, None)
         spec.loader.exec_module(module)
         before = self.fixture.remote_reflog_count()
         with patch.dict(os.environ, self.fixture.environment), patch.object(module, "RESPONSE_TIMEOUT_SECONDS", 0.05):
             arguments = module.build_parser().parse_args(self.fixture.command()[1:])
             with self.assertRaisesRegex(module.PublishError, "timed out"):
                 module.publish(arguments)
+        self.assertEqual(self.fixture.remote_reflog_count(), before)
+
+    def test_timed_out_push_preserves_the_attempt_and_exact_recovery_identity(self) -> None:
+        spec = importlib.util.spec_from_file_location("timed_publication", ROOT / "git-finalize-integration-publish.py")
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(module)
+        run_git = module.run_git
+
+        def timeout_push(repo, *arguments, **kwargs):
+            if arguments[0] == "push":
+                raise subprocess.TimeoutExpired("synthetic-git", 120)
+            return run_git(repo, *arguments, **kwargs)
+
+        output = io.StringIO()
+        before = self.fixture.remote_reflog_count()
+        with patch.dict(os.environ, self.fixture.environment), patch.object(
+            module, "run_git", side_effect=timeout_push
+        ), redirect_stdout(output):
+            with self.assertRaises(SystemExit) as failed:
+                module.main(self.fixture.command()[1:])
+        self.assertEqual(failed.exception.code, 1)
+        result = json.loads(output.getvalue())
+        progress = result["progress"]
+        self.assertEqual(progress["phase"], "push")
+        self.assertTrue(progress["mutation_attempted"])
+        self.assertIsNone(progress["push_returncode"])
+        self.assertIsNone(progress["remote_oid"])
+        self.assertEqual(progress["candidate_oid"], self.fixture.candidate_oid)
+        self.assertEqual(progress["lease_id"], self.fixture.lease_id)
+        self.assertEqual(progress["run_id"], self.fixture.run_id)
         self.assertEqual(self.fixture.remote_reflog_count(), before)
 
 

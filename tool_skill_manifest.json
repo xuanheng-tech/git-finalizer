@@ -26,7 +26,8 @@
       "tooling/tool_skill_sync.py",
       "tooling/tool_temp_dir.py",
       "tooling/workflow_health.py",
-      "git-finalize-content-scan.py"
+      "git-finalize-content-scan.py",
+      "git-finalize-runtime.py"
     ],
     "production_targets": {
       "git-finalize": "bin/git-finalize",
@@ -34,6 +35,7 @@
       "git-finalize-integration-publish.py": "bin/git-finalize-integration-publish.py",
       "git-finalize-repo-bootstrap.py": "bin/git-finalize-repo-bootstrap.py",
       "git-finalize-retirement-plan.py": "bin/git-finalize-retirement-plan.py",
+      "git-finalize-runtime.py": "bin/git-finalize-runtime.py",
       "git-finalize-snapshot-verify.py": "bin/git-finalize-snapshot-verify.py",
       "git-finalize-source-review.py": "bin/git-finalize-source-review.py",
       "tool-skill-sync": "bin/tool-skill-sync",
@@ -48,10 +50,10 @@
       "git-finalize"
     ]
   },
-  "public_cli_contract_sha256": "e29c4496412dd9b33377e159c94727535260df8a1c9364065e90b27721c11a31",
+  "public_cli_contract_sha256": "a10fb7c97924d9b0b9a345ed8f861510bdbb0fd5b54ef391a9911ad31ea0da0b",
   "schema_version": 2,
   "skill_contract_version": 2,
   "tool_commit": "@release",
   "tool_name": "git-finalizer",
-  "tool_version": "1.8.20"
+  "tool_version": "1.9.0"
 }

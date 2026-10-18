@@ -80,12 +80,16 @@ Git Finalizer（GF）核心只依赖 GNU bash、Git、GNU utilities 与 `PATH` �
   （伴生文件缺失/不安全）或未捕获的伴生 traceback 产生，因此**不能**把 rc 2 读成“远端未发生变化”
   ——`BLOCK_REMOTE_MISMATCH` 可能发生在 repository 已创建之后，是否变更由 receipt 的
   `bootstrap.executed` 表达；`--publish-integration-candidate` 输出自己的
-  判定对象：blocked 时是 7 键（`final_phase,finalizer_version,mode,next_action,reason,status,summary_schema_version`）；
+  判定对象：blocked 时是 8 键（`final_phase,finalizer_version,mode,next_action,progress,reason,status,summary_schema_version`）；
   success 时另有 repository/allocation、lease/run、target/expected main/candidate、`record_id`、
   `push`、`remote_verify` 和 `controller_execution`，后者标记公开 protocol 与尚需 lifecycle
   completion。`mode` 为 `integration_candidate_publish`，退出码 `{0,1,2}`，其 `next_action` 使用 companion
   自己的词表（例如 lease 缺失时的 `read_remote_fact_and_reenter_controller_publish_gate`），不属于上面
   列出的 bash `next_action` 枚举。Agent 不得假设 companion 输出与 `--summary` 同形。
+  `progress` schema 1 保留精确执行阶段、已验证的 candidate/lease/run identity、push 尝试和退出码、
+  live remote 观测与 Controller completion 状态；`blocked` 不表示远端未变化。字段定义见
+  [agent-contract.md](agent-contract.md)。核心 envelope 的内部序列化归 `git-finalize-runtime.py`，
+  通过命名状态传入，不再依赖位置参数顺序。
   `tool_cli_contract.json.exit_codes` 与 bootstrap 的分类实现由 `tests/test_tool_contract.py`
   双向核对，且核对是“反谎话”的：合同文本必须声明 `BLOCK_*` 为 `status=blocked`、必须把远端变更
   事实指向 `bootstrap.executed`、必须承认 `1` 来自 pre-execution guard/未捕获异常，并禁止任何

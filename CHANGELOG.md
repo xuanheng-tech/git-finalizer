@@ -13,17 +13,26 @@ section is invented for it.
 
 ## Unreleased
 
-- Update the independently versioned `tool-skill-sync` helper to 2.1.2. Verify every installed
+## 1.9.0
+
+- Refuse failed or partially failed Git path/object enumeration before publication, including
+  history, staged scope, initial scope and post-commit checks. Preserve explicit NUL-delimited paths.
+- Retain integration-publication progress after a failed push, remote observation or Controller
+  completion, while preserving the existing failure classification and recovery gate.
+- Move core result serialization to a companion with named state fields. Add bounded Git execution,
+  a 64 MiB scanner input budget and production reader/writer coordination for activation/rollback.
+- Ship the independently versioned `tool-skill-sync` helper 2.1.3 with the production execution lock.
+  Retain its dependency-aware wheel RECORD verification: verify every installed
   distribution's wheel RECORD in a uv tool runtime, including declared dependencies, instead of
   requiring exactly one distribution. Missing, empty or mismatched dependency records still fail;
   single-distribution verification output is unchanged. This fixes WC's installed doctor check
-  with its `websockets` dependency. Git Finalizer's public CLI contract is unchanged.
+  with its `websockets` dependency.
 
-- Update the independently versioned `tool-temp-dir` helper to 1.0.6. Its existing exact socket
+- Also ship the independently versioned `tool-temp-dir` helper 1.0.6. Its existing exact socket
   option also accepts pytest basetemp sockets in registered fixture task roots, using the same
   verified prefix classification as FIFO cleanup. Ordinary roots retain numbered-fixture scope;
   registration, lexical paths, owner/device/inode, complete socket selection and inactivity checks
-  remain mandatory. The Git Finalizer executable and its public CLI contract are unchanged.
+  remain mandatory.
 
 ## 1.8.20
 
