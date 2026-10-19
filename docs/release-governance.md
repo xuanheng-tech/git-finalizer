@@ -348,6 +348,7 @@ record.
 | `v1.8.20` | GitHub | `20923c217f0a0c7b32f1e9478dc5f9aadcee2112` | `4756ff9f24ba09977f5233b93861e35004cf822b` | `ab8cb11e69d3de2d7f0daf03b8c49e09504e752c8cb784d62900181121ad62e9` | 205274 |
 | `v1.9.0` | GitHub | `8450901ea4e9a3bb73f996b3042e525826205a61` | `bb5ad04f17444a48e5af23359cc2fdf37366ea02` | `449a93e23ef7f1149a275004bb78c7d801607fb5097f0dc017d5b081ba961908` | 209821 |
 | `v1.9.1` | GitHub | `5e91704db59728378235ee5d4a200a87142caca0` | `0190c29a516f9081dd983670a891a1a88baf2bff` | `21becbf8c9833cd872a3d52d0d2794b2b0fbaa6408905d7ac108ee9b7aa1871c` | 210196 |
+| `v1.9.2` | GitHub | `21579c40b0450f7425287031bef357a31f23847d` | `6a55ec0d31bd56b54ad3227307168ae6ad0a3da4` | `73c8fb208c15ee9446aa901d9d24484c3c285c0e09073981226278ddabde8fae` | 210552 |
 
 `v1.8.10` is a deliberate mirror. GitHub run `36883946683` published release `401104963`;
 Gitea run `851` independently built and verified the same candidate and digest. Its publication
@@ -525,6 +526,20 @@ were reviewed from its evidence. Supported installation activated bundle
 `1.9.1-5e91704db59728378235e-3599d2134d0c`; the default four-tool doctor passed without changing
 the Controller runtime. Publication receipt `c1628172-21cb-4851-9168-4b8bf801ce6a` is remote
 verified; source release receipt `7b133603-4782-40af-92bd-f4965c1bece3` has COMPLETE proof.
+
+`v1.9.2` preserves explicit Controller integration-ref namespaces and reports stale-plan recovery.
+GitHub run `39273128443` published release `417430453`; independent downloads match the exact clean
+candidate's pre-tag `selfcheck` digest and the row above. Both main remotes were verified before
+the annotated GitHub-only tag. The clean candidate passed `just release-check`: 16 PASS, 0 SKIP,
+0 FAIL, including 499 Python tests, 68 Skill tests and nine real-Controller test groups. Snapshot
+Runner's extensionless-file limit was supplemented by a complete entry-script comparison proving
+its version-literal-only change; the other twelve changed files were reviewed from its evidence.
+Supported activation selected bundle `1.9.2-21579c40b0450f7425287-9b59bf70d8e4`. The actual installed
+entry and companion passed all nine real-Controller groups, and the default four-tool doctor passed
+with Controller `1.30.3`, CLI contract `60` and storage layout `5` unchanged. The verified predecessor
+bundle and production backup remain retained. Publication receipt
+`c63c80a2-c089-465c-bfce-d47fd76e3a4e` is remote verified; source release receipt
+`d0e1d63d-b4d6-4937-aa91-0bc8cb221bba` has COMPLETE proof.
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
