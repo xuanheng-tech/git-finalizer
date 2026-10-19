@@ -347,6 +347,7 @@ record.
 | `v1.8.19` | GitHub | `cda8c9727237a20118e522b4592ad1e36087bd5b` | `496c8f5c67310bec183fcd03e1714ba9ee5aec7d` | `b73ef4521f1b139036cccf3dfb3af6f87abae55663d0ccf5c118a30e3ee71e64` | 205017 |
 | `v1.8.20` | GitHub | `20923c217f0a0c7b32f1e9478dc5f9aadcee2112` | `4756ff9f24ba09977f5233b93861e35004cf822b` | `ab8cb11e69d3de2d7f0daf03b8c49e09504e752c8cb784d62900181121ad62e9` | 205274 |
 | `v1.9.0` | GitHub | `8450901ea4e9a3bb73f996b3042e525826205a61` | `bb5ad04f17444a48e5af23359cc2fdf37366ea02` | `449a93e23ef7f1149a275004bb78c7d801607fb5097f0dc017d5b081ba961908` | 209821 |
+| `v1.9.1` | GitHub | `5e91704db59728378235ee5d4a200a87142caca0` | `0190c29a516f9081dd983670a891a1a88baf2bff` | `21becbf8c9833cd872a3d52d0d2794b2b0fbaa6408905d7ac108ee9b7aa1871c` | 210196 |
 
 `v1.8.10` is a deliberate mirror. GitHub run `36883946683` published release `401104963`;
 Gitea run `851` independently built and verified the same candidate and digest. Its publication
@@ -509,6 +510,21 @@ that explicit source checkout and Snapshot Runner's published metadata pinned to
 refresh was refused as `CANONICAL_IN_USE`; the active sessions were left untouched. Code
 publication receipt `f4089cea-fb9d-45f9-b9e8-5910c418fe34` is remote verified; source checkout
 release receipt `ce6a6f1e-c008-4d45-8cea-524627222d3f` has COMPLETE proof.
+
+`v1.9.1` ships Skill Sync 2.1.4 and resolves shortened Controller runtime directory names from
+matching, fixed installed Git origin metadata. GitHub run `39205799364` published and verified
+release `416940271`; downloaded assets match the clean candidate's pre-tag `selfcheck` and the
+row above. The checksum file is 93 bytes with SHA-256
+`8244c60b010ad1bedd90475d1ff5e1587bf385283422315c1493a3f35ee3fe30`.
+Both main remotes were synchronized before the annotated GitHub-only tag. The exact candidate
+passed `just release-check`: 16 PASS, 0 SKIP, 0 FAIL, including 496 Python tests, 68 Skill tests
+and the real Controller suite with Controller `1.30.2`, CLI contract `60` and storage layout `5`.
+An exact full-file comparison verified the entry script's version-literal-only change where
+Snapshot Runner's extensionless-file size limit prevented collection; the other eleven files
+were reviewed from its evidence. Supported installation activated bundle
+`1.9.1-5e91704db59728378235e-3599d2134d0c`; the default four-tool doctor passed without changing
+the Controller runtime. Publication receipt `c1628172-21cb-4851-9168-4b8bf801ce6a` is remote
+verified; source release receipt `7b133603-4782-40af-92bd-f4965c1bece3` has COMPLETE proof.
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
