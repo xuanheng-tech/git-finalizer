@@ -346,6 +346,7 @@ record.
 | `v1.8.18` | GitHub | `8285ab34c443fac89e19a87a3d039fd39567cbea` | `e0e074044be94116c7314800d68c3510693b7559` | `705d4141c818a3f7c15f0accd1895b250cff9e6ae91fccb628a5cb8a8d0c4746` | 201348 |
 | `v1.8.19` | GitHub | `cda8c9727237a20118e522b4592ad1e36087bd5b` | `496c8f5c67310bec183fcd03e1714ba9ee5aec7d` | `b73ef4521f1b139036cccf3dfb3af6f87abae55663d0ccf5c118a30e3ee71e64` | 205017 |
 | `v1.8.20` | GitHub | `20923c217f0a0c7b32f1e9478dc5f9aadcee2112` | `4756ff9f24ba09977f5233b93861e35004cf822b` | `ab8cb11e69d3de2d7f0daf03b8c49e09504e752c8cb784d62900181121ad62e9` | 205274 |
+| `v1.9.0` | GitHub | `8450901ea4e9a3bb73f996b3042e525826205a61` | `bb5ad04f17444a48e5af23359cc2fdf37366ea02` | `449a93e23ef7f1149a275004bb78c7d801607fb5097f0dc017d5b081ba961908` | 209821 |
 
 `v1.8.10` is a deliberate mirror. GitHub run `36883946683` published release `401104963`;
 Gitea run `851` independently built and verified the same candidate and digest. Its publication
@@ -491,6 +492,23 @@ Supported installation activated bundle `1.8.20-20923c217f0a0c7b32f1e-4730179a8e
 against the installed entry passed. The default four-tool doctor passed after the separate
 dependency-RECORD verifier repair `6d5103d`; its earlier refusal for Controller's declared
 `websockets` dependency was preserved and independently checked, without changing that runtime.
+
+`v1.9.0` hardens Git enumeration failures, retains integration-publication progress, extracts
+named summary serialization and coordinates production readers with activation and rollback.
+GitHub run `39176080623` published and verified release `416770626`; independently downloaded
+assets match the clean candidate's pre-tag `selfcheck` and the row above. The checksum file is
+93 bytes with SHA-256 `febbb4726673742e0eedd2c2f1bca94753a1004e3ffaf448da0700c480ead2e1`;
+notes match the Changelog. Both main remotes were synchronized before the annotated GitHub-only
+tag. The exact candidate passed `just release-check`: 16 PASS, 0 SKIP, 0 FAIL, including 494 Python
+tests, 68 Skill tests and the real Controller suite with Controller `1.29.1`, CLI contract `60`
+and storage layout `5`. Supported installation from the clean published candidate activated
+bundle `1.9.0-8450901ea4e9a3bb73f99-f1b6bc6c6347`; 26 delivery-invariant and runtime-guard tests
+against the installed entry and companions passed. The installed four-tool doctor passed with
+that explicit source checkout and Snapshot Runner's published metadata pinned to
+`cdd76933144051c32579c5d7e41736aaf870098c`, preserving its parallel source candidate. Canonical
+refresh was refused as `CANONICAL_IN_USE`; the active sessions were left untouched. Code
+publication receipt `f4089cea-fb9d-45f9-b9e8-5910c418fe34` is remote verified; source checkout
+release receipt `ce6a6f1e-c008-4d45-8cea-524627222d3f` has COMPLETE proof.
 
 `v0.4.0` – `v0.6.0` shipped their artifact under the pre-rename name `codex-git-finalizer-*`. Not
 every version string in this repository was ever released: thirteen sections of `CHANGELOG.md`
