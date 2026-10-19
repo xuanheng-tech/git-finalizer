@@ -13,6 +13,13 @@ section is invented for it.
 
 ## Unreleased
 
+## 1.9.1
+
+- Ship Skill Sync 2.1.4: resolve Controller runtimes with shortened commit directory names from
+  their installed Git origin's matching full commit and fixed requested revision. Missing,
+  ambiguous, mismatched or branch-based origins still fail the doctor check. Keep installed
+  RECORD, frozen-contract, source and Skill verification and leave the active runtime unchanged.
+
 ## 1.9.0
 
 - Refuse failed or partially failed Git path/object enumeration before publication, including

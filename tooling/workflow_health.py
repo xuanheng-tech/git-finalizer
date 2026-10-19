@@ -46,6 +46,26 @@ def installed_tool(
     return sync.check_tool_deployment(sources, tool, agents_root, bin_dir, hooks_dir)
 
 
+def controller_commit(runtime: Path) -> str:
+    label = runtime.parent.name
+    if sync.FULL_GIT_OID.fullmatch(label):
+        return label
+    origins = list(runtime.glob(
+        "lib/python*/site-packages/worktree_controller-*.dist-info/direct_url.json"
+    ))
+    if (not 7 <= len(label) < 40 or any(char not in "0123456789abcdef" for char in label)
+            or len(origins) != 1):
+        raise sync.SyncError("active runtime does not identify a full pinned commit")
+    origin = json.loads(origins[0].read_text(encoding="utf-8"))
+    vcs = origin.get("vcs_info") if isinstance(origin, dict) else None
+    commit = vcs.get("commit_id") if isinstance(vcs, dict) else None
+    if (not isinstance(commit, str) or not sync.FULL_GIT_OID.fullmatch(commit)
+            or not commit.startswith(label) or vcs.get("vcs") != "git"
+            or vcs.get("requested_revision") not in (label, commit)):
+        raise sync.SyncError("active runtime does not identify a full pinned commit")
+    return commit
+
+
 def controller_state(
     requirements: dict[str, Any], entrypoint: Path | None,
     runtime_root: Path, source_repo: Path, agents_root: Path,
@@ -99,9 +119,7 @@ def controller_state(
         result["frozen_contract_sha256"] = sync.sha256_file(contracts[0])
         result["artifact_verification"] = sync.verify_installed_record(runtime)
         # The active pinned commit is independent of the currently edited source checkout.
-        commit = runtime.parent.name
-        if not sync.FULL_GIT_OID.fullmatch(commit):
-            raise sync.SyncError("active runtime does not identify a full pinned commit")
+        commit = controller_commit(runtime)
         result["active_commit"] = commit
         observed = sync.run(["git", "-C", str(source_repo), "show", f"{commit}:tool_cli_contract.json"])
         if observed.returncode != 0 or hashlib.sha256(observed.stdout.encode()).hexdigest() != result["frozen_contract_sha256"]:

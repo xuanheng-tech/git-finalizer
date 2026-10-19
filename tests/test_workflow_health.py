@@ -133,7 +133,7 @@ class WorkflowHealthTests(unittest.TestCase):
         self.assertEqual(automatic.claude_home, self.root / "custom")
         self.assertEqual(explicit.claude_home, self.root / "explicit")
 
-    def controller_fixture(self, contract_version=37):
+    def controller_fixture(self, contract_version=37, *, directory_name="a" * 40):
         compatibility = sync.read_json(
             Path(__file__).resolve().parents[1] / "toolchain_compatibility.json"
         )
@@ -142,7 +142,7 @@ class WorkflowHealthTests(unittest.TestCase):
                 "storage_layout_version": 4, **requirements["capability_versions"]}
         contract = {**caps, "tool_version": "9.0.0"}
         runtime_root = self.root / f"controller-{contract_version}"
-        runtime = runtime_root / "versions" / ("a" * 40) / "worktree-controller"
+        runtime = runtime_root / "versions" / directory_name / "worktree-controller"
         site = runtime / "lib/python3.12/site-packages/worktree_controller"
         site.mkdir(parents=True)
         frozen = json.dumps(contract)
@@ -177,6 +177,46 @@ class WorkflowHealthTests(unittest.TestCase):
         self.assertEqual(result["source_head"], "b" * 40)
         self.assertTrue(result["source_dirty"])
         self.assertEqual((root / "active").resolve().parent.name, "a" * 40)
+
+    def test_controller_short_directory_uses_full_installed_commit(self) -> None:
+        root, requirements, envelope, frozen = self.controller_fixture(directory_name="a" * 7)
+        runtime = (root / "active").resolve()
+        origin = runtime / "lib/python3.12/site-packages/worktree_controller-9.0.0.dist-info/direct_url.json"
+        origin.parent.mkdir()
+        for requested in ("a" * 7, "a" * 40):
+            with self.subTest(requested_revision=requested):
+                origin.write_text(json.dumps({"vcs_info": {
+                    "vcs": "git", "commit_id": "a" * 40, "requested_revision": requested,
+                }}))
+                before = origin.read_bytes()
+                result = self.probe_controller(root, requirements, envelope, frozen)
+                self.assertEqual(result["status"], "PASS", result["errors"])
+                self.assertEqual(result["active_commit"], "a" * 40)
+                self.assertEqual(result["source_head"], "b" * 40)
+                self.assertEqual((root / "active").resolve(), runtime)
+                self.assertEqual(origin.read_bytes(), before)
+
+    def test_controller_short_directory_requires_pinned_git_origin(self) -> None:
+        root, requirements, envelope, frozen = self.controller_fixture(directory_name="a" * 7)
+        runtime = (root / "active").resolve()
+        origin = runtime / "lib/python3.12/site-packages/worktree_controller-9.0.0.dist-info/direct_url.json"
+        result = self.probe_controller(root, requirements, envelope, frozen)
+        self.assertEqual(result["status"], "FAIL")
+        origin.parent.mkdir()
+        valid = {"vcs": "git", "commit_id": "a" * 40, "requested_revision": "a" * 7}
+        for invalid in ({}, [], {**valid, "vcs": "hg"}, {**valid, "commit_id": "a" * 7},
+                        {**valid, "commit_id": "b" * 40}, {**valid, "requested_revision": "main"}):
+            with self.subTest(vcs_info=invalid):
+                origin.write_text(json.dumps({"vcs_info": invalid}))
+                result = self.probe_controller(root, requirements, envelope, frozen)
+                self.assertEqual(result["status"], "FAIL")
+                self.assertTrue(result["errors"])
+        origin.write_text(json.dumps({"vcs_info": valid}))
+        other = origin.parent.with_name("worktree_controller-8.0.0.dist-info")
+        other.mkdir()
+        (other / origin.name).write_bytes(origin.read_bytes())
+        result = self.probe_controller(root, requirements, envelope, frozen)
+        self.assertEqual(result["status"], "FAIL")
 
     def test_reviewed_controller_cli_contracts(self) -> None:
         for version in (37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51):

@@ -170,6 +170,11 @@ runtime and frozen contract, validates installed RECORD content, and reports its
 as a candidate separately. It does not activate a source HEAD, infer compatibility from software
 version alone, or treat equal CLI numbers as sufficient.
 
+A shortened hexadecimal runtime directory is accepted only when exactly one installed Git
+`direct_url.json` supplies a matching full commit and a fixed requested revision. Doctor uses
+that full commit for the existing frozen-contract and Skill checks; missing, ambiguous, mismatched
+or branch-based origin metadata remains a failure. It never changes the active runtime.
+
 Source-file tools verify all deployed executable/sidecar bytes, including Skill Sync. Python tools
 verify installed wheel RECORD content in addition to entrypoint versions. WC remains owned by its
 official stage/rollout/activate flow. A simultaneous WC development line can change its source

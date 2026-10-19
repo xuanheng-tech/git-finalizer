@@ -21,7 +21,7 @@ import tomllib
 from typing import Any, Sequence
 
 
-VERSION = "2.1.3"
+VERSION = "2.1.4"
 SCHEMA_VERSION = 1
 TOOL_SKILL_MANIFEST_SCHEMA_VERSION = 2
 SKILL_NAME = "git-change-delivery"
