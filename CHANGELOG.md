@@ -13,6 +13,15 @@ section is invented for it.
 
 ## Unreleased
 
+## 1.9.2
+
+- Preserve the Controller plan's exact integration-ref namespace in retirement validation,
+  authorization and completion. Explicit local head refs remain distinct from remote-tracking
+  refs even at identical OIDs; remote server queries retain their heads-only normalization.
+- Report stale Controller plans with a fresh-plan recovery instruction before authorization.
+  Exercise both local and remote deletion through the real producer for all four supported
+  ref spellings, namespace/OID/remote refusals, main advancement and fresh-plan recovery.
+
 ## 1.9.1
 
 - Ship Skill Sync 2.1.4: resolve Controller runtimes with shortened commit directory names from

@@ -380,9 +380,12 @@ branch-retirement-plan --repo <path> (--branch <b>|--allocation-id <id>) --remot
 不盲目重放。旧消费者已删除且没有未完成授权的 ref，通过公开 `branch-retirement-record`
 登记 `ATTEST_ABSENT` 观察，凭据保持 `CONTROLLER_OBSERVED` 来源。
 
-`--integrated-into` 接受与 plan 目标同一身份的任一跳法（裸分支名、`<remote>/<branch>` 或
-`refs/heads/...`）；Controller plan 原样保存操作者输入的字面值，登记与核对以解析后的 ref
-为准。plan 的 authority digest 只覆盖 Controller authority 文件而不含 refs：plan 创建后任何
+`--integrated-into` 的裸分支名、`<remote>/<branch>` 和完整
+`refs/remotes/<remote>/<branch>` 解析为同一跟踪引用；显式 `refs/heads/<branch>` 保留为
+本地分支身份。两种命名空间即使指向相同 OID 也不能互换。Controller plan 原样保存输入，
+Finalizer 按解析后的精确 ref 校验并回报；独立的 live remote 查询使用服务器的
+`refs/heads/<branch>`。计划过期时先重新观察并生成新 plan，不复用旧 expected OID。
+plan 的 authority digest 只覆盖 Controller authority 文件而不含 refs：plan 创建后任何
 相关的 authority 写入（新 intent、lease、receipt 等）都会使 Controller 以 state-drift fail
 closed，而 branch 自身移动则由 expected-OID CAS 与最后时刻 live 复核拦截；remote 上 integration
 分支的新 push 同样导致拒绝。因此一次 plan 必须在安静的短窗口内创建并消费，过期就重新规划。

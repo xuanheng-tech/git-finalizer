@@ -22,7 +22,7 @@ import tempfile
 import uuid
 
 # GF-INTEGRATION-ADAPTER: worktree-controller-retirement (single site)
-VERSION = "1.9.1"
+VERSION = "1.9.2"
 BRANCH_RETIREMENT_CAPABILITY = "branch_retirement_version"
 PLAN_ID_RE = re.compile(r"[0-9a-f]{64}")
 OID_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
@@ -72,11 +72,14 @@ def attest_controller_capability(repo: Path, plan_schema: int) -> None:
             fail("Controller does not advertise the required public retirement protocols")
 
 
-def integration_core(value: str, remote: str) -> str:
-    for prefix in (f"refs/remotes/{remote}/", "refs/heads/", f"{remote}/"):
-        if value.startswith(prefix):
-            return value[len(prefix):]
-    return value
+def integration_ref(value: str, remote: str) -> str:
+    # The plan's local head and remote-tracking ref are distinct authority
+    # identities, even when the live remote server uses refs/heads for both.
+    if value.startswith("refs/"):
+        if value.startswith(("refs/heads/", f"refs/remotes/{remote}/")):
+            return value
+        fail("retirement integration ref has a different remote or namespace")
+    return f"refs/remotes/{remote}/{value.removeprefix(f'{remote}/')}"
 
 
 def request_id(arguments: argparse.Namespace) -> str:
@@ -111,9 +114,8 @@ def identity_matches(arguments: argparse.Namespace, document: dict, *, grant: bo
     if any(document.get(key) != value for key, value in expected.items()):
         fail("Controller retirement identity differs from the requested operation")
     integrated_ref = document.get("integrated_ref")
-    if not isinstance(integrated_ref, str) or integrated_ref != (
-        f"refs/remotes/{arguments.remote}/"
-        f"{integration_core(arguments.integrated_into, arguments.remote)}"
+    if not isinstance(integrated_ref, str) or integrated_ref != integration_ref(
+        arguments.integrated_into, arguments.remote
     ):
         fail("Controller retirement integration ref differs")
     if OID_RE.fullmatch(str(document.get("expected_integrated_oid", ""))) is None:
@@ -173,6 +175,8 @@ def preflight(arguments: argparse.Namespace) -> None:
         arguments.repo, "branch-retirement-status", "--plan-id", arguments.plan_id,
     )
     current = object_value(status.get("current"), "retirement status")
+    if status.get("code") == "BRANCH_RETIREMENT_DRIFTED":
+        fail("Controller retirement plan is stale; create a fresh plan")
     identity_matches(arguments, current)
     verdict = controller_call(
         arguments.repo, "branch-retirement-verify", "--plan-id", arguments.plan_id,
@@ -247,8 +251,7 @@ def reported_result(arguments: argparse.Namespace, grant: dict | None, outcome: 
         "ref": (f"refs/heads/{arguments.branch}" if arguments.operation == "local"
                 else f"refs/remotes/{arguments.remote}/{arguments.branch}"),
         "expected_oid": arguments.expected_oid,
-        "integrated_ref": (f"refs/remotes/{arguments.remote}/"
-                           f"{integration_core(arguments.integrated_into, arguments.remote)}"),
+        "integrated_ref": integration_ref(arguments.integrated_into, arguments.remote),
         "expected_integrated_oid": (
             grant["expected_integrated_oid"] if grant is not None
             else arguments.expected_integrated_oid

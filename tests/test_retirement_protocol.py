@@ -127,6 +127,40 @@ class RetirementProtocolTests(unittest.TestCase):
         self.assertEqual(self.results[0]["outcome"], "REF_REMOVED_AT_EXPECTED_OID")
         self.assertEqual(self.calls, ["branch-retirement-authorize", "branch-retirement-complete"])
 
+    def test_plan_and_result_preserve_the_integration_namespace(self) -> None:
+        for target, expected in (
+            ("main", "refs/remotes/origin/main"),
+            ("origin/main", "refs/remotes/origin/main"),
+            ("refs/remotes/origin/main", "refs/remotes/origin/main"),
+            ("refs/heads/main", "refs/heads/main"),
+        ):
+            with self.subTest(target=target):
+                self.arguments.integrated_into = target
+                self.grant["integrated_ref"] = expected
+                self.protocol.identity_matches(self.arguments, self.grant, grant=True)
+                with mock.patch.object(self.protocol, "controller_call", side_effect=self.controller):
+                    self.protocol.execute(self.arguments)
+                self.assertEqual(self.results[-1]["integrated_ref"], expected)
+                self.git("branch", "feat/retire", self.oid)
+
+    def test_equal_oids_do_not_equate_head_tracking_or_other_remote_identity(self) -> None:
+        for target in ("refs/heads/main", "refs/remotes/other/main", "refs/tags/main"):
+            with self.subTest(target=target):
+                self.arguments.integrated_into = target
+                with mock.patch.object(self.protocol, "controller_call", side_effect=self.controller):
+                    self.blocked(lambda: self.protocol.execute(self.arguments))
+                self.assertTrue(self.present())
+                self.assertEqual(self.results, [])
+
+    def test_stale_plan_reports_replanning_before_authorization(self) -> None:
+        with mock.patch.object(self.protocol, "controller_call", return_value={
+            "code": "BRANCH_RETIREMENT_DRIFTED", "current": {"plan_id": "8" * 64},
+        }) as controller:
+            diagnostic = self.blocked(lambda: self.protocol.preflight(self.arguments))
+        self.assertIn("plan is stale; create a fresh plan", diagnostic)
+        self.assertEqual(controller.call_count, 1)
+        self.assertTrue(self.present())
+
     def test_malformed_scope_holder_and_expiry_never_mutate(self) -> None:
         for field, value in (
             ("expected_oid", "3" * 40), ("schema_version", True),
