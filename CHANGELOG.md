@@ -13,6 +13,16 @@ section is invented for it.
 
 ## Unreleased
 
+## 1.9.3
+
+- Let exact-root initial-publication recovery explicitly reapply a reviewed `tests/` fixture
+  content exception through the existing `--allow-test-fixture` flag. Bind each canonical path
+  to its regular blob in the expected single root and include the path/blob in summary warnings.
+- Keep default content refusal, other-file scanning, scanner failures, path/HEAD/clean-state
+  guards and exact remote recovery unchanged. Reject missing, duplicate, non-regular and
+  out-of-tests paths; exercise interrupted publication and repeated recovery without new commits.
+- Keep CLI contract 8 and toolchain contract 6; no other resume mode accepts the added combination.
+
 ## 1.9.2
 
 - Preserve the Controller plan's exact integration-ref namespace in retirement validation,

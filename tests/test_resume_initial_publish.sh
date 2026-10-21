@@ -147,7 +147,7 @@ assert_one_root_commit() {
 
 resume_command() {
     "$finalizer" --resume-initial-publish "$expected_head" \
-        --remote origin --repo "$test_repo"
+        --remote origin --repo "$test_repo" "$@"
 }
 
 test_resume_empty_remote() {
@@ -615,8 +615,8 @@ test_resume_rejects_cli_conflicts() {
     output=$case_dir/fixture.log
     expect_failure "$output" "$finalizer" --resume-initial-publish "$expected_head" \
         --remote origin --repo "$test_repo" --allow-test-fixture tests/fake
-    assert_file_contains "$output" '不接受 --allow-test-fixture' \
-        'resume accepted fixture override'
+    assert_file_contains "$output" 'regular root-commit blob' \
+        'resume accepted a missing fixture override'
     output=$case_dir/large-binary.log
     expect_failure "$output" "$finalizer" --resume-initial-publish "$expected_head" \
         --remote origin --repo "$test_repo" --allow-large-binary original.bin
@@ -655,6 +655,128 @@ test_resume_rejects_incomplete_operation() {
         'incomplete-operation rejection changed remote'
 }
 
+make_unborn_fixture_repo() {
+    local case_dir=$1
+
+    test_repo=$case_dir/repo
+    test_remote=$case_dir/remote.git
+    mkdir -p -- "$test_repo/tests"
+    git init --quiet --bare --initial-branch=main "$test_remote"
+    git init --quiet --initial-branch=main "$test_repo"
+    configure_author "$test_repo"
+    git -C "$test_repo" remote add origin "$test_remote"
+    printf 'root content\n' >"$test_repo/root.txt"
+    # Deliberately invalid key material, assembled only in disposable fixtures.
+    printf '%s%s\n%s\n' '-----BEGIN ' 'PRIVATE KEY-----' 'not-a-real-key' \
+        >"$test_repo/tests/fixture.txt"
+}
+
+test_resume_explicit_initial_test_fixture() {
+    local case_dir=$tmp_root/root-fixture-recovery
+    local output=$case_dir/output.log
+
+    make_unborn_fixture_repo "$case_dir"
+    printf '#!/bin/sh\nexit 1\n' >"$test_remote/hooks/pre-receive"
+    chmod +x "$test_remote/hooks/pre-receive"
+    expect_failure "$output" "$finalizer" --initial-publish --remote origin \
+        --repo "$test_repo" --message root --allow-test-fixture tests/fixture.txt \
+        --summary -- root.txt tests/fixture.txt
+    expected_head=$(git -C "$test_repo" rev-parse HEAD)
+    assert_one_root_commit "$test_repo"
+    assert_file_contains "$output" '"created":true' 'initial fixture root was not retained'
+    rm -- "$test_remote/hooks/pre-receive"
+
+    expect_failure "$output" resume_command --summary
+    assert_file_contains "$output" 'private key' 'default root scan no longer refuses fixtures'
+    assert_file_contains "$output" '"exit_code":1' 'default fixture refusal exit changed'
+    assert_equal '' "$(remote_refs "$test_remote")" 'default fixture refusal pushed refs'
+    expect_success "$output" resume_command --allow-test-fixture tests/fixture.txt --summary
+    assert_file_contains "$output" 'root test fixture content override:' 'fixture audit evidence missing'
+    assert_equal "$expected_head"$'\trefs/heads/main' "$(remote_refs "$test_remote")" \
+        'fixture resume did not publish the retained exact root'
+    assert_one_root_commit "$test_repo"
+    assert_equal "$expected_head" "$(git -C "$test_repo" rev-parse HEAD)" \
+        'fixture resume created another commit'
+
+    printf '#!/bin/sh\nexit 1\n' >"$test_remote/hooks/pre-receive"
+    chmod +x "$test_remote/hooks/pre-receive"
+    expect_success "$output" resume_command --allow-test-fixture tests/fixture.txt --summary
+    assert_file_contains "$output" '"executed":false' 'idempotent fixture resume attempted another push'
+    assert_equal '' "$(status_snapshot "$test_repo")" 'fixture recovery left dirty state'
+}
+
+test_resume_test_fixture_scope_refusals() {
+    local case_dir=$tmp_root/root-fixture-scope
+    local output=$case_dir/output.log
+    local fixture
+
+    make_unborn_fixture_repo "$case_dir"
+    ln -s fixture.txt "$test_repo/tests/link"
+    git -C "$test_repo" add -- root.txt tests/fixture.txt tests/link
+    git -C "$test_repo" commit --quiet -m 'synthetic fixture root'
+    expected_head=$(git -C "$test_repo" rev-parse HEAD)
+    for fixture in root.txt tests/../root.txt ./tests/fixture.txt tests/missing tests tests/link; do
+        expect_failure "$output" resume_command --allow-test-fixture "$fixture" --summary
+        assert_file_contains "$output" '"exit_code":1' 'invalid fixture scope exit changed'
+        assert_equal '' "$(remote_refs "$test_remote")" 'invalid fixture scope changed remote'
+        assert_equal "$expected_head" "$(git -C "$test_repo" rev-parse HEAD)" \
+            'invalid fixture scope changed HEAD'
+    done
+    expect_failure "$output" resume_command --allow-test-fixture tests/fixture.txt \
+        --allow-test-fixture tests/fixture.txt --summary
+    assert_file_contains "$output" 'duplicate root resume' 'duplicate fixture paths were accepted'
+    assert_equal '' "$(status_snapshot "$test_repo")" 'scope refusal changed worktree/index'
+}
+
+test_resume_fixture_does_not_mask_other_content() {
+    local case_dir=$tmp_root/root-fixture-other-content
+    local output=$case_dir/output.log
+
+    make_unborn_fixture_repo "$case_dir"
+    cp -- "$test_repo/tests/fixture.txt" "$test_repo/outside.txt"
+    git -C "$test_repo" add -- root.txt tests/fixture.txt outside.txt
+    git -C "$test_repo" commit --quiet -m 'synthetic refusal root'
+    expected_head=$(git -C "$test_repo" rev-parse HEAD)
+    expect_failure "$output" resume_command --allow-test-fixture tests/fixture.txt --summary
+    assert_file_contains "$output" 'outside.txt' 'fixture exception hid another sensitive file'
+    assert_file_contains "$output" '"exit_code":1' 'unreviewed content refusal exit changed'
+    assert_equal '' "$(remote_refs "$test_remote")" 'unreviewed content was published'
+    assert_equal "$expected_head" "$(git -C "$test_repo" rev-parse HEAD)" \
+        'content refusal changed the root'
+}
+
+test_resume_fixture_scanner_failure() {
+    local case_dir=$tmp_root/root-fixture-scanner-failure
+    local output=$case_dir/output.log
+    local python
+
+    make_unborn_fixture_repo "$case_dir"
+    rm -- "$test_repo/root.txt"
+    git -C "$test_repo" add -- tests/fixture.txt
+    git -C "$test_repo" commit --quiet -m 'synthetic scanner refusal root'
+    expected_head=$(git -C "$test_repo" rev-parse HEAD)
+    python=$(command -v python3)
+    mkdir -- "$case_dir/bin"
+    cat >"$case_dir/bin/python3" <<EOF
+#!/bin/bash
+for argument in "\$@"; do
+    if [[ \${argument##*/} == git-finalize-content-scan.py ]]; then
+        exit 23
+    fi
+done
+exec "$python" "\$@"
+EOF
+    chmod +x "$case_dir/bin/python3"
+    expect_failure "$output" env PATH="$case_dir/bin:$PATH" "$finalizer" \
+        --resume-initial-publish "$expected_head" --remote origin --repo "$test_repo" \
+        --allow-test-fixture tests/fixture.txt --summary
+    assert_file_contains "$output" '内容分类失败' 'fixture scanner failure was not classified'
+    assert_file_contains "$output" '"exit_code":1' 'scanner failure exit changed'
+    assert_equal '' "$(remote_refs "$test_remote")" 'fixture override ignored scanner failure'
+    assert_equal "$expected_head" "$(git -C "$test_repo" rev-parse HEAD)" \
+        'scanner failure changed HEAD'
+}
+
 run_case() {
     current_case=$1
     shift
@@ -687,5 +809,12 @@ run_case 'resume closes an uncertain accepted push without another commit' \
     test_resume_recovers_uncertain_push
 run_case 'resume CLI conflicts fail before remote access' test_resume_rejects_cli_conflicts
 run_case 'resume rejects an incomplete Git operation' test_resume_rejects_incomplete_operation
+run_case 'explicit reviewed fixture resumes the retained initial root idempotently' \
+    test_resume_explicit_initial_test_fixture
+run_case 'root fixture overrides reject unsafe missing duplicate and non-regular paths' \
+    test_resume_test_fixture_scope_refusals
+run_case 'root fixture overrides never mask another sensitive file' \
+    test_resume_fixture_does_not_mask_other_content
+run_case 'root fixture overrides keep scanner failures closed' test_resume_fixture_scanner_failure
 
 printf 'all %s resume integration tests passed\n' "$passed"

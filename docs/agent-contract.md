@@ -5,6 +5,11 @@ Machine-readable results for automation. This page is the public, versioned desc
 agent should request `--summary` exactly once per invocation and parse the single JSON object it
 prints.
 
+Exact-root recovery may explicitly repeat `--allow-test-fixture tests/<exact-path>` for a reviewed
+fixture from an interrupted initial publication. Its `warnings` name the canonical path and blob
+in the expected root commit. This creates no commit and grants no publication authority; default
+scanning, other-file checks, scanner failures and all recovery identity guards remain mandatory.
+
 `tests/test_agent_contract.py` extracts the vocabularies below from the implementation and
 fails if a value exists in code but not here, so this page cannot silently drift.
 (`tests/test_integration_boundaries.sh` is the analogous guard for

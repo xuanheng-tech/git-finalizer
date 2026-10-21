@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.9.2"
+readonly VERSION="1.9.3"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -400,6 +400,7 @@ Usage:
     [--allow-large-binary <repo-relative-path>]... -- <file>...
   git-finalize --resume-initial-publish <full-head-oid>
     --remote <remote-name> --repo <absolute-repo> [--summary]
+    [--allow-test-fixture <repo-relative-path>]...
   git-finalize --resume-publish <full-head-oid>
     --repo <absolute-repo> [--summary] [--fixture-exceptions <absolute-json-file>]
   git-finalize --sync-published-branch <full-published-oid>
@@ -2666,6 +2667,34 @@ check_exact_fixture_staged_scope() {
     done
 }
 
+load_root_resume_test_fixtures() {
+    local path lexical relative metadata object_mode object_type object_oid extra
+    local -a entries=()
+
+    for path in "${allow_test_fixture_args[@]}"; do
+        [[ -n "$path" && "$path" != /* &&
+            "$path" != *$'\n'* && "$path" != *$'\r'* && "$path" != *$'\t'* ]] ||
+            fail 'root resume test fixture requires a canonical repo-relative path'
+        lexical=$(realpath -m -s -- "$repo/$path") || fail 'cannot resolve root test fixture path'
+        relative=${lexical#"$repo/"}
+        [[ "$relative" == "$path" && "$relative" == tests/* ]] ||
+            fail 'root resume test fixture content override only accepts canonical tests/ paths'
+        [[ -z ${root_resume_test_fixture_blobs[$path]+present} ]] ||
+            fail 'duplicate root resume test fixture path'
+        read_nul_records entries git -C "$repo" --literal-pathspecs \
+            ls-tree -z "$resume_expected_oid" -- "$path" || fail 'cannot inspect root test fixture blob'
+        [[ "${#entries[@]}" == 1 && "${entries[0]-}" == *$'\t'* ]] ||
+            fail 'root resume test fixture must name one regular root-commit blob'
+        metadata=${entries[0]%%$'\t'*}
+        read -r object_mode object_type object_oid extra <<<"$metadata"
+        [[ "${entries[0]#*$'\t'}" == "$path" && -z "$extra" &&
+            "$object_type" == blob && "$object_oid" =~ ^[0-9a-f]+$ &&
+            ( "$object_mode" == 100644 || "$object_mode" == 100755 ) ]] ||
+            fail 'root resume test fixture must name one regular root-commit blob'
+        root_resume_test_fixture_blobs["$path"]=$object_oid
+    done
+}
+
 validate_existing_publish_range() {
     local commit_output
     local commit_oid
@@ -2823,7 +2852,14 @@ validate_existing_publish_range() {
                 return 1
             fi
             inspect_content blob "$object_oid" "$excepted_detectors"
-            if reason=$(content_verdict_reason "$scan_verdict"); then
+            if [[ -n ${root_resume_test_fixture_blobs[$path]+present} && "$scan_verdict" != ERROR ]]; then
+                [[ "$resume_initial" == 1 && "$commit_oid" == "$resume_expected_oid" &&
+                    "$object_oid" == "${root_resume_test_fixture_blobs[$path]}" ]] || {
+                    existing_range_error='root test fixture path/blob identity mismatch'
+                    return 1
+                }
+                record_summary_warning "root test fixture content override: $path ($object_oid)"
+            elif reason=$(content_verdict_reason "$scan_verdict"); then
                 record_content_scan "$path" history
                 existing_range_error="拒绝待发布敏感文件 $(printf '%q' "$path"): $reason"
                 return 1
@@ -3080,6 +3116,7 @@ resume_initial_publish() {
     if ! resolve_resume_target; then
         fail "$resume_target_error"
     fi
+    load_root_resume_test_fixtures
     resume_publish_commit_count=1
     resume_publish_range=$resume_expected_oid
     existing_publish_commit_output_override=''
@@ -5224,6 +5261,7 @@ declare -A history_fixture_exceptions=()
 declare -A history_fixture_paths=()
 declare -A history_fixture_rules=()
 declare -A history_fixture_applied=()
+declare -A root_resume_test_fixture_blobs=()
 declare -a allow_test_fixture_args=()
 declare -a allow_large_binary_args=()
 
@@ -5720,7 +5758,7 @@ elif ((resume_initial == 1 || resume_existing == 1 || resume_existing_history ==
         fail 'resume 模式不接受 --initial-branch-publish'
     ((message_seen == 0)) || fail 'resume 模式不接受 --message'
     ((dry_run == 0)) || fail 'resume 模式不支持 --dry-run'
-    ((${#allow_test_fixture_args[@]} == 0)) ||
+    ((resume_initial == 1 || ${#allow_test_fixture_args[@]} == 0)) ||
         fail 'resume 模式不接受 --allow-test-fixture'
     ((snapshot_seen == 0)) || fail 'resume 模式不接受 --snapshot'
     if ((resume_existing_history == 0)); then

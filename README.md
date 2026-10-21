@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.9.2**.
+Current source version: **1.9.3**.
 
-当前版本：`1.9.2`
+当前版本：`1.9.3`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
@@ -79,6 +79,13 @@ terminal and an automation layer can rely on "it stopped, and here is why".
 
 Exact content review is optional: `--fixture-exceptions /absolute/review.json` is accepted by normal
 publication and configured-upstream `--resume-publish`, as well as existing branch/history modes.
+When an initial publication retained its root commit after a failed push, an explicitly reviewed
+`tests/` fixture may be passed again with `--resume-initial-publish <exact-root-oid>
+--allow-test-fixture tests/<exact-path>`. Each canonical path must name a regular blob in that exact
+root; the summary records its path and blob identity. No fixture is allowed implicitly. Other
+files, scanner failures, clean-state and remote-identity guards remain checked, and other resume
+modes still refuse this legacy flag. Recovery reuses the same root without creating a commit.
+
 Local `verify-only` and `commit-only` also accept exact `credential-assignment-v1` reviews for
 single-level `backend/tests/test_*.py` files; they read the existing local `origin` push URL only to
 bind repository identity and perform no remote operation. These local reviews require unchanged

@@ -263,7 +263,8 @@
         "--repo",
         "--summary",
         "--diagnostics",
-        "--allow-large-binary"
+        "--allow-large-binary",
+        "--allow-test-fixture"
       ],
       "name": "resume_initial_publish",
       "operation_class": "remote_mutation",
@@ -271,6 +272,7 @@
         "clean_attached_single_root_commit",
         "full_expected_head_oid",
         "empty_or_exact_remote_shape",
+        "canonical_tests_regular_blobs_bound_to_expected_root_with_fixture_override",
         "exact_regular_head_blob_at_most_25_mib_with_large_binary_exception"
       ],
       "result_statuses": [
@@ -557,5 +559,5 @@
   ],
   "schema_version": 1,
   "tool_name": "git-finalizer",
-  "tool_version": "1.9.2"
+  "tool_version": "1.9.3"
 }
