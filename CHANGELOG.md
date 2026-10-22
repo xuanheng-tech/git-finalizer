@@ -13,6 +13,14 @@ section is invented for it.
 
 ## Unreleased
 
+## 1.9.5
+
+- Ship tool-temp-dir 1.0.7 with repeatable explicit `--pytest-basetemp` paths for custom
+  nested pytest runners, including WC shard layouts. Keep fixture FIFO opt-in and exact
+  inactive socket selection; reject unlisted siblings, malformed paths, non-directories,
+  ownership/device drift and changed basetemp identities before deletion.
+- Keep Git Finalizer CLI contract 8 and toolchain contract 6 unchanged.
+
 ## 1.9.4
 
 - Register WC CLI 61 while retaining independent capability and storage checks.

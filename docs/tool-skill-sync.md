@@ -99,6 +99,14 @@ fixture 根分类，亦接受测试基目录中的精确 socket 路径（例如 
 本工具登记根内、同 UID/device 的实际 socket，且未被绑定；未知活动、漏列 socket、身份漂移
 或不完整扫描均拒绝删除。默认清理不接受 socket，源文件变更仍通过所属 bundle 安装后生效。
 
+对于 `wcs.run/0/pt/test_case0/pipe` 等嵌套、自定义名称的 pytest 基目录，1.0.7 可用
+`--pytest-basetemp wcs.run/0/pt` 显式声明；多处分片可重复此参数。它必须指向登记根内实际存在、
+同 UID/device 的规范相对目录，仅其直接 `test_*<数字>` 子目录的后代获得 fixture 范围。
+FIFO 仍需 `--allow-owned-fixture-fifo`；socket 仍需逐项指定且证明未绑定。普通文件、目录、
+symlink 不因此获得特殊文件权限，未声明的 sibling 或未知条目仍阻断整次清理。删除前重新核对
+声明目录的 identity。先用相同参数执行 `dry-run-cleanup` 审阅完整列表，再执行 `cleanup`；
+不要重命名历史目录、改登记记录或用通配符扩大范围。旧参数和默认拒绝保持不变。
+
 `release_manifest.json` 记录 exact tool identity、binary/entry SHA、Skill SHA、CLI contract SHA 和
 materialized manifest SHA，且不含 timestamp 或 developer-specific path。
 

@@ -19,7 +19,7 @@ from typing import Any
 TMP_ROOT = Path("/tmp")
 STATE_ROOT = Path.home() / ".local/state/tool-temp-dir"
 RECORD_VERSION = 2
-TOOL_VERSION = "1.0.6"
+TOOL_VERSION = "1.0.7"
 PREFIX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 NAME_RE = re.compile(
     r"^tool-task-(?P<prefix>[A-Za-z0-9][A-Za-z0-9_-]{0,63})-"
@@ -50,6 +50,7 @@ class CleanupValidation:
     inode: int
     entries: tuple["CleanupEntry", ...]
     fixture_socket_paths: frozenset[str] = frozenset()
+    pytest_basetemps: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -328,8 +329,42 @@ def _prefix_allows_fixture_fifo(prefix: str) -> bool:
     return bool(tokens & FIXTURE_PREFIX_TOKENS)
 
 
+def _pytest_basetemps(raw_paths: tuple[str, ...]) -> frozenset[str]:
+    for relative in raw_paths:
+        if (
+            not relative
+            or os.path.isabs(relative)
+            or os.path.normpath(relative) != relative
+            or any(part in {"", ".", ".."} or part.strip() != part
+                   for part in relative.split("/"))
+            or any(ord(character) < 32 or ord(character) == 127
+                   or character in "*?[]" for character in relative)
+        ):
+            raise TempDirError("pytest_scope_rejected", f"pytest basetemp 必须为规范相对目录：{relative}")
+    return frozenset(raw_paths)
+
+
+def _declared_pytest_node(relative: str, basetemps: frozenset[str]) -> bool:
+    for base in basetemps:
+        if relative.startswith(base + "/"):
+            node, separator, _rest = relative[len(base) + 1:].partition("/")
+            if separator and re.fullmatch(r"test_.+\d+", node):
+                return True
+    return False
+
+
+def _basetemp_entries(
+    entries: list[CleanupEntry] | tuple[CleanupEntry, ...], paths: frozenset[str],
+) -> dict[str, CleanupEntry]:
+    selected = {entry.relative_path: entry for entry in entries if entry.relative_path in paths}
+    if set(selected) != paths or any(entry.kind != "directory" for entry in selected.values()):
+        raise TempDirError("pytest_scope_rejected", "pytest basetemp 缺失或不是实际目录")
+    return selected
+
+
 def _fixture_socket_paths(
     raw_paths: tuple[str, ...], *, fixture_root: bool = False,
+    pytest_basetemps: frozenset[str] = frozenset(),
 ) -> frozenset[str]:
     for relative in raw_paths:
         parts = relative.split("/")
@@ -345,7 +380,8 @@ def _fixture_socket_paths(
             or os.path.normpath(relative) != relative
             or any(ord(character) < 32 or ord(character) == 127 for character in relative)
             or any(part in {"", ".", ".."} or part.strip() != part for part in parts)
-            or not (fixture_root or numbered_node or nested_node)
+            or not (fixture_root or numbered_node or nested_node
+                    or _declared_pytest_node(relative, pytest_basetemps))
         ):
             raise TempDirError(
                 "socket_scope_rejected",
@@ -397,6 +433,7 @@ def _allowed_entry_kind(
     allow_owned_fixture_fifo: bool,
     fifo_requires_pytest_subtree: bool = False,
     fixture_socket_paths: frozenset[str] = frozenset(),
+    pytest_basetemps: frozenset[str] = frozenset(),
 ) -> str:
     kind = _entry_kind(mode)
     if kind == "FIFO" and allow_owned_fixture_fifo and fifo_requires_pytest_subtree:
@@ -412,7 +449,8 @@ def _allowed_entry_kind(
             and re.fullmatch(r"test_.+\d+", parts[index + 1]) is not None
             for index, root in enumerate(parts[1:-2], start=1)
         )
-        if not separator or not (named_pytest_root or numbered_test_node or nested_pytest_node):
+        if not separator or not (named_pytest_root or numbered_test_node or nested_pytest_node
+                                 or _declared_pytest_node(relative_path, pytest_basetemps)):
             raise TempDirError(
                 "fifo_scope_rejected",
                 f"FIFO 不在 pytest 临时子目录中：{relative_path}",
@@ -446,6 +484,7 @@ def _scan_tree(
     allow_owned_fixture_fifo: bool,
     fifo_requires_pytest_subtree: bool = False,
     fixture_socket_paths: frozenset[str] = frozenset(),
+    pytest_basetemps: frozenset[str] = frozenset(),
     fixture_root: Path | None = None,
     relative_root: str = "",
     entries: list[CleanupEntry] | None = None,
@@ -474,6 +513,7 @@ def _scan_tree(
             allow_owned_fixture_fifo=allow_owned_fixture_fifo,
             fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
             fixture_socket_paths=fixture_socket_paths,
+            pytest_basetemps=pytest_basetemps,
         )
         if kind == "socket":
             if fixture_root is None:
@@ -504,6 +544,7 @@ def _scan_tree(
                 allow_owned_fixture_fifo=allow_owned_fixture_fifo,
                 fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
                 fixture_socket_paths=fixture_socket_paths,
+                pytest_basetemps=pytest_basetemps,
                 fixture_root=fixture_root,
                 relative_root=relative,
                 entries=entries,
@@ -570,10 +611,12 @@ def validate_cleanup(
     *,
     allow_owned_fixture_fifo: bool = False,
     allow_owned_fixture_sockets: tuple[str, ...] = (),
+    pytest_basetemps: tuple[str, ...] = (),
 ) -> CleanupValidation:
     # Check lexical scope before filesystem access; fixture-root authority comes
     # only from the verified creation record below, never the supplied basename.
     socket_paths = _fixture_socket_paths(allow_owned_fixture_sockets, fixture_root=True)
+    basetemps = _pytest_basetemps(pytest_basetemps)
     path = _normalize_cleanup_path(raw_path)
     try:
         metadata = path.lstat()
@@ -599,6 +642,7 @@ def validate_cleanup(
     _fixture_socket_paths(
         allow_owned_fixture_sockets,
         fixture_root=_prefix_allows_fixture_fifo(prefix),
+        pytest_basetemps=basetemps,
     )
     fifo_requires_pytest_subtree = (
         allow_owned_fixture_fifo and not _prefix_allows_fixture_fifo(prefix)
@@ -622,9 +666,11 @@ def validate_cleanup(
             allow_owned_fixture_fifo=allow_owned_fixture_fifo,
             fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
             fixture_socket_paths=socket_paths,
+            pytest_basetemps=basetemps,
             fixture_root=path,
         )
         _fixture_socket_entries(entries, socket_paths)
+        _basetemp_entries(entries, basetemps)
         if fifo_requires_pytest_subtree and not any(
             entry.kind == "FIFO" for entry in entries
         ):
@@ -644,6 +690,7 @@ def validate_cleanup(
         inode=metadata.st_ino,
         entries=tuple(entries),
         fixture_socket_paths=socket_paths,
+        pytest_basetemps=basetemps,
     )
 
 
@@ -655,6 +702,7 @@ def _delete_contents(
     allow_owned_fixture_fifo: bool,
     fifo_requires_pytest_subtree: bool = False,
     fixture_sockets: dict[str, CleanupEntry] | None = None,
+    basetemp_entries: dict[str, CleanupEntry] | None = None,
     fixture_root: Path | None = None,
     relative_root: str = "",
 ) -> None:
@@ -694,7 +742,14 @@ def _delete_contents(
             allow_owned_fixture_fifo=allow_owned_fixture_fifo,
             fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
             fixture_socket_paths=frozenset(fixture_sockets or ()),
+            pytest_basetemps=frozenset(basetemp_entries or ()),
         )
+        if basetemp_entries and relative in basetemp_entries:
+            expected_base = basetemp_entries[relative]
+            if kind != "directory" or (metadata.st_dev, metadata.st_ino) != (
+                expected_base.device, expected_base.inode
+            ):
+                raise TempDirError("identity_mismatch", f"pytest basetemp identity 发生变化：{relative}")
         if fixture_sockets and relative in fixture_sockets:
             expected = fixture_sockets[relative]
             if kind != "socket" or (metadata.st_dev, metadata.st_ino) != (
@@ -724,6 +779,7 @@ def _delete_contents(
                         allow_owned_fixture_fifo=allow_owned_fixture_fifo,
                         fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
                         fixture_sockets=fixture_sockets,
+                        basetemp_entries=basetemp_entries,
                         fixture_root=fixture_root,
                         relative_root=relative,
                     )
@@ -743,13 +799,16 @@ def cleanup_directory(
     *,
     allow_owned_fixture_fifo: bool = False,
     allow_owned_fixture_sockets: tuple[str, ...] = (),
+    pytest_basetemps: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     validation = validate_cleanup(
         raw_path,
         allow_owned_fixture_fifo=allow_owned_fixture_fifo,
         allow_owned_fixture_sockets=allow_owned_fixture_sockets,
+        pytest_basetemps=pytest_basetemps,
     )
     fixture_sockets = _fixture_socket_entries(validation.entries, validation.fixture_socket_paths)
+    basetemp_entries = _basetemp_entries(validation.entries, validation.pytest_basetemps)
     fifo_requires_pytest_subtree = (
         allow_owned_fixture_fifo
         and not _prefix_allows_fixture_fifo(validation.prefix)
@@ -771,10 +830,13 @@ def cleanup_directory(
             allow_owned_fixture_fifo=allow_owned_fixture_fifo,
             fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
             fixture_socket_paths=validation.fixture_socket_paths,
+            pytest_basetemps=validation.pytest_basetemps,
             fixture_root=validation.path,
         )
         if _fixture_socket_entries(current_entries, validation.fixture_socket_paths) != fixture_sockets:
             raise TempDirError("identity_mismatch", "删除前 fixture socket identity 发生变化")
+        if _basetemp_entries(current_entries, validation.pytest_basetemps) != basetemp_entries:
+            raise TempDirError("identity_mismatch", "删除前 pytest basetemp identity 发生变化")
         _delete_contents(
             descriptor,
             expected_uid=validation.uid,
@@ -782,6 +844,7 @@ def cleanup_directory(
             allow_owned_fixture_fifo=allow_owned_fixture_fifo,
             fifo_requires_pytest_subtree=fifo_requires_pytest_subtree,
             fixture_sockets=fixture_sockets,
+            basetemp_entries=basetemp_entries,
             fixture_root=validation.path,
         )
     finally:
@@ -821,11 +884,13 @@ def dry_run_cleanup(
     *,
     allow_owned_fixture_fifo: bool = False,
     allow_owned_fixture_sockets: tuple[str, ...] = (),
+    pytest_basetemps: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     validation = validate_cleanup(
         raw_path,
         allow_owned_fixture_fifo=allow_owned_fixture_fifo,
         allow_owned_fixture_sockets=allow_owned_fixture_sockets,
+        pytest_basetemps=pytest_basetemps,
     )
     entries = [
         {
@@ -850,6 +915,7 @@ def dry_run_cleanup(
             entry.size for entry in validation.entries if entry.kind == "regular file"
         ),
         "entries": entries,
+        "pytest_basetemps": sorted(validation.pytest_basetemps),
         "delete_root": True,
         "delete_record": True,
     }
@@ -897,6 +963,11 @@ def _parser() -> argparse.ArgumentParser:
         "--allow-owned-fixture-socket", action="append", default=[], metavar="RELATIVE_PATH",
         help=socket_help,
     )
+    for cleanup_command in (cleanup_parser, dry_run_parser, validate_parser):
+        cleanup_command.add_argument(
+            "--pytest-basetemp", action="append", default=[], metavar="RELATIVE_PATH",
+            help="declare one exact owned pytest basetemp; only numbered test descendants gain fixture scope (repeatable)",
+        )
     return parser
 
 
@@ -910,18 +981,21 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.absolute_path,
                 allow_owned_fixture_fifo=arguments.allow_owned_fixture_fifo,
                 allow_owned_fixture_sockets=tuple(arguments.allow_owned_fixture_socket),
+                pytest_basetemps=tuple(arguments.pytest_basetemp),
             )
         elif arguments.command == "dry-run-cleanup":
             result = dry_run_cleanup(
                 arguments.absolute_path,
                 allow_owned_fixture_fifo=arguments.allow_owned_fixture_fifo,
                 allow_owned_fixture_sockets=tuple(arguments.allow_owned_fixture_socket),
+                pytest_basetemps=tuple(arguments.pytest_basetemp),
             )
         else:
             validation = validate_cleanup(
                 arguments.absolute_path,
                 allow_owned_fixture_fifo=arguments.allow_owned_fixture_fifo,
                 allow_owned_fixture_sockets=tuple(arguments.allow_owned_fixture_socket),
+                pytest_basetemps=tuple(arguments.pytest_basetemp),
             )
             result = {
                 "ok": True,

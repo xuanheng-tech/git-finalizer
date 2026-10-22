@@ -556,6 +556,128 @@ class TempDirToolTest(unittest.TestCase):
         self.assert_error("registry_corrupt", temp_tool.cleanup_directory, str(path))
         self.assertEqual((path / "keep").read_text(), "untouched")
 
+    def test_declared_nested_basetemps_support_shards_and_custom_runners(self) -> None:
+        _result, path = self.create("nested-layout")
+        bases = ("wcs.CK6CpS/0/pt", "acceptance/history", "acceptance/real")
+        for base in bases:
+            fixture = path / base / "test_fixture0"
+            fixture.mkdir(parents=True)
+            os.mkfifo(fixture / "pipe", 0o600)
+        self.assert_error("fifo_scope_rejected", temp_tool.cleanup_directory, str(path),
+                          allow_owned_fixture_fifo=True)
+        preview = temp_tool.dry_run_cleanup(
+            str(path), allow_owned_fixture_fifo=True, pytest_basetemps=bases,
+        )
+        self.assertEqual(preview["pytest_basetemps"], sorted(bases))
+        self.assertEqual(sum(entry["kind"] == "FIFO" for entry in preview["entries"]), 3)
+        self.assert_error("unsafe_entry", temp_tool.cleanup_directory, str(path),
+                          pytest_basetemps=bases)
+        temp_tool.cleanup_directory(str(path), allow_owned_fixture_fifo=True,
+                                    pytest_basetemps=bases)
+        self.assertFalse(path.exists())
+
+    def test_declared_basetemp_does_not_cover_siblings_or_non_test_nodes(self) -> None:
+        for relative in ("runs/pt/pipe", "runs/pt/test_node/pipe",
+                         "runs/pt/test_node0", "runs/other/test_node0/pipe"):
+            with self.subTest(relative=relative):
+                _result, path = self.create("nested-refusal")
+                safe = path / "runs/pt/test_safe0/pipe"
+                safe.parent.mkdir(parents=True)
+                os.mkfifo(safe, 0o600)
+                rejected = path / relative
+                rejected.parent.mkdir(parents=True, exist_ok=True)
+                os.mkfifo(rejected, 0o600)
+                (path / "keep.txt").write_text("preserve", encoding="utf-8")
+                self.assert_error("fifo_scope_rejected", temp_tool.cleanup_directory, str(path),
+                                  allow_owned_fixture_fifo=True, pytest_basetemps=("runs/pt",))
+                self.assertTrue(safe.exists())
+                self.assertTrue(rejected.exists())
+                self.assertEqual((path / "keep.txt").read_text(), "preserve")
+
+    def test_declared_basetemp_rejects_noncanonical_and_missing_directories(self) -> None:
+        _result, path = self.create("nested-paths")
+        for relative in ("", ".", "..", "a/../b", "/tmp", "a//b", "a/", "a/*", "a/ x", "a\nx"):
+            with self.subTest(relative=relative):
+                self.assert_error("pytest_scope_rejected", temp_tool.validate_cleanup, str(path),
+                                  pytest_basetemps=(relative,))
+        (path / "regular").write_text("keep", encoding="utf-8")
+        (path / "link").symlink_to("regular")
+        for relative in ("missing", "regular", "link"):
+            self.assert_error("pytest_scope_rejected", temp_tool.cleanup_directory, str(path),
+                              pytest_basetemps=(relative,))
+        self.assertTrue((path / "regular").exists())
+
+    def test_declared_basetemp_identity_change_blocks_before_deletion(self) -> None:
+        _result, path = self.create("nested-drift")
+        base = path / "runs/pt"
+        (base / "test_safe0").mkdir(parents=True)
+        os.mkfifo(base / "test_safe0/pipe", 0o600)
+        (path / "keep.txt").write_text("keep", encoding="utf-8")
+        original_validate = temp_tool.validate_cleanup
+
+        def replace_after_validation(*args: Any, **kwargs: Any) -> Any:
+            validation = original_validate(*args, **kwargs)
+            base.rename(path / "runs/original")
+            (path / "runs/original/test_safe0/pipe").unlink()
+            (base / "test_safe0").mkdir(parents=True)
+            os.mkfifo(base / "test_safe0/pipe", 0o600)
+            return validation
+
+        with mock.patch.object(temp_tool, "validate_cleanup", side_effect=replace_after_validation):
+            self.assert_error("identity_mismatch", temp_tool.cleanup_directory, str(path),
+                              allow_owned_fixture_fifo=True, pytest_basetemps=("runs/pt",))
+        self.assertTrue((path / "keep.txt").exists())
+        self.assertTrue((base / "test_safe0/pipe").exists())
+
+    def test_declared_basetemp_does_not_override_owner_checks(self) -> None:
+        _result, path = self.create("nested-owner")
+        fifo = path / "runs/pt/test_safe0/pipe"
+        fifo.parent.mkdir(parents=True)
+        os.mkfifo(fifo, 0o600)
+        original_stat = temp_tool.os.stat
+
+        def foreign_stat(*args: Any, **kwargs: Any) -> os.stat_result:
+            result = original_stat(*args, **kwargs)
+            if stat.S_ISFIFO(result.st_mode):
+                values = list(result)
+                values[4] = os.getuid() + 1
+                return os.stat_result(values)
+            return result
+
+        with mock.patch.object(temp_tool.os, "stat", side_effect=foreign_stat):
+            self.assert_error("owner_mismatch", temp_tool.cleanup_directory, str(path),
+                              allow_owned_fixture_fifo=True, pytest_basetemps=("runs/pt",))
+        self.assertTrue(fifo.exists())
+
+    def test_declared_basetemp_socket_still_requires_exact_inactive_selection(self) -> None:
+        _result, path = self.create("nested-socket")
+        relative = "x/pt/test_rpc0/s0"
+        target = path / relative
+        target.parent.mkdir(parents=True)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(str(target))
+            self.assert_error("socket_active", temp_tool.cleanup_directory, str(path),
+                              allow_owned_fixture_sockets=(relative,), pytest_basetemps=("x/pt",))
+        self.assert_error("unsafe_entry", temp_tool.cleanup_directory, str(path),
+                          pytest_basetemps=("x/pt",))
+        temp_tool.cleanup_directory(str(path), allow_owned_fixture_sockets=(relative,),
+                                    pytest_basetemps=("x/pt",))
+        self.assertFalse(path.exists())
+
+    def test_cli_declared_basetemp_is_scoped_and_reports_real_exit_codes(self) -> None:
+        _result, path = self.create("nested-cli")
+        fixture = path / "wcs.actual/0/pt/test_fixture0"
+        fixture.mkdir(parents=True)
+        os.mkfifo(fixture / "pipe", 0o600)
+        for command in ("validate-cleanup", "dry-run-cleanup", "cleanup"):
+            captured: list[dict[str, Any]] = []
+            with mock.patch.object(temp_tool, "_emit", side_effect=captured.append):
+                code = temp_tool.main([command, str(path), "--allow-owned-fixture-fifo",
+                                       "--pytest-basetemp", "wcs.actual/0/pt"])
+            self.assertEqual(code, 0)
+            self.assertTrue(captured[0]["ok"])
+        self.assertFalse(path.exists())
+
     def test_fixture_fifo_requires_the_explicit_scoped_option(self) -> None:
         _result, path = self.create("fixture")
         os.mkfifo(path / "fixture-pipe", mode=0o600)
