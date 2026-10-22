@@ -20,6 +20,13 @@ MAX_GENERATED_FILES = 512
 # GF-INTEGRATION-ADAPTER: snapshot-runner-evidence (single site: state layout)
 SNAPSHOT_ID = re.compile(r"[0-9a-f]{64}")
 ARTIFACT_NAMES = {"meta.json", "preview.txt", "snapshot.json"}
+# Snapshot Runner 2.x keeps schema-2 artifacts of producer security epochs 4 and 5
+# readable with one shared format; epochs differ only in producer sanitizer rules.
+SUPPORTED_SECURITY_EPOCHS = frozenset({4, 5})
+
+
+def supported_epoch(value: object) -> bool:
+    return type(value) is int and value in SUPPORTED_SECURITY_EPOCHS
 
 
 def fail(message: str) -> None:
@@ -331,7 +338,7 @@ if (
     not isinstance(meta, dict)
     or set(meta) != meta_keys
     or meta.get("schema_version") != 2
-    or meta.get("producer_security_epoch") != 4
+    or not supported_epoch(meta.get("producer_security_epoch"))
     or meta.get("snapshot_id") != snapshot_id
     or meta.get("snapshot_sha256") != snapshot_id
     or meta.get("snapshot_bytes") != len(snapshot_bytes)
@@ -356,7 +363,8 @@ if (
     not isinstance(envelope, dict)
     or set(envelope) != envelope_keys
     or envelope.get("schema_version") != 2
-    or envelope.get("producer_security_epoch") != 4
+    or not supported_epoch(envelope.get("producer_security_epoch"))
+    or envelope.get("producer_security_epoch") != meta.get("producer_security_epoch")
     or envelope.get("task") != "diff-audit"
     or envelope.get("repository") != repo.name
     or meta.get("task") != envelope.get("task")

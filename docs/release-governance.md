@@ -46,10 +46,12 @@ Both hosts evaluate a release workflow **from the tree of the pushed tag's commi
   GitHub verifies after publication. Existing records survive failed verification.
 
 Before tag creation, the maintainer runs `just release-check` in the clean candidate checkout.
-It runs lint and all existing checks with `--require-controller`: the real Controller retirement
-suite must report exactly one executed PASS. Missing, skipped, duplicate or failed Controller
-results are fatal. Record the installed Controller version and contract with the candidate evidence.
-Hosted checks keep Controller optional so a standalone runner still reports its absence as SKIP;
+It runs lint and all existing checks with `--require-controller --require-snapshot-runner`: the
+real Controller retirement suite and the real Snapshot Runner evidence suite must each report
+exactly one executed PASS. Missing, skipped, duplicate or failed results are fatal. Run it as an
+ordinary user, because Snapshot Runner refuses root. Record the installed Controller and Snapshot
+Runner versions with the candidate evidence.
+Hosted checks keep both integrations optional so a standalone runner still reports absence as SKIP;
 hosted green checks do not substitute for the mandatory maintainer gate.
 
 Both hosted jobs run, in this order and on both hosts: `preflight` → `just lint` → `just check` → `build` →
@@ -169,7 +171,7 @@ source repository rather than the release artifact.
    git fetch --all --tags --prune
    git log --oneline -3 github/main   # or origin/main, the branch being tagged
    git status --porcelain=v1          # must be empty in the checkout used for tagging
-   just release-check                # real Controller suite must execute and pass
+   just release-check                # real Controller and Snapshot Runner suites must pass
    python3 -B scripts/release.py preflight "v$VERSION"    # exact new tag name
    python3 -B scripts/release.py selfcheck "v$VERSION"    # record digest from this clean candidate
    python3 -B scripts/release.py publication-status "v$VERSION" \

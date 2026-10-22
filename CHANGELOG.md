@@ -13,6 +13,17 @@ section is invented for it.
 
 ## Unreleased
 
+- Fix `--initial-publish --snapshot`: accept Snapshot Runner schema-2 evidence from both
+  registered producer security epochs 4 and 5, which Runner 2.x keeps readable with one shared
+  format. Runner 2.5.0 and later write epoch 5, which earlier Finalizer releases refused with
+  `snapshot metadata does not bind the artifact`. `meta.json` and `snapshot.json` must declare
+  the same epoch; other epochs remain refused before any mutation.
+- Add a real Snapshot Runner evidence suite. Hosted `just check` reports SKIP when
+  `snapshot-runner` is absent from `PATH` or the check runs as root; `just release-check` now
+  requires it to execute and pass alongside the real-Controller suite.
+- Correct the README CLI contract declaration to `contract_version` 8 and bind it to
+  `tool_cli_contract.json` with a test. Describe where sibling Skill manifests actually live.
+
 ## 1.9.5
 
 - Ship tool-temp-dir 1.0.7 with repeatable explicit `--pytest-basetemp` paths for custom

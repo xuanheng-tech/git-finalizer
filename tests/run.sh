@@ -149,8 +149,10 @@ make_unborn_repo() {
 make_generated_snapshot() {
     local repo=$1
     local state=$2
+    local meta_epoch=${3:-5}
+    local envelope_epoch=${4:-$meta_epoch}
 
-    python3 -B - "$repo" "$state" <<'PY'
+    python3 -B - "$repo" "$state" "$meta_epoch" "$envelope_epoch" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -164,6 +166,8 @@ import sys
 
 repo = Path(sys.argv[1])
 state = Path(sys.argv[2])
+meta_epoch = int(sys.argv[3])
+envelope_epoch = int(sys.argv[4])
 paths = ("README.md", "generated/manifest.json", "generated/schema.json")
 
 
@@ -234,7 +238,7 @@ publication = {
 status = "".join(f"?? {path}\n" for path in paths)
 envelope = {
     "schema_version": 2,
-    "producer_security_epoch": 4,
+    "producer_security_epoch": envelope_epoch,
     "task": "diff-audit",
     "repository": repo.name,
     "data": {
@@ -257,7 +261,7 @@ snapshot_id = digest(snapshot_bytes)
 preview_bytes = b"synthetic preview\n"
 meta = {
     "schema_version": 2,
-    "producer_security_epoch": 4,
+    "producer_security_epoch": meta_epoch,
     "snapshot_id": snapshot_id,
     "task": "diff-audit",
     "repository": repo.name,
@@ -1306,6 +1310,45 @@ test_initial_snapshot_rejects_uncovered_explicit_path() {
         'uncovered path rejection changed the remote'
 }
 
+test_initial_snapshot_security_epochs() {
+    local case_dir state output snapshot epochs label
+
+    case_dir=$tmp_root/initial-snapshot-epoch-4
+    state=$case_dir/state
+    output=$case_dir/output.log
+    make_unborn_repo "$case_dir"
+    write_generated_snapshot_scope "$test_repo"
+    snapshot=$(make_generated_snapshot "$test_repo" "$state" 4)
+    expect_success "$output" env XDG_STATE_HOME="$state" "$finalizer" \
+        --initial-publish --remote origin --repo "$test_repo" \
+        --message 'snapshot epoch 4' --snapshot "$snapshot" -- \
+        README.md generated/manifest.json generated/schema.json
+    assert_file_contains "$output" 'source=head covered=3/3' \
+        'registered epoch-4 snapshot was not verified'
+
+    for epochs in '4 5' '5 4' '3 3' '6 6'; do
+        label=${epochs// /-}
+        case_dir=$tmp_root/initial-snapshot-epoch-reject-$label
+        state=$case_dir/state
+        output=$case_dir/output.log
+        make_unborn_repo "$case_dir"
+        write_generated_snapshot_scope "$test_repo"
+        # shellcheck disable=SC2086 # two numeric epoch arguments
+        snapshot=$(make_generated_snapshot "$test_repo" "$state" $epochs)
+        expect_failure "$output" env XDG_STATE_HOME="$state" "$finalizer" \
+            --initial-publish --remote origin --repo "$test_repo" \
+            --message "snapshot epoch $label" --snapshot "$snapshot" -- \
+            README.md generated/manifest.json generated/schema.json
+        assert_file_contains "$output" 'snapshot evidence rejected' \
+            "epoch $label snapshot was not rejected"
+        assert_unborn "$test_repo"
+        assert_equal '' "$(index_snapshot "$test_repo")" \
+            "epoch $label rejection changed the index"
+        assert_equal '' "$(remote_refs "$test_remote")" \
+            "epoch $label rejection changed the remote"
+    done
+}
+
 test_initial_clone_created_upstream() {
     local case_dir=$tmp_root/initial-clone-upstream
     local dry_output=$case_dir/dry-run.log
@@ -2030,6 +2073,8 @@ run_case 'initial snapshot rejects workspace drift before staging' \
     test_initial_snapshot_rejects_workspace_drift
 run_case 'initial snapshot rejects every uncovered explicit path' \
     test_initial_snapshot_rejects_uncovered_explicit_path
+run_case 'initial snapshot accepts only matching registered security epochs' \
+    test_initial_snapshot_security_epochs
 run_case 'initial publish accepts a clone-created unresolved upstream' \
     test_initial_clone_created_upstream
 run_case 'initial publish rejects conflicting upstream configurations' \
@@ -2085,6 +2130,13 @@ if command -v worktree-controller >/dev/null 2>&1; then
     run_suite test_retire_branch_real_controller.sh
 else
     report_group SKIP test_retire_branch_real_controller 'worktree-controller unavailable on PATH'
+fi
+if ! command -v snapshot-runner >/dev/null 2>&1; then
+    report_group SKIP test_initial_snapshot_real_runner 'snapshot-runner unavailable on PATH'
+elif [[ $(id -u) -eq 0 ]]; then
+    report_group SKIP test_initial_snapshot_real_runner 'Snapshot Runner refuses to run as root'
+else
+    run_suite test_initial_snapshot_real_runner.sh
 fi
 run_suite test_standalone_operations.sh
 run_suite test_integration_boundaries.sh

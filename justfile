@@ -7,7 +7,7 @@ check:
 # Mandatory maintainer gate before creating a release tag.
 release-check:
     just lint
-    python3 -B scripts/check.py --require-controller
+    python3 -B scripts/check.py --require-controller --require-snapshot-runner
 
 toolchain-check source_root="..":
     ./tool-skill-sync --source-root "{{source_root}}" --source-repo git-finalizer="$PWD" check --source-only context-loader

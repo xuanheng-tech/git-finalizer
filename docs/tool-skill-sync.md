@@ -7,8 +7,11 @@
 `three-tool-git-workflow` 只保留一个 deprecated compatibility shim，不是第二个 authority。
 这里的 release infrastructure 也不是 worktree lifecycle 编排工具。
 
-每个工具仓库只保存自己的 `tool_cli_contract.json` 与 `tool_skill_manifest.json`。三个 manifest
-都绑定同一个 canonical Skill payload；installed Skill 是同步副本，不能人工编辑。
+每个工具仓库只保存自己的 `tool_cli_contract.json`。`tool_skill_manifest.json` 只有 Git Finalizer
+自身的一份位于仓库根；Context Loader 与 Snapshot Runner 的 manifest 由本仓库在
+`manifests/<tool>/tool_skill_manifest.json` 持有，并按字节 pin 对端已发布 contract 的
+`public_cli_contract_sha256` 与 `tool_version`，因此对端每次 contract 或版本变化都需要本仓库同步提交。
+三个 manifest 都绑定同一个 canonical Skill payload；installed Skill 是同步副本，不能人工编辑。
 
 canonical manifest 的 `tool_commit` 固定为 `@release`，因为被跟踪文件无法无循环地包含“含有
 自身的 commit OID”。构建 bundle 时，Skill Sync 将它物化为 exact full HEAD OID；只有显式
