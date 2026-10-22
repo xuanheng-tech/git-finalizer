@@ -53,6 +53,12 @@ class ToolContractTests(unittest.TestCase):
                 self.assertEqual(blocked.exception.code, 1)
                 self.assertIn("retirement plan validation blocked", diagnostics.getvalue())
 
+    def test_readme_declares_the_current_cli_contract_version(self) -> None:
+        contract = json.loads((ROOT / "tool_cli_contract.json").read_text(encoding="utf-8"))
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        declared = re.findall(r"\(`contract_version` (\d+)\)", readme)
+        self.assertEqual(declared, [str(contract["contract_version"])])
+
     def test_finalizer_contract_manifest_and_source_agree(self) -> None:
         contract_path = ROOT / "tool_cli_contract.json"
         manifest_path = ROOT / "tool_skill_manifest.json"

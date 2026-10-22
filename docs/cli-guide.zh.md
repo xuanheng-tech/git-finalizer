@@ -118,7 +118,8 @@ git-finalize \
 tags 均未变化。
 
 `--snapshot` 是 initial publish 的可选严格证据绑定。提供后，Finalizer 要求 Snapshot Runner
-schema 2 / security epoch 4 的 `diff-audit` artifact 为完整 unborn initial 证据：
+schema 2、security epoch 4 或 5（`meta.json` 与 `snapshot.json` 一致）的 `diff-audit` artifact
+为完整 unborn initial 证据：
 `truncated=false`、`evidence_gaps=[]`、`complete=true`、敏感扫描完整，并且 `--` 后每个显式
 路径恰好由正文或 `generated_manifest` 证据覆盖。Finalizer 在 `git add` 前核对 worktree，
 暂存后核对 index，创建 root commit 后再核对 HEAD tree；任一 size、SHA-256、executable、

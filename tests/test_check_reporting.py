@@ -52,7 +52,30 @@ class CheckReportingTests(unittest.TestCase):
             self.assertIn("FAIL | required real-Controller integration", required.stdout)
 
     def test_release_gate_requires_one_executed_controller_result(self) -> None:
-        controller = "test_retire_branch_real_controller"
+        self.assert_release_gate("test_retire_branch_real_controller", "require_controller")
+
+    def test_release_gate_requires_one_executed_snapshot_runner_result(self) -> None:
+        self.assert_release_gate("test_initial_snapshot_real_runner", "require_snapshot_runner")
+
+    def test_each_release_gate_ignores_the_other_integration(self) -> None:
+        groups = [{"status": "PASS", "group": "test_retire_branch_real_controller", "reason": ""},
+                  {"status": "SKIP", "group": "test_initial_snapshot_real_runner",
+                   "reason": "snapshot-runner unavailable on PATH"}]
+
+        def run(command, **kwargs):
+            record = Path(kwargs["env"]["GF_TEST_GROUP_RESULTS"])
+            record.write_text("".join(json.dumps(group) + "\n" for group in groups))
+            return subprocess.CompletedProcess(command, 0)
+
+        with patch.object(subprocess, "run", side_effect=run), redirect_stdout(io.StringIO()):
+            self.assertTrue(CHECK["shell_groups"]([], require_controller=True))
+            results: list[dict[str, str]] = []
+            self.assertFalse(CHECK["shell_groups"](results, require_controller=True,
+                                                   require_snapshot_runner=True))
+        self.assertEqual(results[-1]["group"], "required real-Snapshot-Runner integration")
+
+    def assert_release_gate(self, integration: str, option: str) -> None:
+        controller = integration
         cases = (
             ([], 0, False),
             (["SKIP"], 0, False),
@@ -75,7 +98,7 @@ class CheckReportingTests(unittest.TestCase):
                 results: list[dict[str, str]] = []
                 with patch.object(subprocess, "run", side_effect=run):
                     with redirect_stdout(io.StringIO()):
-                        passed = CHECK["shell_groups"](results, require_controller=True)
+                        passed = CHECK["shell_groups"](results, **{option: True})
                 self.assertEqual(passed, expected)
                 if not expected:
                     self.assertIn("FAIL", [result["status"] for result in results])

@@ -282,7 +282,7 @@ scanner guards are unchanged; see [the diagnostics contract](docs/agent-contract
 The complete per-mode preconditions, guarantees and recovery rules are in
 [docs/cli-guide.zh.md](docs/cli-guide.zh.md) (中文) and in
 [`tool_cli_contract.json`](tool_cli_contract.json), which is the machine-readable public CLI
-contract (`contract_version` 7).
+contract (`contract_version` 8).
 
 ## Agent and automation usage
 
@@ -380,17 +380,19 @@ precise blockers and zero mutation in that environment.
 ```bash
 just check        # shell suites, unit tests, Skill validation, contract check
 just lint         # shellcheck over the bash entrypoint, scripts and test harness
-just release-check # required before tagging; lint and checks with real Controller integration
+just release-check # required before tagging; lint and checks with real Controller and Runner
 bash tests/run.sh # shell test suites alone
 ```
 
 `just check` ends with a PASS/SKIP/FAIL table, including reasons for each skipped group or unit test.
-Optional real-Controller retirement tests are reported as SKIP when `worktree-controller` is absent
-from `PATH`. A green check proves the listed executed groups passed; it does not imply skipped
+Optional real-Controller retirement tests and real Snapshot Runner evidence tests are reported as
+SKIP when `worktree-controller` or `snapshot-runner` is absent from `PATH` (the Runner suite also
+skips as root, which Snapshot Runner refuses). A green check proves the listed executed groups passed; it does not imply skipped
 integrations ran. Any executed group failure keeps the check nonzero and stops later groups.
 Before creating a release tag, maintainers run `just release-check` in the clean candidate checkout.
-It requires exactly one executed PASS result from the real-Controller retirement suite; missing,
-skipped, duplicated or failed results stop release preparation. Ordinary and hosted `just check`
+It requires exactly one executed PASS result from each of the real-Controller retirement suite and
+the real Snapshot Runner evidence suite; missing, skipped, duplicated or failed results stop release
+preparation. Ordinary and hosted `just check`
 keep the standalone contract and optional SKIP behavior.
 
 Contributing guidance, including the hash-bound file rules you must respect when changing the
