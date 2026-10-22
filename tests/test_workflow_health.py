@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -151,15 +152,24 @@ class WorkflowHealthTests(unittest.TestCase):
         envelope = {"tool_version": "9.0.0", "decision": caps, "errors": []}
         return runtime_root, requirements, envelope, frozen
 
-    def probe_controller(self, runtime_root, requirements, envelope, frozen, on_probe=None):
+    def probe_controller(self, runtime_root, requirements, envelope, frozen, on_probe=None,
+                         manifest_repo=None, on_contract=None):
         def run(args, **kwargs):
             if "capabilities" in args:
                 if on_probe is not None:
                     on_probe()
                 output = json.dumps(envelope)
+            elif manifest_repo and args[-1] == "--show-toplevel":
+                output = str(manifest_repo)
+            elif manifest_repo and args[-1] == "--git-common-dir":
+                output = str(manifest_repo / ".git")
+            elif manifest_repo and "rev-list" in args:
+                output = "c" * 40
             elif args[-1].endswith(":skills/worktree-lifecycle/SKILL.md"):
                 output = "workflow rules\n"
             else:
+                if on_contract:
+                    on_contract()
                 output = frozen
             return subprocess.CompletedProcess(args, 0, output, "")
         with mock.patch.object(sync, "run", side_effect=run), \
@@ -177,6 +187,69 @@ class WorkflowHealthTests(unittest.TestCase):
         self.assertEqual(result["source_head"], "b" * 40)
         self.assertTrue(result["source_dirty"])
         self.assertEqual((root / "active").resolve().parent.name, "a" * 40)
+
+    def source_manifest(self, root, frozen):
+        repository = self.root / "public-controller"
+        repository.mkdir()
+        common = repository / ".git"
+        common.mkdir()
+        manifest = (root / "active").resolve() / "controller-source.json"
+        value = {"schema_version": 1, "contract": "controller-runtime-source/v1", "commit": "a" * 40,
+                 "source_repository": str(repository), "git_common_dir": str(common),
+                 "root_commit": "c" * 40, "contract_sha256": hashlib.sha256(frozen.encode()).hexdigest(),
+                 "skill_sha256": hashlib.sha256(self.skill.read_bytes()).hexdigest()}
+        sync.write_json(manifest, value)
+        return manifest, repository, value
+
+    def test_installer_source_manifest_selects_public_history_without_activation(self) -> None:
+        root, requirements, envelope, frozen = self.controller_fixture(61)
+        manifest, repository, _ = self.source_manifest(root, frozen)
+        before = manifest.read_bytes()
+        result = self.probe_controller(root, requirements, envelope, frozen, manifest_repo=repository)
+        self.assertEqual(result["status"], "PASS", result["errors"])
+        self.assertEqual(result["source_repo"], str(repository))
+        self.assertEqual(result["source_selection"], "runtime-source-manifest")
+        self.assertEqual(result["source_manifest"]["sha256"], hashlib.sha256(before).hexdigest())
+        self.assertEqual(manifest.read_bytes(), before)
+        self.assertEqual((root / "active").resolve().parent.name, "a" * 40)
+
+    def test_invalid_source_manifest_never_falls_back_to_legacy_history(self) -> None:
+        root, requirements, envelope, frozen = self.controller_fixture(61)
+        manifest, repository, value = self.source_manifest(root, frozen)
+        for changes in ({"schema_version": True}, {"commit": "b" * 40}, {"root_commit": "d" * 40},
+                        {"contract_sha256": "0" * 64}, {"skill_sha256": "0" * 64},
+                        {"unknown": "field"}, {"source_repository": "relative"}):
+            with self.subTest(changes=changes):
+                sync.write_json(manifest, {**value, **changes})
+                before = manifest.read_bytes()
+                result = self.probe_controller(root, requirements, envelope, frozen, manifest_repo=repository)
+                self.assertEqual(result["status"], "FAIL")
+                self.assertTrue(result["errors"])
+                self.assertEqual(manifest.read_bytes(), before)
+                self.assertEqual((root / "active").resolve().parent.name, "a" * 40)
+
+    def test_source_manifest_symlink_is_refused_before_reading(self) -> None:
+        root, requirements, envelope, frozen = self.controller_fixture()
+        manifest, _, _ = self.source_manifest(root, frozen)
+        foreign = self.root / "owner-data"
+        foreign.write_bytes(b"unrelated owner data\x00")
+        manifest.unlink()
+        manifest.symlink_to(foreign)
+        with mock.patch.object(sync, "read_json") as read:
+            result = self.probe_controller(root, requirements, envelope, frozen)
+        self.assertEqual(result["status"], "FAIL")
+        read.assert_not_called()
+        self.assertEqual(foreign.read_bytes(), b"unrelated owner data\x00")
+
+    def test_source_manifest_drift_during_observation_is_not_pass(self) -> None:
+        root, requirements, envelope, frozen = self.controller_fixture()
+        manifest, repository, value = self.source_manifest(root, frozen)
+        def changed():
+            sync.write_json(manifest, {**value, "contract_sha256": "0" * 64})
+        result = self.probe_controller(root, requirements, envelope, frozen,
+                                       manifest_repo=repository, on_contract=changed)
+        self.assertEqual(result["status"], "FAIL")
+        self.assertIn("Controller source manifest changed during observation; retry read-only check", result["errors"])
 
     def test_controller_short_directory_uses_full_installed_commit(self) -> None:
         root, requirements, envelope, frozen = self.controller_fixture(directory_name="a" * 7)

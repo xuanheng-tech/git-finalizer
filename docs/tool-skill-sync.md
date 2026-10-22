@@ -175,6 +175,15 @@ A shortened hexadecimal runtime directory is accepted only when exactly one inst
 that full commit for the existing frozen-contract and Skill checks; missing, ambiguous, mismatched
 or branch-based origin metadata remains a failure. It never changes the active runtime.
 
+WC's managed installer may publish `controller-source.json` beside a versioned runtime, using
+`controller-runtime-source/v1`. Doctor consumes that public locator to select the canonical source
+repository for the **installed commit**, independently of the default source-root candidate.
+The canonical, current-user-owned manifest binds the exact commit, Git common directory, single
+history root, frozen CLI-contract SHA-256 and Skill SHA-256. Git source, installed RECORD, runtime
+capabilities and the shared Skill are still checked. An unsafe, unknown, mismatched or drifting
+manifest fails; it never silently falls back. Absence preserves the legacy source-root behavior.
+This is installation provenance, not Controller lifecycle data or activation authority.
+
 Source-file tools verify all deployed executable/sidecar bytes, including Skill Sync. Python tools
 verify installed wheel RECORD content in addition to entrypoint versions. WC remains owned by its
 official stage/rollout/activate flow. A simultaneous WC development line can change its source

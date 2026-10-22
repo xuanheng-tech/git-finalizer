@@ -13,6 +13,13 @@ section is invented for it.
 
 ## Unreleased
 
+## 1.9.4
+
+- Register WC CLI 61 while retaining independent capability and storage checks.
+- Let the read-only maintenance doctor consume WC's versioned runtime source manifest to verify
+  a public release against its correct frozen Git source and Skill. Legacy installations retain
+  their existing source selection; invalid or drifting manifests fail closed without activation.
+
 ## 1.9.3
 
 - Let exact-root initial-publication recovery explicitly reapply a reviewed `tests/` fixture

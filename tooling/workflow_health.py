@@ -19,7 +19,7 @@ except ImportError:
 
 def readonly_git(repo: Path, *arguments: str) -> str:
     result = sync.run(["git", "-c", "core.fsmonitor=false", "-C", str(repo), *arguments],
-                      env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"))
+                      env=dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_NO_REPLACE_OBJECTS="1"))
     if result.returncode:
         raise sync.SyncError(f"read-only Git observation failed: {repo}")
     return result.stdout.strip()
@@ -66,6 +66,41 @@ def controller_commit(runtime: Path) -> str:
     return commit
 
 
+def controller_source(runtime: Path, commit: str, legacy: Path) -> tuple[Path, dict[str, Any] | None]:
+    """Consume the installer's public source locator; absence keeps the legacy source."""
+    manifest = runtime / "controller-source.json"
+    if not manifest.exists() and not manifest.is_symlink():
+        return legacy, None
+    sync.require_owned_regular(manifest, "Controller runtime source manifest")
+    if manifest.stat().st_mode & 0o022 or manifest.stat().st_size > 65536:
+        raise sync.SyncError("Controller runtime source manifest is writable by others or oversized")
+    value = sync.read_json(manifest)
+    expected = {"schema_version", "contract", "commit", "source_repository", "git_common_dir",
+                "root_commit", "contract_sha256", "skill_sha256"}
+    if (set(value) != expected or type(value.get("schema_version")) is not int
+            or value["schema_version"] != 1 or value.get("contract") != "controller-runtime-source/v1"
+            or value.get("commit") != commit or not isinstance(value.get("root_commit"), str)
+            or not sync.FULL_GIT_OID.fullmatch(value["root_commit"])):
+        raise sync.SyncError("Controller runtime source manifest identity is invalid")
+    locations = []
+    for key in ("source_repository", "git_common_dir"):
+        raw = value.get(key)
+        if not isinstance(raw, str) or not Path(raw).is_absolute():
+            raise sync.SyncError("Controller source locator must be an absolute path")
+        path = Path(raw)
+        if path.resolve(strict=True) != path:
+            raise sync.SyncError("Controller source locator must be canonical")
+        sync.require_owned_directory(path)
+        locations.append(path)
+    repository, common = locations
+    if (Path(readonly_git(repository, "rev-parse", "--show-toplevel")).resolve() != repository
+            or Path(readonly_git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve() != common
+            or readonly_git(repository, "rev-list", "--max-parents=0", commit).splitlines() != [value["root_commit"]]):
+        raise sync.SyncError("Controller source repository identity changed")
+    return repository, {**file_identity(manifest), "contract_sha256": value["contract_sha256"],
+                        "skill_sha256": value["skill_sha256"]}
+
+
 def controller_state(
     requirements: dict[str, Any], entrypoint: Path | None,
     runtime_root: Path, source_repo: Path, agents_root: Path,
@@ -82,7 +117,8 @@ def controller_state(
             raise sync.SyncError("worktree-controller is not installed")
         active = runtime_root / "active"
         runtime = active.resolve(strict=True)
-        environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", GIT_OPTIONAL_LOCKS="0")
+        environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", GIT_OPTIONAL_LOCKS="0",
+                           GIT_NO_REPLACE_OBJECTS="1")
         command = sync.run([str(entry), "capabilities", "--json"], env=environment)
         if command.returncode != 0:
             raise sync.SyncError("installed Controller capabilities probe failed")
@@ -121,21 +157,37 @@ def controller_state(
         # The active pinned commit is independent of the currently edited source checkout.
         commit = controller_commit(runtime)
         result["active_commit"] = commit
-        observed = sync.run(["git", "-C", str(source_repo), "show", f"{commit}:tool_cli_contract.json"])
+        source_repo, source_manifest = controller_source(runtime, commit, source_repo)
+        result["source_repo"] = str(source_repo)
+        result["source_selection"] = "runtime-source-manifest" if source_manifest else "legacy-source-root"
+        if source_manifest:
+            result["source_manifest"] = source_manifest
+            if source_manifest["contract_sha256"] != result["frozen_contract_sha256"]:
+                result["errors"].append("runtime source manifest contract hash differs from installed contract")
+        observed = sync.run(["git", "-C", str(source_repo), "show", f"{commit}:tool_cli_contract.json"],
+                            env=environment)
         if observed.returncode != 0 or hashlib.sha256(observed.stdout.encode()).hexdigest() != result["frozen_contract_sha256"]:
             result["errors"].append("frozen contract does not match active commit")
         result["source_head"] = sync.git_head(source_repo)
         result["source_dirty"] = sync.git_dirty(source_repo)
         skill = agents_root / "skills/worktree-lifecycle/SKILL.md"
         result["installed_skill"] = file_identity(skill)
+        if source_manifest and source_manifest["skill_sha256"] != result["installed_skill"]["sha256"]:
+            result["errors"].append("runtime source manifest Skill hash differs from installed Skill")
         published_skill = sync.run([
             "git", "-C", str(source_repo), "show", f"{commit}:skills/worktree-lifecycle/SKILL.md"
-        ])
+        ], env=environment)
         if (published_skill.returncode != 0 or hashlib.sha256(published_skill.stdout.encode()).hexdigest()
                 != result["installed_skill"]["sha256"]):
             result["errors"].append("installed worktree-lifecycle Skill differs from active commit; coordinate with WC owner")
         if active.resolve(strict=True) != runtime:
             result["errors"].append("Controller active runtime changed during observation; retry read-only check")
+        if source_manifest:
+            manifest_path = runtime / "controller-source.json"
+            sync.require_owned_regular(manifest_path, "Controller runtime source manifest")
+            if (manifest_path.stat().st_mode & 0o022 or manifest_path.stat().st_size > 65536
+                    or sync.sha256_file(manifest_path) != source_manifest["sha256"]):
+                result["errors"].append("Controller source manifest changed during observation; retry read-only check")
         result["status"] = "FAIL" if result["errors"] else "PASS"
     except (OSError, ValueError, KeyError, TypeError, sync.SyncError, subprocess.SubprocessError) as exc:
         result["errors"].append(str(exc))
