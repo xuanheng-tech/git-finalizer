@@ -20,8 +20,10 @@ section is invented for it.
   an authorized GitHub client may create and verify the target before the same publication mode.
 - Retain all existing endpoint, whole-remote emptiness, exact HEAD/history, non-force push and
   recovery guards. No Git mutation algorithm or new provider implementation is added.
-- Advance CLI contract to 9 for the corrected caller preconditions and the summary's
-  `bootstrap_prerequisite` value `caller-verified-repository-bootstrap`; toolchain contract stays 6.
+- Advance CLI contract to 9 for the corrected caller preconditions; toolchain contract stays 6.
+  Preserve the summary's legacy `bootstrap_prerequisite` value `repo-plan/repo-ensure` for existing
+  consumers. It names the Gitea creation recipe, not a host verification or universal prerequisite;
+  the public CLI contract defines caller authority for all hosts.
 
 ## 1.9.7
 

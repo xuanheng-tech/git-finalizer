@@ -186,7 +186,7 @@ assert data["push"] == {
 }
 result = data["mode_result"]
 assert result["interface"] == "publish-existing-history"
-assert result["bootstrap_prerequisite"] == "caller-verified-repository-bootstrap"
+assert result["bootstrap_prerequisite"] == "repo-plan/repo-ensure"
 assert result["commit_reused"] is True
 assert result["pre_publish"]["commit_count"] == 3
 assert result["remote_conclusion"] == "published_and_upstream_aligned"

@@ -201,8 +201,9 @@ fail closed，不自动重试、覆盖或切换到 force。
 
 Gitea 使用 `--repo-plan` → `--repo-ensure`；GitHub 可通过正常已授权 client 创建、查询目标，
 不自动生成 README、许可证或其他 commit，并核对准确的 fetch/push URL。保留 host 返回的非敏感
-身份与可见性证据。Finalizer 的 `bootstrap_prerequisite` 从 CLI 9 起为
-`caller-verified-repository-bootstrap`；这是调用前置条件，不是 Finalizer 对 host 的证明。
+身份与可见性证据。为兼容已有消费者，摘要的 `bootstrap_prerequisite` 仍保留
+`repo-plan/repo-ensure`：它只命名 Gitea 创建配方，不是 host 核验结果或所有平台的强制前置条件。
+CLI 9 的正式 preconditions 定义各平台共同的调用方授权和身份核验责任；摘要字段不证明这些责任已履行。
 
 ```bash
 /absolute/path/to/git-finalize \
