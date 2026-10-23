@@ -79,7 +79,8 @@ adapter_files() {
         controller-lease)
             printf '' ;;
         controller-private-inventory) printf '' ;;
-        snapshot-state-root) printf 'git-finalize-snapshot-verify.py ' ;;
+        snapshot-state-root) printf '' ;;
+        snapshot-executable-probe) printf 'git-finalize-snapshot-verify.py ' ;;
         gitea-api) printf 'git-finalize-repo-bootstrap.py ' ;;
         retirement-plan-files) printf '' ;;
         controller-policy-term) printf '' ;;
@@ -153,7 +154,8 @@ test_layout_literals_do_not_spread() {
     assert_ledger controller-executable-probe 'which("worktree-controller")'
     assert_ledger controller-runtime-contract 'site-packages/worktree_controller/tool_cli_contract.json'
     assert_ledger snapshot-state-root \
-        'snapshot-runner/snapshots' '"snapshot-runner" / "snapshots"'
+        'snapshot-runner/snapshots' '"snapshot-runner" / "snapshots"' 'producer_security_epoch'
+    assert_ledger snapshot-executable-probe 'which("snapshot-runner")'
     assert_ledger gitea-api '/api/v1'
     absent_from_production_surface 'Context Loader' \
         'core must not couple to Context Loader'
@@ -361,62 +363,54 @@ assert set(document) == set(json.load(open(sys.argv[2]))), "success path changed
         fail_assertion 'commit-only summary broke the machine contract'
 }
 
-private_state_tree() {
-    local root=$1 snapshot_id=$2 directory
-    mkdir -p -- "$root/snapshot-runner/snapshots"
-    chmod 700 "$root" "$root/snapshot-runner" "$root/snapshot-runner/snapshots"
-    if [[ -n $snapshot_id ]]; then
-        directory=$root/snapshot-runner/snapshots/$snapshot_id
-        mkdir -p -- "$directory"
-        chmod 700 "$directory"
-    fi
-}
-
-test_snapshot_adapter_is_state_relocatable() {
-    local case_dir=$tmp_root/snapshot-state snapshot_id repo scratch_home
+test_snapshot_adapter_reads_only_through_the_public_runner() {
+    local case_dir=$tmp_root/snapshot-reader snapshot_id repo stub_bin empty_bin python
     mkdir -p -- "$case_dir"
     case_dir=$(cd -- "$case_dir" && pwd -P)
-    # A private HOME keeps the probe independent of whatever the operator's real
-    # ~/.local/state/snapshot-runner happens to contain.
-    scratch_home=$case_dir/fakehome
-    mkdir -p -- "$scratch_home"
     snapshot_id=$(printf 'a%.0s' $(seq 1 64))
     mkdir -p -- "$case_dir/repo"
     repo=$(cd -- "$case_dir/repo" && pwd -P)
     printf 'x\n' >"$repo/f"
-    private_state_tree "$case_dir/state-present" "$snapshot_id"
-    private_state_tree "$case_dir/state-absent" ''
+    python=$(command -v python3)
 
-    # A materialized artifact directory is reached only under the redirected
-    # state root, proving the adapter never falls back to production state.
-    if HOME=$scratch_home XDG_STATE_HOME=$case_dir/state-present python3 -B \
+    # The adapter asks the installed producer, passes the caller's state root through,
+    # and never opens the producer's store itself.
+    stub_bin=$case_dir/stub-bin
+    mkdir -p -- "$stub_bin"
+    printf '%s\n' '#!/usr/bin/env bash' \
+        'printf "argv=%s\n" "$*" >>"$READER_LOG"' \
+        'printf "state=%s bytecode=%s\n" "$XDG_STATE_HOME" "$PYTHONDONTWRITEBYTECODE" >>"$READER_LOG"' \
+        'printf "workflow_failed: ARTIFACT_NOT_FOUND: snapshot not found\n" >&2' \
+        'exit 2' >"$stub_bin/snapshot-runner"
+    chmod 700 "$stub_bin/snapshot-runner"
+    if env -u PYTHONDONTWRITEBYTECODE PATH="$stub_bin:$PATH" READER_LOG="$case_dir/reader.log" \
+        XDG_STATE_HOME="$case_dir/redirected-state" "$python" -B \
         "$project_root/git-finalize-snapshot-verify.py" \
-        "$snapshot_id" "$repo" head f >"$case_dir/present.log" 2>&1; then
-        fail_assertion 'snapshot adapter accepted an empty artifact directory'
+        "$snapshot_id" "$repo" head f >"$case_dir/refused.log" 2>&1; then
+        fail_assertion 'snapshot adapter accepted a refused evidence read'
     fi
-    grep -a -q -F 'contents are not canonical' "$case_dir/present.log" || {
-        sed -n '1,20p' "$case_dir/present.log" >&2
-        fail_assertion 'snapshot adapter did not resolve the redirected state root'
+    grep -a -q -F 'Snapshot Runner refused the evidence read (ARTIFACT_NOT_FOUND)' \
+        "$case_dir/refused.log" || {
+        sed -n '1,20p' "$case_dir/refused.log" >&2
+        fail_assertion 'snapshot adapter lost the producer refusal code'
     }
-    if HOME=$scratch_home XDG_STATE_HOME=$case_dir/state-absent python3 -B \
-        "$project_root/git-finalize-snapshot-verify.py" \
+    grep -a -q -F "argv=read $snapshot_id --repo $repo" "$case_dir/reader.log" ||
+        fail_assertion 'snapshot adapter did not use the public read command'
+    grep -a -q -F "state=$case_dir/redirected-state bytecode=1" "$case_dir/reader.log" ||
+        fail_assertion 'snapshot adapter did not pass the state root through cleanly'
+    [[ ! -e $case_dir/redirected-state ]] ||
+        fail_assertion 'snapshot adapter touched the producer state root itself'
+
+    # Without an installed producer the adapter fails closed instead of reading files.
+    empty_bin=$case_dir/empty-bin
+    mkdir -p -- "$empty_bin"
+    if env PATH="$empty_bin" "$python" -B "$project_root/git-finalize-snapshot-verify.py" \
         "$snapshot_id" "$repo" head f >"$case_dir/absent.log" 2>&1; then
-        fail_assertion 'snapshot adapter accepted a missing artifact directory'
+        fail_assertion 'snapshot adapter accepted evidence without Snapshot Runner'
     fi
-    grep -a -q -F 'snapshot directory is unavailable' "$case_dir/absent.log" || {
+    grep -a -q -F 'Snapshot Runner is unavailable on PATH' "$case_dir/absent.log" || {
         sed -n '1,20p' "$case_dir/absent.log" >&2
-        fail_assertion 'snapshot adapter lost its fail-closed missing-artifact diagnosis'
-    }
-    # Documented fallback: with no XDG_STATE_HOME the adapter uses HOME, and a
-    # private empty HOME must therefore fail as an unavailable state home.
-    if env -u XDG_STATE_HOME HOME="$scratch_home" python3 -B \
-        "$project_root/git-finalize-snapshot-verify.py" \
-        "$snapshot_id" "$repo" head f >"$case_dir/fallback.log" 2>&1; then
-        fail_assertion 'snapshot adapter accepted an empty HOME fallback state'
-    fi
-    grep -a -q -F 'state home is unavailable' "$case_dir/fallback.log" || {
-        sed -n '1,20p' "$case_dir/fallback.log" >&2
-        fail_assertion 'snapshot adapter lost its documented HOME fallback diagnosis'
+        fail_assertion 'snapshot adapter lost its missing-producer diagnosis'
     }
 }
 
@@ -432,7 +426,7 @@ run_case 'summary vocabulary is closed and documented' \
     test_summary_vocabulary_is_closed
 run_case 'companions emit their own receipts, not the summary envelope' \
     test_companions_emit_their_own_receipts
-run_case 'snapshot adapter is state-root relocatable' \
-    test_snapshot_adapter_is_state_relocatable
+run_case 'snapshot adapter reads only through the public runner' \
+    test_snapshot_adapter_reads_only_through_the_public_runner
 
 printf 'all %s boundary contract groups passed\n' "$passed"

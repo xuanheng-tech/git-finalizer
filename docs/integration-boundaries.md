@@ -15,7 +15,7 @@ Git Finalizer（GF）核心只依赖 GNU bash、Git、GNU utilities 与 `PATH` �
 | Worktree Controller（integration publication） | 仅 `--publish-integration-candidate` | `capabilities --json` 中 `integration_publication_execution_version` 为 1 | 公开 `integration-publication-session/v1` JSON-line session | 缺执行器 → `Worktree Controller is required`；缺能力 → `required public integration publication protocol`；核验、授权或完成确认拒绝 → blocked；断连/超时先读远端事实再重入 | 只消费公开 identity、verify/authorize/complete 与 producer-observed completion；不读 lease、lock、binding、record、intent 或 prepared receipt 私有文件 |
 | Worktree Controller（reviewed sensitive source） | 仅 `--reviewed-sensitive-source <file>` | 无状态读取；linkage 四字段作为不透明 identity 消费 | review-file schema 由 GF 自身合同定义 | 缺 linkage → `source review 要求完整 Controller linkage` | 无（不触任何 WC state 布局） |
 | Workflow deployment health | 仅 `tool-skill-sync doctor` | 只读 installed Controller capabilities 与 frozen runtime contract | compatibility 中显式列出的 CLI、capability、storage 版本 | 无安装、字节或合同漂移 → `FAIL`；不激活 runtime | Controller 可执行文件名、active runtime 的 `site-packages/worktree_controller/tool_cli_contract.json`、installed instructions 与 Skills 的路径身份；只在 `tooling/workflow_health.py` 的独立 adapter 内 |
-| Snapshot Runner evidence | 仅 `--initial-publish --snapshot <64hex>` | state 根取 `XDG_STATE_HOME`（否则 `~/.local/state`），可整体重定向到 fixture | `meta.json`/`snapshot.json` 字段按对端**已发布**的证据合同标识校验 | artifact 缺失/损坏 → `snapshot evidence rejected: ...`，永不静默跳过 | `snapshot-runner/snapshots/<id>/` 目录形状、三个 artifact 名、已发布合同标识（`schema_version` 2；`meta.json` 与 `snapshot.json` 一致的 `producer_security_epoch` 4 或 5）与 GF 侧 fail-closed 字节上限 |
+| Snapshot Runner evidence | 仅 `--initial-publish --snapshot <64hex>` | PATH 上的 `snapshot-runner`；调用方环境（含 `XDG_STATE_HOME`）原样传给 producer | 公开 `snapshot-runner read <id> --repo <root> [--field <name>]`，`evidence_schema_version` 1；产物 era、格式与私有存储由 producer 自行校验 | 缺执行器 → `Snapshot Runner is unavailable on PATH`；producer 拒绝 → `Snapshot Runner refused the evidence read (<CODE>)`；`partial`/gap/字段不符 → `snapshot evidence rejected: ...`，永不静默跳过 | 只消费公开 read JSON 与 diff-audit 初始发布字段；不读 store 布局、artifact 文件名或 security epoch |
 | Gitea repository bootstrap | 仅 `--repo-plan` / `--repo-ensure` | 无；目标 URL 每次显式传入，无默认主机 | Gitea REST `/api/v1`（credential-free 探测，凭据走 Git authority） | 缺 `--gitea-url`/`--owner`/`--repo-name`/`--visibility` → argparse 用法错误 exit 2；探测或权限失败 → `BLOCK_INVALID_CONFIG`/`BLOCK_PERMISSION`/`BLOCK_INVALID_OWNER`/`BLOCK_REMOTE_MISMATCH` + `status=blocked` + exit 2（其中 `BLOCK_REMOTE_MISMATCH` 可能在 repository 已创建之后产生，是否变更看 `bootstrap.executed`）；决策无法归类 → `status=failed` + exit 3 | 只读 GET 与显式 POST 的端点形状集中于此 companion；POST 只在决策为 `CREATE_ALLOWED` 且调用方显式给出 `--repo-ensure` 时发出（GF 侧不设交互确认门，显式命令本身即授权边界） |
 
 ## 遗留兼容性知识与版本边界
@@ -39,13 +39,12 @@ Git Finalizer（GF）核心只依赖 GNU bash、Git、GNU utilities 与 `PATH` �
   幂等重查和旧消费者的已缺失引用恢复均保留该编号，不复制生产方的编号算法。
 - plan-only CLI 输入不变；缺少 Controller 或任一 required public retirement protocols 时 fail
   closed，不回退到私有文件核验。仅 legacy namespace 的仓库仍保留迁移 blocker，迁移归 producer。
-- Snapshot Runner 与 Gitea 的知识只到“对端已发布合同 + 形状”一层：GF 固定 Snapshot Runner README
-  宣布的证据合同标识（`schema_version` 2；Snapshot Runner 2.x 承诺可读且共用同一格式的
-  `producer_security_epoch` 4 与 5，`meta.json` 与 `snapshot.json` 必须一致），并 fail-closed 镜像其
-  **未发布**的字节上限；Gitea 侧只固定 REST `/api/v1` 端点形状。GF 不固定任何 sibling 的**工具
-  版本号**，因此 sibling 的普通版本漂移不得要求核心改动；对端登记新的证据合同标识时，表现为
-  `snapshot evidence rejected` 的精确 blocker，而不是静默误判。新标识只有在对端公开声明其格式并由
-  `tests/test_initial_snapshot_real_runner.sh` 以真实 producer 验证后才加入受支持集合。
+- Snapshot Runner 与 Gitea 的知识只到“对端已发布合同 + 形状”一层：GF 只调用 Snapshot Runner 公开的
+  `read` 命令并校验其 evidence-read schema 1 输出；artifact era（security epoch）、格式与私有存储由
+  producer 自行校验，因此 producer 登记新 era 不再要求 GF 改动。Gitea 侧只固定 REST `/api/v1`
+  端点形状。GF 不固定任何 sibling 的**工具版本号**；对端 evidence-read schema 变化表现为
+  `snapshot evidence rejected` 的精确 blocker，而不是静默误判，并由
+  `tests/test_initial_snapshot_real_runner.sh` 以真实 producer 验证。
 
 ## 对代理稳定的 machine-readable 结果合同
 
@@ -107,7 +106,7 @@ Git Finalizer（GF）核心只依赖 GNU bash、Git、GNU utilities 与 `PATH` �
 | WC retirement | `tests/test_retire_branch_real_controller.sh`（真实 controller 作 oracle，入口缺席时显式 skip）、`tests/test_retire_local_branch.sh`、`tests/test_retire_remote_branch.sh` | 篡改/drift/receipt 矛盾/lock 串行化 + capability 拒绝、completion 拒绝与恢复；`tests/test_retirement_protocol.py` 覆盖过期授权、活跃 executor 和公开协议中断 | 不 import controller 代码、不复制其版本常量；contract 变化表现为能力/plan 校验失败而非测试崩溃 |
 | WC integration publication | `tests/test_integration_publish.py`（独立公开协议 stub，无私有 metadata）与 producer 的真实 consumer acceptance | 能力缺失、身份/阶段/schema 漂移、超时、推送失败、完成拒绝与中断恢复 → blocked 或精确恢复 | 只消费公开 versioned protocol，不 import producer 代码或读取存储布局 |
 | WC reviewed sensitive source | `tests/test_reviewed_source.py` | linkage 不全 → `source review 要求完整 Controller linkage` | 四字段作不透明 identity |
-| Snapshot Runner evidence | `tests/run.sh` 内 `test_initial_snapshot_*` 用例（`XDG_STATE_HOME` 重定向 fixture，覆盖 epoch 4/5 与不一致/未登记 epoch 拒绝）；`tests/test_initial_snapshot_real_runner.sh`（真实已安装 producer 作 oracle，入口缺席或 root 时显式 skip，`just release-check` 要求执行通过） | `tests/test_standalone_operations.sh` 证据缺失用例 + `tests/test_integration_boundaries.sh` 状态根重定位探针 | 只读已发布合同标识与 artifact 形状，不校验生产者工具版本 |
+| Snapshot Runner evidence | `tests/run.sh` 内 `test_initial_snapshot_*` 用例（按公开 read 合同应答的 synthetic producer，覆盖拒绝、`partial`、gap、身份/schema/字段不符）；`tests/test_initial_snapshot_real_runner.sh`（真实已安装 producer 作 oracle，入口缺席或 root 时显式 skip，`just release-check` 要求执行通过） | `tests/test_standalone_operations.sh` 证据缺失用例 + `tests/test_integration_boundaries.sh` 状态根重定位探针 | 只读已发布合同标识与 artifact 形状，不校验生产者工具版本 |
 | Gitea repository bootstrap | `tests/test_repo_bootstrap.py`（stub HTTP） | `BLOCK_*` 决策 → exit 2、`UNKNOWN` → exit 3、缺参数 → argparse 2 | 无默认主机、无工具版本常量 |
 | 边界与 machine 合同本身 | `tests/test_integration_boundaries.sh`（marker 单点、扩散 ledger、矩阵↔代码一致、`--summary` 键集合与词表、companion 输出不同形） | 同一套件即回归门 | 不依赖任何 sibling 存在 |
 
@@ -130,6 +129,8 @@ Skill 参考和 `.gitea/workflows` 不在该范围内：前者必须能构造外
 - retirement adapter 识别 public CLI schema 中 execution/v1 的精确 capability 描述；
   working/index/history 共用 assignment 判定，不按文件名豁免 JSON；其它敏感赋值和
   key/token 签名保持拒绝，重复键或非法 JSON 不进入 schema 描述处理。
-- `snapshot-runner/snapshots` 布局只允许出现在 snapshot adapter。
+- `snapshot-runner/snapshots` 布局与 `producer_security_epoch` 禁止出现在生产代码；snapshot evidence 只经
+  公开 `read` 命令获取。
+- `snapshot-runner` 可执行文件探测（`which("snapshot-runner")`）只允许在 snapshot adapter。
 - `/api/v1` 只允许出现在 Gitea bootstrap adapter。
 - Context Loader 无运行时耦合（GF 不调用它，也不引用其名称或状态）。

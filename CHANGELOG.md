@@ -13,6 +13,13 @@ section is invented for it.
 
 ## Unreleased
 
+- Read `--initial-publish --snapshot` evidence only through Snapshot Runner's public
+  `snapshot-runner read` command (evidence-read schema 1) found on `PATH`. Finalizer no longer
+  opens the Runner state store or pins its artifact security epochs; the producer validates its
+  own artifact era, format and private store. A missing `snapshot-runner`, a producer refusal,
+  `partial` evidence, evidence gaps or a mismatched response are refused before any mutation.
+  Binding evidence therefore requires `snapshot-runner` on `PATH` and an ordinary user.
+
 ## 1.9.6
 
 - Fix `--initial-publish --snapshot`: accept Snapshot Runner schema-2 evidence from both
