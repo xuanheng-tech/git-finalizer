@@ -13,6 +13,9 @@ section is invented for it.
 
 ## Unreleased
 
+- Docs: move the detailed unified-diff, reviewed-merge and remote-sync rules to
+  `docs/advanced-modes.md`, and the content-review and scanner classifications to
+  `docs/content-review.md`; the README keeps purpose, install, quick start and support.
 - Read `--initial-publish --snapshot` evidence only through Snapshot Runner's public
   `snapshot-runner read` command (evidence-read schema 1) found on `PATH`. Finalizer no longer
   opens the Runner state store or pins its artifact security epochs; the producer validates its
