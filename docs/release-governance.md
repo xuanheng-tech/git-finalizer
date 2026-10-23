@@ -354,6 +354,7 @@ record.
 | `v1.9.3` | GitHub | `28db5fccba9f58013146d096570198e698668fa1` | `f3585966396f4fcc253b5510353f596e8bdee184` | `ee219fd62484fbb29f85fdab4e36f99a7bdcf65a178a056cbc4f89db74541a4d` | 211523 |
 | `v1.9.6` | GitHub | `cd134009379ba913a06ac79a00d56ff7f9017e8a` | `9835062488328e5b2d20dbf5a67acf71fbbe1027` | `bb05bbbb33b7811d28b9d0e69a3d5efc3072248db239e17daf59aba69c87fa1e` | 213603 |
 | `v1.9.7` | GitHub | `e68b8433fd4fff37b84c61b3ac84086d6ca6d1e3` | `b61ad49ad3c03b09efea38f3c3a837dd381b241d` | `33a3e12c721ea1a6cf7d296d011f29307ae849fb3e4d292aadb165d98fc93211` | 211180 |
+| `v1.9.8` | GitHub | `647ffaaf1002c8c550b6c5e63602fd83456fde6b` | `abe21bb19cfbff07d04add20fd7a739311cd1e98` | `538145ef92f75af7596850fdaac4c93094f8ef279fb60631ed51f8520cc7689d` | 211943 |
 
 `v1.8.10` is a deliberate mirror. GitHub run `36883946683` published release `401104963`;
 Gitea run `851` independently built and verified the same candidate and digest. Its publication
