@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.9.7"
+readonly VERSION="1.9.8"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -3825,7 +3825,7 @@ publish_existing_history_head() {
     else
         printf 'mode: publish-existing-history\n'
     fi
-    printf 'bootstrap prerequisite: repo-plan -> repo-ensure\n'
+    printf 'bootstrap prerequisite: caller verifies repository owner, name and visibility through its host client\n'
     printf 'expected HEAD: %s\n' "$resume_expected_oid"
     printf 'branch: %s\n' "$branch_publish_branch"
     printf 'explicit target: %s/%s\n' \

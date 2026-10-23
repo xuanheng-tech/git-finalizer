@@ -13,6 +13,16 @@ section is invented for it.
 
 ## Unreleased
 
+## 1.9.8
+
+- Clarify host-independent existing-history first publication: the caller holds repository creation
+  authority and verifies host owner, name and visibility. Gitea keeps its repo-plan/repo-ensure flow;
+  an authorized GitHub client may create and verify the target before the same publication mode.
+- Retain all existing endpoint, whole-remote emptiness, exact HEAD/history, non-force push and
+  recovery guards. No Git mutation algorithm or new provider implementation is added.
+- Advance CLI contract to 9 for the corrected caller preconditions and the summary's
+  `bootstrap_prerequisite` value `caller-verified-repository-bootstrap`; toolchain contract stays 6.
+
 ## 1.9.7
 
 - Read NUL-delimited Git results through a foreground pipeline that preserves producer and

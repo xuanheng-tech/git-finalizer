@@ -73,7 +73,7 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 | 已明确授权同步两个现有远端的同名既有分支，source 已发布 | `--sync-published-branch <full-published-oid> --source-remote <name> --remote <name> --remote-branch <branch> --expected-target-oid <full-oid> --repo <absolute-repo>` | 不创建 commit；检查 live source、target ancestry 和历史安全，non-force 精确同步并核验两端；保持本地 HEAD/upstream |
 | 已存在普通 local commits，已明确授权继续 push | `--resume-publish <full-head-oid> --repo <absolute-repo>` | 不创建 commit；发布 configured upstream 并远端 post-verify |
 | 已存在 clean feature branch、无 upstream、远端同名 branch 不存在，已明确授权首次发布 | `--publish-existing-branch <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>` | 不创建 commit；non-force 首次发布、设置 upstream 并远端 post-verify |
-| 已有 local history，目标是经 repo-plan/repo-ensure 验证的全空 Gitea repository | `--publish-existing-history <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>` | 不创建 commit；全 remote refs 空检查、normal first push、远端 post-verify |
+| 已有 local history，已授权创建且核验 host owner/name/visibility 的全空 repository | `--publish-existing-history <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>` | 不创建 commit；全 remote refs 空检查、normal first push、远端 post-verify |
 | existing-history first push 中断或结果不确定，且 remote 为空或仅有 expected target | `--resume-existing-history-publish <full-head-oid> --remote <name> --remote-branch <branch> --repo <absolute-repo>` | 不创建 commit；精确恢复并验证 upstream/remote `0/0` |
 | Controller 已签发 integration publication lease，并支持公开 `integration-publication-session/v1` | `--publish-integration-candidate <candidate-oid> --repo <candidate-worktree> --lease-id <uuid> --run-id <run>` | 不创建 commit；生产方持锁核验与授权，精确 main push、双方 remote verify、中断幂等恢复 |
 | 已完成 ancestry-provable integration，明确授权退役 remote feature ref | `--retire-remote-branch <branch> --remote <name> --integrated-into <branch> --expected-remote-oid <full-oid> --repo <absolute-repo>` | 不创建 commit；expected-OID compare-and-delete、远端 post-verify |
@@ -118,8 +118,9 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 - clean attached feature branch 尚无 upstream 且 explicit 同名 remote branch 不存在时，使用
   `--publish-existing-branch`；它绑定完整 HEAD OID，不创建 commit，拒绝受保护分支和任何既有
   upstream，并在 non-force 首次 push 后验证 upstream、remote OID 与 `0/0`。
-- local repository 已有 history 且 Gitea target 已显式 repo-plan/repo-ensure 时，使用
+- local repository 已有 history，调用方持有创建授权并通过 host client 核验目标 owner/name/visibility 时，使用
   `--publish-existing-history`；它允许初始 protected branch，但要求整个 remote 无用户 Git refs。
+  Gitea 创建仍用 repo-plan/repo-ensure；GitHub 使用其已授权 client。Finalizer 不替代 host 身份或业务授权核验。
   任一 branch/tag/其他 ref 都阻断；中断后只用 `--resume-existing-history-publish` 接受 empty 或
   expected-target-only 的精确远端形状。
 - integration candidate publication 只在上层 Controller 已签发 lease，且公开 capability

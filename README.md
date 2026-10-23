@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.9.7**.
+Current source version: **1.9.8**.
 
-当前版本：`1.9.7`
+当前版本：`1.9.8`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
@@ -186,7 +186,7 @@ scanner guards are unchanged; see [the diagnostics contract](docs/agent-contract
 The complete per-mode preconditions, guarantees and recovery rules are in
 [docs/cli-guide.zh.md](docs/cli-guide.zh.md) (中文) and in
 [`tool_cli_contract.json`](tool_cli_contract.json), which is the machine-readable public CLI
-contract (`contract_version` 8).
+contract (`contract_version` 9).
 
 ## Agent and automation usage
 
@@ -251,7 +251,10 @@ already-running agent reread its context.
   publishing a *first* branch refuses protected names; updating the upstream of the branch you
   already stand on is deliberately allowed, because that is the ordinary delivery path. Two
   interfaces — `--publish-existing-history` and its resume form — may target a protected branch,
-  since the branch already exists there.
+  only while the entire remote is proved empty, or during exact interrupted-publication recovery.
+  Repository creation authority and host owner/name/visibility verification belong to the caller;
+  Git Finalizer verifies the configured Git endpoints, empty remote and exact publication result.
+  Use `--repo-plan` / `--repo-ensure` for Gitea creation, or the host's authorized client for GitHub.
 - Pushes are non-force with an explicit branch refspec and `--no-follow-tags`; deletions are
   `--force-with-lease`-style expected-OID compare-and-set, never unconditional force operations.
 - No amend, rebase, history rewrite, automatic conflict resolution, duplicate commit creation, tag

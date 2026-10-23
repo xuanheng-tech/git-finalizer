@@ -390,7 +390,8 @@
       "name": "publish_existing_history",
       "operation_class": "remote_mutation",
       "preconditions": [
-        "repo_plan_and_repo_ensure_completed",
+        "explicit_repository_creation_authority",
+        "repository_owner_name_and_visibility_verified_by_caller",
         "clean_attached_existing_history",
         "full_expected_head_oid",
         "verified_empty_entire_remote",
@@ -525,7 +526,7 @@
       ]
     }
   ],
-  "contract_version": 8,
+  "contract_version": 9,
   "exit_codes": {
     "0": "success or verification passed",
     "1": "blocked, failed verification, or Finalizer preflight refusal",
@@ -559,5 +560,5 @@
   ],
   "schema_version": 1,
   "tool_name": "git-finalizer",
-  "tool_version": "1.9.7"
+  "tool_version": "1.9.8"
 }

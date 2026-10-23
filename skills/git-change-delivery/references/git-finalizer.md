@@ -25,8 +25,10 @@ Git Finalizer 只负责适用的本地提交前验证、显式路径暂存、com
 指定 remote 完全缺失时添加精确 origin。credential 仅由 Git credential authority 提供，CLI、
 remote URL、日志和 receipt 均不得携带 token。bootstrap 成功不表示 publication 已运行。
 
-已有一个或多个 local commits 首次发布到上述 bootstrap 后的 verified-empty Gitea repository
-时，使用 `--publish-existing-history`。它与 unborn `--initial-publish`、普通 feature
+已有一个或多个 local commits，调用方持有创建授权并通过 host client 核验目标 owner/name/visibility
+后，可通过 `--publish-existing-history` 首次发布。Gitea 创建继续使用上述 bootstrap；GitHub 可使用
+已授权的 GitHub client。Finalizer 独立验证 Git endpoint、整个远端为空和发布结果，不证明业务授权或 host 身份。
+它与 unborn `--initial-publish`、普通 feature
 `--publish-existing-branch` 和 configured-upstream `--resume-publish` 都是独立接口；中断恢复只
 使用 `--resume-existing-history-publish`。
 
@@ -193,9 +195,14 @@ captured remote heads 尚不可达的 commit objects，仅以 non-force、`--no-
 clean 状态以及 HEAD/branch/history 不变。若远端目标已存在、push 结果或 post-verify 含糊，
 fail closed，不自动重试、覆盖或切换到 force。
 
-## Existing-history first publication to verified-empty Gitea
+## Existing-history first publication to a verified-empty repository
 
-完成显式 `--repo-plan` → `--repo-ensure` 后，本地已有 history 且目标 repository 仍完全空时：
+调用方完成明确授权的 repository 创建和 owner/name/visibility 核验后，本地已有 history 且目标仍完全空时：
+
+Gitea 使用 `--repo-plan` → `--repo-ensure`；GitHub 可通过正常已授权 client 创建、查询目标，
+不自动生成 README、许可证或其他 commit，并核对准确的 fetch/push URL。保留 host 返回的非敏感
+身份与可见性证据。Finalizer 的 `bootstrap_prerequisite` 从 CLI 9 起为
+`caller-verified-repository-bootstrap`；这是调用前置条件，不是 Finalizer 对 host 的证明。
 
 ```bash
 /absolute/path/to/git-finalize \

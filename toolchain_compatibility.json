@@ -1,6 +1,6 @@
 {
   "context_loader_contract_version": 3,
-  "git_finalizer_contract_version": 8,
+  "git_finalizer_contract_version": 9,
   "runtime_requirements": {
     "worktree-controller": {
       "capability_versions": {
@@ -62,7 +62,7 @@
       "source_directory": "context-loader"
     },
     "git-finalizer": {
-      "public_cli_contract_version": 8,
+      "public_cli_contract_version": 9,
       "skill_contract_version": 2,
       "source_directory": "git-finalizer"
     },

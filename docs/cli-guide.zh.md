@@ -198,8 +198,10 @@ heads 尚不可达的 commits 执行既有 commit-range 安全检查，再以 no
 `--set-upstream` 的精确 branch refspec 首次发布。post-verify 要求 HEAD 和 commit history 不变、
 远端 OID 与 HEAD 相同、upstream 精确、ahead/behind 为 `0/0` 且 index/worktree clean。
 
-本地 repository 已有一个或多个 commit、而目标是经 `--repo-plan` / `--repo-ensure` 建立并
-验证的空 Gitea repository 时，使用独立的 existing-history first-publication 入口：
+本地 repository 已有一个或多个 commit，且调用方获得创建授权、通过 host client 核验目标
+owner/name/visibility 后，使用独立的 existing-history first-publication 入口。
+Gitea 创建继续使用 `--repo-plan` / `--repo-ensure`；GitHub 可使用已授权的 GitHub client。
+Finalizer 不证明业务授权或替代 host 身份核验；它独立验证配置的 Git endpoint 和整个空远端：
 
 ```bash
 git-finalize \
@@ -387,8 +389,9 @@ The CLI retains explicit scope, sensitive-source review, worktree, commit and pu
 
 正常开发流程是先完成修改、测试和审查，再调用正常模式提交推送。首次发布仅适用于 unborn
 本地仓库和完全空远端；需要同时创建 commit 的已有历史功能分支首次发布使用 initial-branch
-模式，已有 clean committed HEAD 且无 upstream 时使用 publish-existing-branch；经显式 Gitea
-bootstrap 的 verified-empty repository 接收既有历史时使用 publish-existing-history。恢复模式仅
+模式，已有 clean committed HEAD 且无 upstream 时使用 publish-existing-branch；经显式授权的
+bootstrap（Gitea 工具或已授权的其他 host client）的 verified-empty repository 接收既有历史时
+使用 publish-existing-history。恢复模式仅
 适用于干净状态且不会再次创建提交：root 恢复入口处理 initial-publish 的单 root commit，
 existing-history first-publication 使用自己的精确恢复入口，通用恢复入口处理 configured upstream
 之上的一个或多个既有 commit。commit-only 仅在已有 commit 的

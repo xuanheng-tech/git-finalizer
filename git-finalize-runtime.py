@@ -328,7 +328,7 @@ def render_summary(fields: dict[str, str], warning_values: list[str]) -> dict[st
             },
         }
         if mode == "publish_existing_history":
-            result["mode_result"]["bootstrap_prerequisite"] = "repo-plan/repo-ensure"
+            result["mode_result"]["bootstrap_prerequisite"] = "caller-verified-repository-bootstrap"
     elif mode == "sync_published_branch":
         result["mode_result"] = {
             "interface": "sync-published-branch",
