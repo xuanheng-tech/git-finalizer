@@ -8,25 +8,31 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import stat
 import subprocess
 import sys
 
 MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024
-MAX_PREVIEW_BYTES = 16 * 1024 * 1024
-MAX_META_BYTES = 64 * 1024
+MAX_EVIDENCE_OUTPUT_BYTES = MAX_SNAPSHOT_BYTES + 1024 * 1024
 MAX_CONTENT_FILES = 128
 MAX_GENERATED_FILES = 512
-# GF-INTEGRATION-ADAPTER: snapshot-runner-evidence (single site: state layout)
+RUNNER_TIMEOUT_SECONDS = 120
 SNAPSHOT_ID = re.compile(r"[0-9a-f]{64}")
-ARTIFACT_NAMES = {"meta.json", "preview.txt", "snapshot.json"}
-# Snapshot Runner 2.x keeps schema-2 artifacts of producer security epochs 4 and 5
-# readable with one shared format; epochs differ only in producer sanitizer rules.
-SUPPORTED_SECURITY_EPOCHS = frozenset({4, 5})
-
-
-def supported_epoch(value: object) -> bool:
-    return type(value) is int and value in SUPPORTED_SECURITY_EPOCHS
+# GF-INTEGRATION-ADAPTER: snapshot-runner-evidence (single site: public read contract)
+# Snapshot Runner validates its own store, artifact era and format before it answers;
+# Finalizer reads only the published `snapshot-runner read` JSON, evidence schema 1.
+EVIDENCE_SCHEMA_VERSION = 1
+DATA_FIELDS = (
+    "status_short",
+    "staged_diff",
+    "unstaged_diff",
+    "file_context",
+    "baseline_kind",
+    "baseline_oid",
+    "initial_publication",
+)
+RUNNER_ERROR_CODE = re.compile(r"workflow_failed: ([A-Z][A-Z_]{0,63}):")
 
 
 def fail(message: str) -> None:
@@ -55,66 +61,55 @@ def safe_path(value: object) -> bool:
     )
 
 
-def check_directory(path: Path, description: str) -> None:
+def read_evidence(runner: str, field: str | None) -> object:
+    """Return one validated `snapshot-runner read` evidence body for this snapshot."""
+    arguments = [runner, "read", snapshot_id, "--repo", os.fspath(repo)]
+    if field is not None:
+        arguments += ["--field", field]
     try:
-        metadata = path.lstat()
-        resolved = path.resolve(strict=True)
-    except OSError:
-        fail(f"{description} is unavailable")
+        completed = subprocess.run(
+            arguments,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            timeout=RUNNER_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        fail("Snapshot Runner evidence read did not complete")
+    if completed.returncode != 0:
+        first = completed.stderr.decode("utf-8", "replace").strip().splitlines()[:1]
+        code = RUNNER_ERROR_CODE.match(first[0]) if first else None
+        reason = code.group(1) if code else "unknown"
+        fail(f"Snapshot Runner refused the evidence read ({reason})")
+    if len(completed.stdout) > MAX_EVIDENCE_OUTPUT_BYTES:
+        fail("Snapshot Runner evidence exceeds its hard limit")
+    try:
+        document = json.loads(completed.stdout)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("Snapshot Runner evidence is not valid JSON")
+    selector = {"kind": "index"} if field is None else {"kind": "field", "value": field}
     if (
-        resolved != path
-        or stat.S_ISLNK(metadata.st_mode)
-        or not stat.S_ISDIR(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o700
+        not isinstance(document, dict)
+        or type(document.get("evidence_schema_version")) is not int
+        or document["evidence_schema_version"] != EVIDENCE_SCHEMA_VERSION
+        or document.get("snapshot_id") != snapshot_id
+        or document.get("command") != "diff-audit"
+        or document.get("repository") != repo.name
+        or document.get("selector") != selector
+        or document.get("status") != "complete"
+        or document.get("truncated") is not False
+        or document.get("evidence_gap") is not False
+        or document.get("found") is not True
+        or not isinstance(document.get("evidence"), dict)
     ):
-        fail(f"{description} is not a private real directory")
-
-
-def read_artifact(path: Path, maximum: int, description: str) -> bytes:
-    try:
-        before = path.lstat()
-    except OSError:
-        fail(f"{description} is unavailable")
-    if (
-        stat.S_ISLNK(before.st_mode)
-        or not stat.S_ISREG(before.st_mode)
-        or before.st_uid != os.getuid()
-        or stat.S_IMODE(before.st_mode) != 0o600
-        or before.st_size <= 0
-        or before.st_size > maximum
-    ):
-        fail(f"{description} is not a bounded private regular file")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(path, flags)
-    except OSError:
-        fail(f"{description} could not be safely opened")
-    try:
-        opened = os.fstat(descriptor)
-        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
-            fail(f"{description} changed during safe open")
-        chunks: list[bytes] = []
-        total = 0
-        while True:
-            chunk = os.read(descriptor, min(64 * 1024, maximum + 1 - total))
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > maximum:
-                fail(f"{description} exceeds its hard limit")
-            chunks.append(chunk)
-        after = os.fstat(descriptor)
-    finally:
-        os.close(descriptor)
-    if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != (
-        opened.st_dev,
-        opened.st_ino,
-        opened.st_size,
-        opened.st_mtime_ns,
-    ) or total != opened.st_size:
-        fail(f"{description} changed while reading")
-    return b"".join(chunks)
+        fail("snapshot evidence is incomplete or incompatible")
+    evidence = document["evidence"]
+    if field is None:
+        return evidence
+    if set(evidence) != {"field", "value"} or evidence["field"] != field:
+        fail("snapshot evidence field does not match the request")
+    return evidence["value"]
 
 
 def workspace_digest(records: list[dict[str, object]]) -> str:
@@ -289,107 +284,20 @@ except OSError:
 if not repo.is_dir() or os.fspath(repo) != repo_raw:
     fail("repository root is not canonical")
 
-state_raw = os.environ.get("XDG_STATE_HOME")
-state = Path(state_raw) if state_raw else Path.home() / ".local" / "state"
-if not state.is_absolute() or ".." in state.parts:
-    fail("state home is not canonical")
-state = Path(os.path.abspath(state))
-store = state / "snapshot-runner" / "snapshots"
-directory = store / snapshot_id
-for path, description in (
-    (state, "state home"),
-    (state / "snapshot-runner", "private Snapshot Runner state"),
-    (store, "snapshot store"),
-    (directory, "snapshot directory"),
-):
-    check_directory(path, description)
-try:
-    if {entry.name for entry in directory.iterdir()} != ARTIFACT_NAMES:
-        fail("snapshot directory contents are not canonical")
-except OSError:
-    fail("snapshot directory cannot be enumerated")
-
-snapshot_bytes = read_artifact(
-    directory / "snapshot.json", MAX_SNAPSHOT_BYTES, "snapshot.json"
-)
-preview_bytes = read_artifact(
-    directory / "preview.txt", MAX_PREVIEW_BYTES, "preview.txt"
-)
-meta_bytes = read_artifact(directory / "meta.json", MAX_META_BYTES, "meta.json")
-if hashlib.sha256(snapshot_bytes).hexdigest() != snapshot_id:
-    fail("snapshot content address does not match")
-try:
-    envelope = json.loads(snapshot_bytes)
-    meta = json.loads(meta_bytes)
-except (UnicodeDecodeError, json.JSONDecodeError):
-    fail("snapshot artifact JSON is invalid")
-meta_keys = {
-    "schema_version",
-    "producer_security_epoch",
-    "snapshot_id",
-    "task",
-    "repository",
-    "snapshot_sha256",
-    "snapshot_bytes",
-    "preview_sha256",
-    "preview_bytes",
-}
+runner = shutil.which("snapshot-runner")
+if runner is None:
+    fail("Snapshot Runner is unavailable on PATH")
+evidence_index = read_evidence(runner, None)
+fields = evidence_index.get("fields")
 if (
-    not isinstance(meta, dict)
-    or set(meta) != meta_keys
-    or meta.get("schema_version") != 2
-    or not supported_epoch(meta.get("producer_security_epoch"))
-    or meta.get("snapshot_id") != snapshot_id
-    or meta.get("snapshot_sha256") != snapshot_id
-    or meta.get("snapshot_bytes") != len(snapshot_bytes)
-    or meta.get("preview_sha256") != hashlib.sha256(preview_bytes).hexdigest()
-    or meta.get("preview_bytes") != len(preview_bytes)
+    not isinstance(fields, list)
+    or not all(isinstance(entry, dict) for entry in fields)
+    or sorted(str(entry.get("field")) for entry in fields) != sorted(DATA_FIELDS)
 ):
-    fail("snapshot metadata does not bind the artifact")
-
-envelope_keys = {
-    "schema_version",
-    "producer_security_epoch",
-    "task",
-    "repository",
-    "data",
-    "truncated",
-    "evidence_gaps",
-    "redactions",
-    "trust_boundary",
-    "security_notice",
-}
+    fail("snapshot evidence fields are not initial-publication evidence")
+data = {field: read_evidence(runner, field) for field in DATA_FIELDS}
 if (
-    not isinstance(envelope, dict)
-    or set(envelope) != envelope_keys
-    or envelope.get("schema_version") != 2
-    or not supported_epoch(envelope.get("producer_security_epoch"))
-    or envelope.get("producer_security_epoch") != meta.get("producer_security_epoch")
-    or envelope.get("task") != "diff-audit"
-    or envelope.get("repository") != repo.name
-    or meta.get("task") != envelope.get("task")
-    or meta.get("repository") != envelope.get("repository")
-    or envelope.get("truncated") is not False
-    or envelope.get("evidence_gaps") != []
-    or not isinstance(envelope.get("redactions"), dict)
-    or not isinstance(envelope.get("trust_boundary"), str)
-    or not isinstance(envelope.get("security_notice"), str)
-):
-    fail("snapshot envelope is incomplete or incompatible")
-data = envelope.get("data")
-data_keys = {
-    "status_short",
-    "staged_diff",
-    "unstaged_diff",
-    "file_context",
-    "baseline_kind",
-    "baseline_oid",
-    "initial_publication",
-}
-if (
-    not isinstance(data, dict)
-    or set(data) != data_keys
-    or not isinstance(data.get("status_short"), str)
+    not isinstance(data.get("status_short"), str)
     or data.get("staged_diff") != ""
     or data.get("unstaged_diff") != ""
     or data.get("baseline_kind") != "empty_tree"

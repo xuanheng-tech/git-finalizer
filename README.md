@@ -312,7 +312,7 @@ particular is **optional**: ordinary commit and publication work needs only Bash
 | Integration | Enabled by | Without it |
 | --- | --- | --- |
 | Worktree Controller governance (branch retirement, integration publication lease, reviewed sensitive-source linkage) | `--retire-*`, `--publish-integration-candidate`, `--reviewed-sensitive-source` | exact blocker, fail closed |
-| Snapshot Runner evidence binding | `--initial-publish --snapshot <id>` | evidence-required blocker |
+| Snapshot Runner evidence binding (reads through `snapshot-runner read` on `PATH`) | `--initial-publish --snapshot <id>` | evidence-required blocker |
 | Gitea repository bootstrap | `--repo-plan`, `--repo-ensure` with an explicit `--gitea-url` | usage error; there is no default host |
 | Context Loader | not used at runtime — the CLI never invokes it | nothing |
 | Shared `git-change-delivery` Skill | optional agent workflow documentation and helpers | not a dependency and not an authorization source |

@@ -149,10 +149,8 @@ make_unborn_repo() {
 make_generated_snapshot() {
     local repo=$1
     local state=$2
-    local meta_epoch=${3:-5}
-    local envelope_epoch=${4:-$meta_epoch}
 
-    python3 -B - "$repo" "$state" "$meta_epoch" "$envelope_epoch" <<'PY'
+    python3 -B - "$repo" "$state" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -166,8 +164,6 @@ import sys
 
 repo = Path(sys.argv[1])
 state = Path(sys.argv[2])
-meta_epoch = int(sys.argv[3])
-envelope_epoch = int(sys.argv[4])
 paths = ("README.md", "generated/manifest.json", "generated/schema.json")
 
 
@@ -238,7 +234,7 @@ publication = {
 status = "".join(f"?? {path}\n" for path in paths)
 envelope = {
     "schema_version": 2,
-    "producer_security_epoch": envelope_epoch,
+    "producer_security_epoch": 5,
     "task": "diff-audit",
     "repository": repo.name,
     "data": {
@@ -261,7 +257,7 @@ snapshot_id = digest(snapshot_bytes)
 preview_bytes = b"synthetic preview\n"
 meta = {
     "schema_version": 2,
-    "producer_security_epoch": meta_epoch,
+    "producer_security_epoch": 5,
     "snapshot_id": snapshot_id,
     "task": "diff-audit",
     "repository": repo.name,
@@ -285,6 +281,65 @@ for name, content in (
 print(snapshot_id)
 PY
 }
+
+# Synthetic Snapshot Runner: answers `read` from the fixture artifact using the producer's
+# published evidence-read schema 1. GF_TEST_RUNNER_FAULT selects one contract violation.
+runner_bin=$tmp_root/snapshot-runner-stub
+install_snapshot_runner_stub() {
+    mkdir -p -- "$runner_bin"
+    cat >"$runner_bin/snapshot-runner" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import sys
+
+arguments = sys.argv[1:]
+fault = os.environ.get("GF_TEST_RUNNER_FAULT", "")
+if len(arguments) not in (4, 6) or arguments[0] != "read" or arguments[2] != "--repo":
+    sys.stderr.write("workflow_failed: ARGUMENT_ERROR: unsupported stub invocation\n")
+    raise SystemExit(2)
+snapshot_id, repo = arguments[1], Path(arguments[3])
+field = arguments[5] if len(arguments) == 6 and arguments[4] == "--field" else None
+state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+artifact = state / "snapshot-runner" / "snapshots" / snapshot_id / "snapshot.json"
+if fault == "refuse" or not artifact.is_file():
+    sys.stderr.write("workflow_failed: ARTIFACT_NOT_FOUND: snapshot not found\n")
+    raise SystemExit(2)
+envelope = json.loads(artifact.read_bytes())
+data = envelope["data"]
+if field is None:
+    selector = {"kind": "index"}
+    evidence = {"fields": [{"field": key, "bytes": 0} for key in data]}
+    if fault == "extra-field":
+        evidence["fields"].append({"field": "deleted_files", "bytes": 2})
+else:
+    selector = {"kind": "field", "value": field}
+    evidence = {"field": field, "value": data[field]}
+    if fault == "wrong-field":
+        evidence["field"] = "status_short"
+document = {
+    "evidence_schema_version": 2 if fault == "schema" else 1,
+    "runner_version": "stub",
+    "command": envelope["task"],
+    "snapshot_id": "0" * 64 if fault == "wrong-id" else snapshot_id,
+    "repository": envelope["repository"],
+    "artifact": os.fspath(artifact),
+    "selector": selector,
+    "status": "partial" if fault == "partial" else "complete",
+    "truncated": False,
+    "evidence_gap": fault == "gap",
+    "found": True,
+    "evidence": evidence,
+    "trust_boundary": "synthetic",
+    "security_notice": "synthetic",
+}
+output = b"not json\n" if fault == "invalid-json" else json.dumps(document).encode() + b"\n"
+sys.stdout.buffer.write(output)
+PY
+    chmod 700 "$runner_bin/snapshot-runner"
+}
+install_snapshot_runner_stub
 
 make_cloned_unborn_repo() {
     local case_dir=$1
@@ -1200,7 +1255,7 @@ test_initial_snapshot_generated_coverage_success() {
     write_generated_snapshot_scope "$test_repo"
     snapshot=$(make_generated_snapshot "$test_repo" "$state")
 
-    expect_success "$output" env XDG_STATE_HOME="$state" "$finalizer" \
+    expect_success "$output" env PATH="$runner_bin:$PATH" XDG_STATE_HOME="$state" "$finalizer" \
         --initial-publish --remote origin --repo "$test_repo" \
         --message 'snapshot initial' --snapshot "$snapshot" -- \
         README.md generated/manifest.json generated/schema.json
@@ -1224,7 +1279,7 @@ test_initial_snapshot_generated_coverage_success() {
     make_unborn_repo "$case_dir"
     write_generated_snapshot_scope "$test_repo"
     snapshot=$(make_generated_snapshot "$test_repo" "$state")
-    expect_success "$output" env XDG_STATE_HOME="$state" "$finalizer" --summary \
+    expect_success "$output" env PATH="$runner_bin:$PATH" XDG_STATE_HOME="$state" "$finalizer" --summary \
         --initial-publish --remote origin --repo "$test_repo" \
         --message 'snapshot summary' --snapshot "$snapshot" -- \
         README.md generated/manifest.json generated/schema.json
@@ -1251,7 +1306,8 @@ test_snapshot_verifier_disables_bytecode() {
     snapshot=$(make_generated_snapshot "$test_repo" "$state")
 
     expect_success "$output" env -u PYTHONDONTWRITEBYTECODE \
-        XDG_STATE_HOME="$state" PYTHONPYCACHEPREFIX="$bytecode_prefix" "$finalizer" \
+        PATH="$runner_bin:$PATH" XDG_STATE_HOME="$state" \
+        PYTHONPYCACHEPREFIX="$bytecode_prefix" "$finalizer" \
         --initial-publish --remote origin --repo "$test_repo" \
         --message 'snapshot bytecode check' --snapshot "$snapshot" -- \
         README.md generated/manifest.json generated/schema.json
@@ -1271,7 +1327,7 @@ test_initial_snapshot_rejects_workspace_drift() {
     snapshot=$(make_generated_snapshot "$test_repo" "$state")
     printf 'drift\n' >>"$test_repo/README.md"
 
-    expect_failure "$output" env XDG_STATE_HOME="$state" "$finalizer" \
+    expect_failure "$output" env PATH="$runner_bin:$PATH" XDG_STATE_HOME="$state" "$finalizer" \
         --initial-publish --remote origin --repo "$test_repo" \
         --message 'snapshot drift' --snapshot "$snapshot" -- \
         README.md generated/manifest.json generated/schema.json
@@ -1296,7 +1352,7 @@ test_initial_snapshot_rejects_uncovered_explicit_path() {
     snapshot=$(make_generated_snapshot "$test_repo" "$state")
     printf 'uncovered\n' >"$test_repo/extra.txt"
 
-    expect_failure "$output" env XDG_STATE_HOME="$state" "$finalizer" \
+    expect_failure "$output" env PATH="$runner_bin:$PATH" XDG_STATE_HOME="$state" "$finalizer" \
         --initial-publish --remote origin --repo "$test_repo" \
         --message 'snapshot uncovered' --snapshot "$snapshot" -- \
         README.md extra.txt generated/manifest.json generated/schema.json
@@ -1310,43 +1366,32 @@ test_initial_snapshot_rejects_uncovered_explicit_path() {
         'uncovered path rejection changed the remote'
 }
 
-test_initial_snapshot_security_epochs() {
-    local case_dir state output snapshot epochs label
+test_initial_snapshot_requires_complete_runner_evidence() {
+    local case_dir state output snapshot fault
 
-    case_dir=$tmp_root/initial-snapshot-epoch-4
-    state=$case_dir/state
-    output=$case_dir/output.log
-    make_unborn_repo "$case_dir"
-    write_generated_snapshot_scope "$test_repo"
-    snapshot=$(make_generated_snapshot "$test_repo" "$state" 4)
-    expect_success "$output" env XDG_STATE_HOME="$state" "$finalizer" \
-        --initial-publish --remote origin --repo "$test_repo" \
-        --message 'snapshot epoch 4' --snapshot "$snapshot" -- \
-        README.md generated/manifest.json generated/schema.json
-    assert_file_contains "$output" 'source=head covered=3/3' \
-        'registered epoch-4 snapshot was not verified'
-
-    for epochs in '4 5' '5 4' '3 3' '6 6'; do
-        label=${epochs// /-}
-        case_dir=$tmp_root/initial-snapshot-epoch-reject-$label
+    for fault in refuse partial gap wrong-id schema extra-field wrong-field invalid-json; do
+        case_dir=$tmp_root/initial-snapshot-runner-$fault
         state=$case_dir/state
         output=$case_dir/output.log
         make_unborn_repo "$case_dir"
         write_generated_snapshot_scope "$test_repo"
-        # shellcheck disable=SC2086 # two numeric epoch arguments
-        snapshot=$(make_generated_snapshot "$test_repo" "$state" $epochs)
-        expect_failure "$output" env XDG_STATE_HOME="$state" "$finalizer" \
+        snapshot=$(make_generated_snapshot "$test_repo" "$state")
+        expect_failure "$output" env PATH="$runner_bin:$PATH" XDG_STATE_HOME="$state" \
+            GF_TEST_RUNNER_FAULT="$fault" "$finalizer" \
             --initial-publish --remote origin --repo "$test_repo" \
-            --message "snapshot epoch $label" --snapshot "$snapshot" -- \
+            --message "snapshot runner $fault" --snapshot "$snapshot" -- \
             README.md generated/manifest.json generated/schema.json
         assert_file_contains "$output" 'snapshot evidence rejected' \
-            "epoch $label snapshot was not rejected"
+            "runner evidence fault $fault was not rejected"
         assert_unborn "$test_repo"
         assert_equal '' "$(index_snapshot "$test_repo")" \
-            "epoch $label rejection changed the index"
+            "runner evidence fault $fault changed the index"
         assert_equal '' "$(remote_refs "$test_remote")" \
-            "epoch $label rejection changed the remote"
+            "runner evidence fault $fault changed the remote"
     done
+    assert_file_contains "$tmp_root/initial-snapshot-runner-refuse/output.log" \
+        'Snapshot Runner refused the evidence read (ARTIFACT_NOT_FOUND)' \
+        'runner refusal code was not reported'
 }
 
 test_initial_clone_created_upstream() {
@@ -2073,8 +2118,8 @@ run_case 'initial snapshot rejects workspace drift before staging' \
     test_initial_snapshot_rejects_workspace_drift
 run_case 'initial snapshot rejects every uncovered explicit path' \
     test_initial_snapshot_rejects_uncovered_explicit_path
-run_case 'initial snapshot accepts only matching registered security epochs' \
-    test_initial_snapshot_security_epochs
+run_case 'initial snapshot requires complete public runner evidence' \
+    test_initial_snapshot_requires_complete_runner_evidence
 run_case 'initial publish accepts a clone-created unresolved upstream' \
     test_initial_clone_created_upstream
 run_case 'initial publish rejects conflicting upstream configurations' \
