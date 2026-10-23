@@ -13,6 +13,13 @@ section is invented for it.
 
 ## Unreleased
 
+## 1.9.7
+
+- Bind Context Loader 1.3.10 and Snapshot Runner 2.5.12 in their installation manifests,
+  including their exact public CLI contract hashes; their CLI contracts remain unchanged.
+- Docs: move the detailed unified-diff, reviewed-merge and remote-sync rules to
+  `docs/advanced-modes.md`, and the content-review and scanner classifications to
+  `docs/content-review.md`; the README keeps purpose, install, quick start and support.
 - Read `--initial-publish --snapshot` evidence only through Snapshot Runner's public
   `snapshot-runner read` command (evidence-read schema 1) found on `PATH`. Finalizer no longer
   opens the Runner state store or pins its artifact security epochs; the producer validates its

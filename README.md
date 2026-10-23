@@ -9,52 +9,16 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.9.6**.
+Current source version: **1.9.7**.
 
-当前版本：`1.9.6`
+当前版本：`1.9.7`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
 
-## Preserving unified-diff artifacts
-
-A complete `.patch` artifact may contain a line consisting of the single space required for
-an empty context line. The whitespace check recognizes only that exact marker inside a counted
-unified-diff hunk, after Git parses the whole artifact with `apply --numstat` without applying it.
-That same required marker may end the patch; its accompanying Git EOF diagnostic is checked
-against the exact final context line. Extra blank lines outside a hunk still fail.
-The same classifier checks working candidates, staged blobs and unpublished commit ranges.
-It preserves the artifact bytes and adds no bypass flag or repository whitespace configuration.
-
-Ordinary trailing whitespace, added patch lines with trailing spaces, out-of-hunk spaces,
-malformed/oversized patches and ambiguous diagnostics still fail. Clean-filter output is checked
-again from the staged blob. Scope, secret-content, history and remote checks remain mandatory.
-
-## Completing an already reviewed merge locally
-
-After the caller resolves conflicts, `--merge-parent <full-oid>` lets `--mode verify-only`
-or `--mode commit-only` inspect one non-empty, resolved two-parent merge. It requires one regular
-`MERGE_HEAD` matching the exact parent, no unmerged index entries or other pending Git operations,
-and the usual explicit file scope and content checks. Verification preserves Git state; commit
-checks the original HEAD, both parents and reviewed index tree. It never publishes or resolves
-conflicts. Missing/multiple/drifted parents, unknown staged files and hook drift still fail closed.
-Both SHA-1 and SHA-256 repositories require their own complete parent OID.
-
-## Synchronizing two existing remotes
-
-`--sync-published-branch <full-published-oid>` copies one already-published branch by a normal,
-non-force push. Supply `--source-remote`, `--remote`, the same `--remote-branch` on both existing
-remotes, and `--expected-target-oid`. Both remotes must have one identical fetch/push endpoint;
-the live source must equal the exact OID and the target must be its ancestor. The existing commit
-range safety scan still runs. `--dry-run` validates the complete transaction without pushing.
-
-The checkout can stay on another clean attached branch: HEAD, index, local branches, tags and
-upstream stay unchanged. No branch is created, merged, deleted or force-pushed. A target already
-at the source OID is verified without another push, including recovery after an uncertain outcome.
-Source/target drift blocks the action. The pre-push expected-target check is not a server-side CAS;
-the server's ordinary non-force check and independent post-verification remain mandatory. A
-concurrent change requires fresh observation, never an automatic merge or history rewrite.
-This interface grants no authorization and does not replace Controller integration of new code.
+Detailed rules for unified-diff artifacts, already reviewed merges and remote synchronization are
+in [docs/advanced-modes.md](docs/advanced-modes.md); exact content reviews and scanner
+classifications are in [docs/content-review.md](docs/content-review.md).
 
 ## Why it exists
 
@@ -75,61 +39,8 @@ terminal and an automation layer can rely on "it stopped, and here is why".
   require exact expected OIDs and re-check authoritative state under a lock before touching a ref.
 - **Auditable results.** One deterministic JSON object per run with a closed classification triple,
   documented in [docs/agent-contract.md](docs/agent-contract.md).
-
-
-Exact content review is optional: `--fixture-exceptions /absolute/review.json` is accepted by normal
-publication and configured-upstream `--resume-publish`, as well as existing branch/history modes.
-When an initial publication retained its root commit after a failed push, an explicitly reviewed
-`tests/` fixture may be passed again with `--resume-initial-publish <exact-root-oid>
---allow-test-fixture tests/<exact-path>`. Each canonical path must name a regular blob in that exact
-root; the summary records its path and blob identity. No fixture is allowed implicitly. Other
-files, scanner failures, clean-state and remote-identity guards remain checked, and other resume
-modes still refuse this legacy flag. Recovery reuses the same root without creating a commit.
-
-Local `verify-only` and `commit-only` also accept exact `credential-assignment-v1` reviews for
-single-level `backend/tests/test_*.py` files; they read the existing local `origin` push URL only to
-bind repository identity and perform no remote operation. These local reviews require unchanged
-raw/clean-filter blob identity and, for an already-staged change, the same index blob. They cannot
-review `CHANGELOG.md`, other test paths, known tokens, private keys or SSH keys.
-The original signature matchers remain in force. Every review binds the repository root commit, push URL hash,
-exact path, raw blob OID, SHA-256 and detector; other detectors still apply. Normal publication requires
-HEAD to match upstream and checks the same raw blob again after staging. Test reviews are limited to
-`tests/` and the backend assignment fixtures described above. The sole documentation exception is `CHANGELOG.md` with `private-key-header-v1`: only an
-already-published, inline-backtick header example may be preserved, and its following historical text
-must remain byte-for-byte unchanged. New headers, closing markers and other document paths are refused.
-
-The exact public Controller retirement capability description is classified from its matching JSON
-schema, independent of filename or whitespace. Only its unique fixed description can be masked;
-other raw and decoded assignments remain checked. Decoded known-token, private-key and SSH-key
-signatures are checked separately from credential-assignment reviews in both worktree and blob
-scans. Fully escaped sensitive keys remain checked, and classifier failure refuses the candidate.
-Duplicate keys, non-finite constants and malformed JSON containers do not disable scanning of
-escaped string literals. Worktree, index and history checks use the same scanner.
-
-Static Python credential directory references have one narrow non-secret classification.
-Dictionary items require a directly quoted ASCII key that is either an uppercase namespace ending
-in `_CREDENTIALS` or exactly `container_credentials`; a module-level plain assignment may instead
-have the single name target `CREDENTIALS`. The directly quoted value must be exactly
-`/run/credentials/<unit>.service`. The unit is a single ASCII
-component starting with an alphanumeric character, followed by alphanumerics, `_`, `.`, `@` or `-`,
-with a total unit-name length of at most 255 characters. This describes a systemd credential
-directory reference, not its contents; the scanner never reads that directory. It requires parsed
-Python containing a declaration, requires distinct static string dictionary keys, and accepts no string prefixes,
-escapes, concatenation, interpolation, traversal or child-file paths. JSON and prose, other assignments
-(including nested, chained and annotated `CREDENTIALS` declarations), and other sensitive keys retain
-their existing checks. These excluded forms receive no directory
-classification; this does not add Python runtime evaluation or a new dynamic-expression detector.
-All other assignments and raw/decoded known
-token, private-key and SSH-key signatures remain mandatory. No fixture exception or new flag is needed.
-
-The secret-key prefix must start outside an ASCII word: the suffix of a task or risk identifier
-does not count as a key prefix. Standalone keys and keys after punctuation or whitespace remain
-checked in raw content, decoded JSON strings and Git clean-filter output.
-
-Python prose reviews are limited to already-published literal refusal-reason pairs in module-level
-`*_REASONS` dictionaries. The full raw key/value pair must be preserved, with only whitespace and a
-colon between the literals; other assignments and all other detectors remain mandatory.
-Local verify-only and commit-only modes do not accept these Python prose reviews.
+- **Narrow, explicit reviews.** Exceptions to content checks name an exact path, blob and detector;
+  see [docs/content-review.md](docs/content-review.md).
 
 ## Requirements
 
@@ -219,13 +130,6 @@ and removed when the check finishes; hooks and commit signing remain outside ver
 If that temporary directory is unavailable, verification reports the missing temporary-write
 precondition and preserves repository state. Use an executor-authorised writable temporary
 directory or native channel; permission refusal must not be bypassed.
-
-`--resume-publish` accepts the same exact `--reviewed-sensitive-source` review and Controller
-linkage used for a retained commit, with its reviewed scope after `--`. The review is revalidated
-against HEAD and every unpublished revision must contain that same reviewed blob. Existing
-branch/history publication and resume modes also accept explicit `--allow-large-binary <path>`:
-only the exact regular HEAD blob above 5 MiB and at most 25 MiB is approved. Other historical
-blobs, unused exceptions and content signatures still block. These interfaces reuse commits.
 
 Local commit only, no remote access at all:
 
