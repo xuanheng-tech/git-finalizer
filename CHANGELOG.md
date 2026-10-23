@@ -13,6 +13,8 @@ section is invented for it.
 
 ## Unreleased
 
+## 1.9.6
+
 - Fix `--initial-publish --snapshot`: accept Snapshot Runner schema-2 evidence from both
   registered producer security epochs 4 and 5, which Runner 2.x keeps readable with one shared
   format. Runner 2.5.0 and later write epoch 5, which earlier Finalizer releases refused with
@@ -23,6 +25,7 @@ section is invented for it.
   requires it to execute and pass alongside the real-Controller suite.
 - Correct the README CLI contract declaration to `contract_version` 8 and bind it to
   `tool_cli_contract.json` with a test. Describe where sibling Skill manifests actually live.
+- Keep Git Finalizer CLI contract 8 and toolchain contract 6 unchanged.
 
 ## 1.9.5
 
