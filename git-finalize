@@ -891,16 +891,27 @@ is_staged_large_binary() {
 }
 
 read_nul_records() {
-    local records_output_name=$1 records_reader_status=0 records_producer_pid
+    local records_output_name=$1 records_restore_lastpipe=0 records_restore_monitor=0
+    local -a records_statuses=()
     shift
-    # Process substitution does not propagate its producer's status through mapfile.
-    mapfile -d '' -t "$records_output_name" < <("$@") || records_reader_status=$?
-    records_producer_pid=$!
-    if ! wait "$records_producer_pid"; then
+    # A foreground pipeline retains both statuses when a fast process substitution
+    # has already been reaped. lastpipe keeps mapfile's array in this shell only.
+    if ! shopt -q lastpipe; then records_restore_lastpipe=1; fi
+    if [[ $- == *m* ]]; then records_restore_monitor=1; fi
+    set +m
+    shopt -s lastpipe
+    if "$@" | mapfile -d '' -t "$records_output_name"; then
+        records_statuses=("${PIPESTATUS[@]}")
+    else
+        records_statuses=("${PIPESTATUS[@]}")
+    fi
+    if ((records_restore_lastpipe)); then shopt -u lastpipe; fi
+    if ((records_restore_monitor)); then set -m; fi
+    if ((records_statuses[0] != 0)); then
         mapfile -t "$records_output_name" </dev/null
         return 1
     fi
-    return "$records_reader_status"
+    return "${records_statuses[1]}"
 }
 
 collect_staged_paths() {

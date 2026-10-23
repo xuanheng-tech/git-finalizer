@@ -15,6 +15,9 @@ section is invented for it.
 
 ## 1.9.7
 
+- Read NUL-delimited Git results through a foreground pipeline that preserves producer and
+  reader status. Avoid losing a fast process-substitution wait result, reject partial failed
+  output and restore caller shell options after each read.
 - Bind Context Loader 1.3.10 and Snapshot Runner 2.5.12 in their installation manifests,
   including their exact public CLI contract hashes; their CLI contracts remain unchanged.
 - Docs: move the detailed unified-diff, reviewed-merge and remote-sync rules to
