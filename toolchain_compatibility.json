@@ -12,10 +12,11 @@
         "delivered_closeout_version": 1,
         "doctor_mount_version": 2,
         "governance_version": 2,
+        "holder_resolver_version": 2,
         "integration_publication_execution_version": 1,
         "namespace_migration_version": 1,
         "retained_archive_version": 1,
-        "writer_lease_schema_version": 2,
+        "writer_lease_schema_version": 3,
         "writer_session_version": 2
       },
       "cli_contract_versions": [
