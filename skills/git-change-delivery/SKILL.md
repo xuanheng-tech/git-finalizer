@@ -143,7 +143,7 @@ incompatible change 而未同步更新该文件时，兼容检查必须失败。
 
 ## 任务结束发布决策（强制）
 
-Publication decision 只回答：当前任务结束前，是否应执行被明确授权的 Git Finalizer 操作。它不描述 Git 最终结果，也不得被当作“是否已经远端发布”的状态。任何任务在最终回复前都必须形成且只形成一个发布决定。涉及 Git 仓库修改时不得仅报告“未 commit/push”后结束；没有仓库修改的任务也必须按下列规则明确判定是否适用。按顺序选择首个符合的状态，后续状态不再适用：
+Publication decision 只回答：当前任务结束前，是否应执行被明确授权的 Git Finalizer 操作。它不描述 Git 最终结果，也不得被当作“是否已经远端发布”的状态。仓库文件变更或用户显式要求的 Git/Finalizer 操作，在最终回复前必须形成且只形成一个发布决定；涉及 Git 仓库修改时不得仅报告“未 commit/push”后结束。普通问答、系统维护、HDD 调查和仅借用只读审查规则的任务不启用本合同。按顺序选择首个符合的状态，后续状态不再适用：
 
 1. `not_applicable`：当前任务是只读调查、没有仓库文件变化、不是 Git 仓库操作、只运行服务或查询状态，或所有临时变化均已安全清理。
 2. `publication_blocked`：任务本应进入已授权 finalization，但存在任务未完成，测试、验收或 Snapshot 未通过，cwd/repo 不一致，所选模式需要的远端分叉或不可访问，原生权限边界阻断，工作树无法安全分离，staged/index 异常，敏感内容、异常删除或未解释的范围外改动，或其他明确安全阻断。技术、范围或完成度阻断优先于“有意不发布”，不得用后者掩盖失败或异常。
@@ -163,8 +163,9 @@ Publication decision 只回答：当前任务结束前，是否应执行被明�
 不确定才停下对应步骤。没有可用远端但本地提交安全时先用 `commit-only`，登记待推送原因。
 已有 commit 的恢复用 `--resume-publish` 或 `--publish-existing-branch`，不重复制造 commit。
 
-只读请求使用 `verify-only`；明确要求不 commit、不 push、只保留草稿或仅本地 commit 时，
-遵守这次更窄指令。仅要求 commit 选择 `commit-only` 且不得自行扩大为 push。
+普通只读调查不调用 Finalizer；只有用户明确要求对选定 repo/diff 做 Finalizer 验证时才使用 `verify-only`。
+明确要求不 commit、不 push、只保留草稿或仅本地 commit 时，遵守这次更窄指令。
+仅要求 commit 选择 `commit-only` 且不得自行扩大为 push。
 没有适用持续授权时才补充缺少的 Git 动作/目标授权；不得从本 Skill、
 工具权限或无关历史行为扩权。暂停、resume、压缩、重试和同一任务的受控 checkout 迁移都不
 使既有授权失效，文件行数和提交消息也不是重新授权理由。
@@ -190,7 +191,7 @@ Finalization scope: <commit_only|commit_and_push>
 
 ### Finalization outcome
 
-所有任务最终回复都必须报告实际 Git 终态。允许状态仅为：
+仓库文件变更或用户显式要求的 Git/Finalizer 操作，最终回复必须报告实际 Git 终态。允许状态仅为：
 
 ```text
 not_run
@@ -244,7 +245,7 @@ Finalization outcome: local_commit_created
 
 ### 最终报告合同
 
-最终回复必须各包含且只包含一行：
+仓库文件变更或用户显式要求的 Git/Finalizer 操作，最终回复必须各包含且只包含一行：
 
 ```text
 Publication decision: <publish_now|publication_blocked|intentionally_unpublished|not_applicable>

@@ -40,11 +40,12 @@ live 路径、payload 不完整，或 installed tree hash 不属于 `RELEASED_CA
 目录。
 
 本 Skill 是可选的 Agent 工作流说明与 helper 集合：Git Finalizer 核心运行不依赖本目录，
-installed copy 也不是授权来源；授权只来自用户对具体任务的明确请求。
+installed copy 和 Skill 自身都不是授权来源，也不启用或扩大 commit/push 权限。当前任务请求、
+仍有效的持续授权及适用仓库控制面共同决定授权范围；更窄的用户限制优先。
 
-四态发布决策保持 `explicit-only`，不会启用默认自动 commit/push。该仓库只拥有这一 change
-delivery 集成资产，不拥有 Context Loader 或 Snapshot Runner 的实现。Completed-but-Unpublished
-Queue 只持久化用户私有 control-plane metadata，不执行 Git finalization 或 worktree 清理。
+该仓库只拥有这一 change delivery 集成资产，不拥有 Context Loader 或 Snapshot Runner 的实现。
+Completed-but-Unpublished Queue 只持久化用户私有 control-plane metadata，不执行 Git finalization
+或 worktree 清理。
 
 跨三工具的 binary/entry identity、Skill payload、CLI contract 和兼容性由仓库根目录的
 `tool-skill-sync` 验证。旧的 `deploy.py` 保留为已安装 Skill 的兼容检查/显式恢复入口；新发布

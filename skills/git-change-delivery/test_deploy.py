@@ -435,6 +435,24 @@ class SkillContractTest(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, section)
 
+    def test_read_only_investigation_has_no_finalizer_or_report_requirement(self) -> None:
+        content = (VERSIONED_SOURCE / "SKILL.md").read_text(encoding="utf-8")
+        section = quick_validate.contract_section(content)
+
+        self.assertIn("普通只读调查不调用 Finalizer", section)
+        self.assertIn(
+            "只有用户明确要求对选定 repo/diff 做 Finalizer 验证时才使用 `verify-only`",
+            section,
+        )
+        self.assertIn("仓库文件变更或用户显式要求的 Git/Finalizer 操作", section)
+        self.assertIn(
+            "普通问答、系统维护、HDD 调查和仅借用只读审查规则的任务不启用本合同",
+            section,
+        )
+        self.assertNotIn("任何任务在最终回复前都必须", section)
+        self.assertNotIn("所有任务最终回复都必须", section)
+        self.assertNotIn("只读请求使用 `verify-only`", section)
+
     def test_automatic_delivery_requires_user_grant_and_narrower_limits(self) -> None:
         content = (VERSIONED_SOURCE / "SKILL.md").read_text(encoding="utf-8")
         section = quick_validate.contract_section(content)
