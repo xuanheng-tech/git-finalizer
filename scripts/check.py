@@ -27,18 +27,29 @@ def command_group(results: list[dict[str, str]], name: str, command: list[str]) 
 
 
 def unit_group(results: list[dict[str, str]], name: str, directory: Path) -> bool:
-    suite = unittest.TestLoader().discover(str(directory), pattern="test_*.py")
-    outcome = unittest.TextTestRunner().run(suite)
-    for test, reason in outcome.skipped:
-        report(results, "SKIP", f"{name}: {test.id()}", reason)
-    executed = outcome.testsRun - len(outcome.skipped)
-    status = "PASS" if outcome.wasSuccessful() else "FAIL"
-    if outcome.testsRun == 0:
-        status = "FAIL"
-    elif executed == 0 and status == "PASS":
-        status = "SKIP"
-    report(results, status, name, f"{executed} executed, {len(outcome.skipped)} skipped")
-    return status != "FAIL"
+    env_keys = ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM")
+    saved_env = {key: os.environ.get(key) for key in env_keys}
+    os.environ["GIT_CONFIG_GLOBAL"] = "/dev/null"
+    os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+    try:
+        suite = unittest.TestLoader().discover(str(directory), pattern="test_*.py")
+        outcome = unittest.TextTestRunner().run(suite)
+        for test, reason in outcome.skipped:
+            report(results, "SKIP", f"{name}: {test.id()}", reason)
+        executed = outcome.testsRun - len(outcome.skipped)
+        status = "PASS" if outcome.wasSuccessful() else "FAIL"
+        if outcome.testsRun == 0:
+            status = "FAIL"
+        elif executed == 0 and status == "PASS":
+            status = "SKIP"
+        report(results, status, name, f"{executed} executed, {len(outcome.skipped)} skipped")
+        return status != "FAIL"
+    finally:
+        for key, value in saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def require_executed(results: list[dict[str, str]], groups: list[dict[str, str]],
