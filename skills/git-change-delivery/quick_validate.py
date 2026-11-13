@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the versioned Git change delivery Skill and its decision contract."""
+"""Validate the structure of the versioned Git change delivery Skill."""
 
 from __future__ import annotations
 
@@ -10,212 +10,12 @@ from typing import Sequence
 
 
 SKILL_NAME = "git-change-delivery"
-REQUIRED_STATES = (
-    "not_applicable",
-    "publication_blocked",
-    "intentionally_unpublished",
-    "publish_now",
-)
-REQUIRED_SCOPES = (
-    "commit_only",
-    "commit_and_push",
-    "not_applicable",
-)
-REQUIRED_OUTCOMES = (
-    "not_run",
-    "local_commit_created",
-    "remote_pushed",
-    "remote_verified",
-    "blocked",
-)
 REQUIRED_REFERENCES = (
     "references/context-loader.md",
     "references/git-finalizer.md",
     "references/snapshot-runner.md",
     "references/unpublished-queue.md",
 )
-CONTRACT_MARKERS = (
-    "Publication decision 只回答",
-    "它不描述 Git 最终结果",
-    "按顺序选择首个符合的状态，后续状态不再适用",
-    "先执行用户已设定的自动 Git 交付规则",
-    "不得把“自动 commit/push”重新解释为每次询问",
-    "不能以用户本轮未重复写出 commit/push 为由留在未提交草稿",
-    "向已有且授权的 origin 同名分支",
-    "没有可用远端但本地提交安全时先用 `commit-only`",
-    "普通只读调查不调用 Finalizer",
-    "只有用户明确要求对选定 repo/diff 做 Finalizer 验证时才使用 `verify-only`",
-    "普通问答、系统维护、HDD 调查和仅借用只读审查规则的任务不启用本合同",
-    "遵守这次更窄指令",
-    "没有适用持续授权时才补充缺少的 Git 动作/目标授权",
-    "同一任务的受控 checkout 迁移",
-    "已被明确覆盖时直接继续，不重复问",
-    "测试、验收或 Snapshot 未通过",
-    "cwd/repo 不一致",
-    "工作树无法安全分离",
-    "没有获得明确发布授权",
-    "实际调用 Git Finalizer",
-    "`publish_now` 只是执行决策，不是最终结果",
-    "### Finalization scope",
-    "### Finalization outcome",
-    "### 合法组合",
-    "最终回复必须各包含且只包含一行",
-    "Publication decision: <publish_now|publication_blocked|intentionally_unpublished|not_applicable>",
-    "Finalization scope: <commit_only|commit_and_push|not_applicable>",
-    "Finalization outcome: <not_run|local_commit_created|remote_pushed|remote_verified|blocked>",
-    "`local_commit_created`",
-    "不得称为“已发布”",
-    "`remote_pushed`",
-    "`remote_verified`",
-    "HEAD = upstream = remote OID",
-    "`blocked`",
-    "Local commit: <oid>",
-    "Remote publication: blocked",
-    "Prior-stage local commit: <oid>",
-    "历史 commit-only fixture",
-    "无论旧报告曾写 `publish_now` 还是 `intentionally_unpublished`",
-    "`commit_only + remote_pushed|remote_verified` 非法",
-    "`publish_now + not_run` 不能作为正常完成终态",
-    "`remote_verified` 只能与 `commit_and_push` 配对",
-)
-FINALIZER_MODE_MARKERS = (
-    "## Git Finalizer 模式选择",
-    "选择 Finalizer 模式不得扩大用户原有的 commit/push 授权",
-    "`--mode verify-only`",
-    "`--mode commit-only`",
-    "`--initial-commit-only`",
-    "默认模式（不传 `--mode`）",
-    "三种模式共用适用于各自执行边界的本地提交前检查",
-    "`commit-only` 不要求 upstream",
-    "`verify-only` 不修改 HEAD、index、worktree、refs 或 Git 配置",
-    "三种提交生命周期模式中只有默认模式执行 commit 后的 push 和远端 post-verify",
-    "`--resume-publish <full-head-oid> --repo <absolute-repo>`",
-    "configured upstream",
-    "`ahead >= 1`",
-    "`behind = 0`",
-    "`--no-follow-tags`",
-    "root commit 继续使用 `--resume-initial-publish`",
-    "不得重跑会创建提交的模式或重复制造 commit",
-    "tag、Release、Artifact 和 deployment",
-    "--retire-remote-branch <branch>",
-    "expected-OID compare-and-delete",
-    "lease-bound compare-and-delete",
-    "不删除 local branch/worktree",
-    "原生权限请求与原生审核通道",
-    "不要先在沙箱内制造一次预期失败",
-    "commit signing、hooks",
-    "runtime permission/reviewer 只提供执行能力",
-    "原生 reviewer 拒绝、失败或无合法执行能力时 fail closed",
-    "结果不明时 fail closed",
-)
-TOOLCHAIN_MARKERS = (
-    "`worktree-lifecycle` 是上层 lifecycle orchestration",
-    "不属于本 Skill 的内部实现",
-    "也不创建或移除 worktree",
-    "`toolchain_compatibility.json`",
-    "incompatible change",
-)
-QUEUE_MARKERS = (
-    "### Completed-but-Unpublished Queue",
-    "`intentionally_unpublished`：幂等 upsert 为 `pending`",
-    "`publication_blocked`：幂等 upsert 为 `blocked`",
-    "`remote_pushed` 未完成实时核验：upsert `blocked`",
-    "`commit_only + local_commit_created`：upsert `pending`",
-    "Git Finalizer 只提供 publication evidence，不拥有 queue",
-)
-
-VALID_FINALIZATION_COMBINATIONS = frozenset(
-    {
-        ("not_applicable", "not_applicable", "not_run"),
-        ("intentionally_unpublished", "not_applicable", "not_run"),
-        ("publish_now", "commit_only", "local_commit_created"),
-        ("publish_now", "commit_and_push", "remote_pushed"),
-        ("publish_now", "commit_and_push", "remote_verified"),
-        ("publication_blocked", "not_applicable", "blocked"),
-        ("publication_blocked", "commit_only", "blocked"),
-        ("publication_blocked", "commit_and_push", "blocked"),
-    }
-)
-PRIOR_STAGE_COMMIT_COMBINATION = (
-    "intentionally_unpublished",
-    "commit_only",
-    "local_commit_created",
-)
-PRIOR_STAGE_COMMIT_PATTERN = re.compile(
-    r"^Prior-stage local commit: [0-9a-f]{7,64}$", re.MULTILINE
-)
-REMOTE_SUCCESS_CLAIM_PATTERN = re.compile(
-    r"^(?:Push|Remote publication|Remote verification): "
-    r"(?:success|succeeded|verified)$",
-    re.MULTILINE,
-)
-
-
-def contract_section(content: str) -> str:
-    start = "## 任务结束发布决策（强制）"
-    end = "## 职责分离"
-    if start not in content or end not in content:
-        return ""
-    return content.split(start, 1)[1].split(end, 1)[0]
-
-
-def finalization_report_errors(report: str) -> list[str]:
-    """Validate the three canonical finalization report lines and their combination."""
-
-    errors: list[str] = []
-    specifications = (
-        ("Publication decision", REQUIRED_STATES),
-        ("Finalization scope", REQUIRED_SCOPES),
-        ("Finalization outcome", REQUIRED_OUTCOMES),
-    )
-    values: dict[str, str] = {}
-    for label, allowed in specifications:
-        matches = re.findall(
-            rf"^{re.escape(label)}: ([^\r\n]+)$",
-            report,
-            re.MULTILINE,
-        )
-        if len(matches) != 1:
-            errors.append(f"report must contain exactly one {label} line")
-            continue
-        value = matches[0].strip()
-        values[label] = value
-        if value not in allowed:
-            errors.append(
-                f"invalid {label}: {value}; expected one of {', '.join(allowed)}"
-            )
-
-    if len(values) != len(specifications) or errors:
-        return errors
-
-    decision = values["Publication decision"]
-    scope = values["Finalization scope"]
-    outcome = values["Finalization outcome"]
-    combination = (decision, scope, outcome)
-    prior_stage_exception = (
-        combination == PRIOR_STAGE_COMMIT_COMBINATION
-        and PRIOR_STAGE_COMMIT_PATTERN.search(report) is not None
-    )
-    if combination not in VALID_FINALIZATION_COMBINATIONS and not prior_stage_exception:
-        errors.append(
-            "invalid finalization combination: "
-            f"decision={decision}, scope={scope}, outcome={outcome}"
-        )
-
-    if scope == "commit_only" and REMOTE_SUCCESS_CLAIM_PATTERN.search(report):
-        errors.append("commit_only report cannot claim remote publication success")
-    if outcome == "remote_verified" and scope != "commit_and_push":
-        errors.append("remote_verified requires commit_and_push")
-    if decision == "publish_now" and outcome == "not_run":
-        errors.append("publish_now cannot finish with not_run")
-    if outcome == "blocked" and re.search(r"^Local commit: ", report, re.MULTILINE):
-        if "Remote publication: blocked" not in report:
-            errors.append(
-                "a blocked report with a local commit must state "
-                "Remote publication: blocked"
-            )
-    return errors
-
 
 def validation_errors(skill_path: Path) -> list[str]:
     errors: list[str] = []
@@ -258,25 +58,6 @@ def validation_errors(skill_path: Path) -> list[str]:
         errors.append("SKILL.md must remain under 500 lines")
     if any(line.endswith((" ", "\t")) for line in content.splitlines()):
         errors.append("SKILL.md contains trailing whitespace")
-
-    section = contract_section(content)
-    definitions = tuple(re.findall(r"^\d+\. `([^`]+)`：", section, re.MULTILINE))
-    if definitions != REQUIRED_STATES:
-        errors.append(
-            "publication states must be ordered exactly as " + ", ".join(REQUIRED_STATES)
-        )
-    for marker in CONTRACT_MARKERS:
-        if marker not in section:
-            errors.append(f"publication contract is missing: {marker}")
-    for marker in FINALIZER_MODE_MARKERS:
-        if marker not in content:
-            errors.append(f"Finalizer mode contract is missing: {marker}")
-    for marker in QUEUE_MARKERS:
-        if marker not in content:
-            errors.append(f"unpublished queue contract is missing: {marker}")
-    for marker in TOOLCHAIN_MARKERS:
-        if marker not in content:
-            errors.append(f"toolchain workflow contract is missing: {marker}")
 
     for relative in REQUIRED_REFERENCES:
         reference = skill_path / relative

@@ -13,6 +13,15 @@ section is invented for it.
 
 ## Unreleased
 
+- Slim the `git-change-delivery` Skill from about 30 KB to a concise workflow: mode table,
+  authorization, uncertain-push recovery and stop conditions. Drop the mandatory three-line
+  `Publication decision / Finalization scope / Finalization outcome` final-reply contract; the
+  final reply states the actual Git result instead. The unpublished queue becomes optional and keeps
+  its own CLI vocabulary.
+- Remove wording-marker assertions from `quick_validate.py` and the matching phrase-pinning Skill
+  tests; structural validation (frontmatter, length, references) remains. No Finalizer behavior,
+  CLI contract or toolchain contract changes.
+
 ## 1.9.8
 
 - Clarify host-independent existing-history first publication: the caller holds repository creation
