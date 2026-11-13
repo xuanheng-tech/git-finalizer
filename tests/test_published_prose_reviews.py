@@ -64,7 +64,6 @@ class PublishedProseReviewTests(unittest.TestCase):
         return output
 
     def test_normal_and_resume_reuse_only_exact_published_literals(self):
-        self.assert_blocked(approved=False)
         code, data, _ = self.run_finalizer()
         self.assertEqual(code, 0, data)
         self.assertEqual(data['mode_result']['post_verify'], 'passed')

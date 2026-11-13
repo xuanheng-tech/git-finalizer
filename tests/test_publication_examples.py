@@ -88,16 +88,14 @@ class PublicationExampleTests(unittest.TestCase):
         f.path = "tests/example.py"
         (f.repo / f.path).write_text(fixtures.SYNTHETIC + "Updated synthetic fixture\n")
         self.review()
-        self.assert_blocked(approved=False)
         code, data = self.run_finalizer()
         self.assertEqual(code, 0, data)
         self.assertEqual(self.remote_oid(), f.git("rev-parse", "HEAD"))
 
-    def test_normal_and_resume_keep_default_refusal_without_exact_review(self) -> None:
-        self.assert_blocked(approved=False)
-        self.assertEqual(self.fixture.git("diff", "--cached"), "")
-        self.fixture.commit()
-        self.assert_blocked(resume=True, approved=False)
+    def test_unchanged_published_header_needs_no_review(self) -> None:
+        code, data = self.run_finalizer(approved=False)
+        self.assertEqual(code, 0, data)
+        self.assertEqual(self.remote_oid(), self.fixture.git("rev-parse", "HEAD"))
 
     def test_resume_uses_live_upstream_baseline_without_recreating_commit(self) -> None:
         f = self.fixture

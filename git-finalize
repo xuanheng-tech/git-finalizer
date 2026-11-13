@@ -18,7 +18,7 @@ if ((EUID == 0)); then
     exit 1
 fi
 
-readonly VERSION="1.9.8"
+readonly VERSION="1.9.9"
 readonly MAX_BINARY_BYTES=$((5 * 1024 * 1024))
 readonly MAX_ALLOWED_LARGE_BINARY_BYTES=$((25 * 1024 * 1024))
 readonly SUMMARY_SCHEMA_VERSION=1
@@ -816,9 +816,19 @@ staged_content_reason() {
     content_verdict_reason "$(public_schema_content_verdict blob "$1" "${2:-}" "${3:-}")"
 }
 
+# Blob OID of a path's committed baseline, or empty. Content already in the baseline is
+# published or was scanned when committed (publication rescans every unpublished commit),
+# so only matches beyond it are reported.
+baseline_blob_oid() {
+    local oid
+    oid=$(git -C "$repo" rev-parse --verify --quiet "$1:$2" 2>/dev/null) || return 0
+    [[ $(git -C "$repo" cat-file -t "$oid" 2>/dev/null) == blob ]] && printf '%s' "$oid"
+    return 0
+}
+
 inspect_content() {
     local result extra
-    result=$(public_schema_content_verdict "report-$1" "$2" "${3:-}" '')
+    result=$(public_schema_content_verdict "report-$1" "$2" "${3:-}" '' "${4:-}")
     read -r scan_verdict scan_size scan_binary scan_sha256 scan_blob_oid scan_scanner_sha256 extra <<<"$result"
     if [[ ! "$scan_verdict" =~ ^(CLEAR|PRIVATE|KNOWN|SSH|ASSIGNMENT)$ ||
           ! "$scan_size" =~ ^[0-9]+$ || ! "$scan_binary" =~ ^[01]$ ||
@@ -1388,7 +1398,7 @@ PY
                     fail '无法只读复核 candidate fixture raw blob'
                 candidate_rules=${history_fixture_rules[$path:$raw_oid]-}
             fi
-            inspect_content candidate "$path" "$candidate_rules"
+            inspect_content candidate "$path" "$candidate_rules" "$(baseline_blob_oid HEAD "$path")"
             verdict=$scan_verdict
             size=$scan_size
             binary=$scan_binary
@@ -2440,7 +2450,7 @@ public_schema_content_verdict() {
     [[ -n "$executable" ]] || { printf 'ERROR\n'; return 0; }
     helper=${executable%/*}/git-finalize-content-scan.py
     [[ -f "$helper" && ! -L "$helper" ]] || { printf 'ERROR\n'; return 0; }
-    verdict=$("$PYTHON3_EXECUTABLE" -B "$helper" "$1" "$2" "$repo" "$3" "$4") || verdict=ERROR
+    verdict=$("$PYTHON3_EXECUTABLE" -B "$helper" "$1" "$2" "$repo" "$3" "$4" "${5:-}") || verdict=ERROR
     printf '%s\n' "$verdict"
 }
 
@@ -2862,7 +2872,8 @@ validate_existing_publish_range() {
                 existing_range_error="fixture exception path/blob identity mismatch: $(printf '%q' "$path")"
                 return 1
             fi
-            inspect_content blob "$object_oid" "$excepted_detectors"
+            inspect_content blob "$object_oid" "$excepted_detectors" \
+                "$(baseline_blob_oid "$commit_oid^1" "$path")"
             if [[ -n ${root_resume_test_fixture_blobs[$path]+present} && "$scan_verdict" != ERROR ]]; then
                 [[ "$resume_initial" == 1 && "$commit_oid" == "$resume_expected_oid" &&
                     "$object_oid" == "${root_resume_test_fixture_blobs[$path]}" ]] || {
@@ -6239,7 +6250,7 @@ if ((dry_run == 1)); then
             if [[ ! -r "$absolute_path" ]]; then
                 add_risk "文件不可读: $(printf '%q' "$path")"
             elif [[ -z ${test_fixture_content_overrides[$path]+present} ]]; then
-                inspect_content file "$absolute_path"
+                inspect_content file "$absolute_path" '' "$(baseline_blob_oid HEAD "$path")"
                 if reason=$(content_verdict_reason "$scan_verdict"); then
                     record_content_scan "$path" worktree
                     add_risk "真实运行会拒绝 $(printf '%q' "$path"): $reason"
@@ -6350,7 +6361,8 @@ for index in "${!paths[@]}"; do
             [[ -n "$working_fixture_rules" ]] || fail 'fixture exception working blob 已漂移'
         fi
         if [[ -z ${test_fixture_content_overrides[$path]+present} ]]; then
-            inspect_content file "$absolute_path" "$working_fixture_rules"
+            inspect_content file "$absolute_path" "$working_fixture_rules" \
+                "$(baseline_blob_oid HEAD "$path")"
             if reason=$(content_verdict_reason "$scan_verdict"); then
                 record_content_scan "$path" worktree
                 fail "拒绝敏感文件 $(printf '%q' "$path"): $reason"
@@ -6519,7 +6531,8 @@ for path in "${staged_paths[@]}"; do
     if get_index_entry "$path" &&
         [[ $(git -C "$repo" cat-file -t "$index_oid" 2>/dev/null) == 'blob' ]]; then
         if [[ -z ${test_fixture_content_overrides[$path]+present} ]]; then
-            inspect_content blob "$index_oid" "${history_fixture_rules[$path:$index_oid]-}"
+            inspect_content blob "$index_oid" "${history_fixture_rules[$path:$index_oid]-}" \
+                "$(baseline_blob_oid HEAD "$path")"
             if reason=$(content_verdict_reason "$scan_verdict"); then
                 record_content_scan "$path" index
                 fail "拒绝敏感 staged 文件 $(printf '%q' "$path"): $reason"

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ast
+from collections import Counter
 import hashlib
 import json
 import os
@@ -121,25 +122,43 @@ def strings(value):
             yield from strings(item)
 
 
-def decoded_assignment(value):
+def decoded_assignments(value):
     if isinstance(value, dict):
         for key, item in value.items():
             if isinstance(item, str) and len(item.encode()) >= 12 and ASSIGNMENT.search(
                 key.encode() + b'="AAAAAAAAAAAA"'
             ):
-                return True
-            if decoded_assignment(item):
-                return True
+                yield key.encode() + b"=" + item.encode()
+            yield from decoded_assignments(item)
     elif isinstance(value, list):
-        return any(decoded_assignment(item) for item in value)
+        for item in value:
+            yield from decoded_assignments(item)
     elif isinstance(value, str):
-        return ASSIGNMENT.search(value.encode()) is not None
-    return False
+        yield from (match.group() for match in ASSIGNMENT.finditer(value.encode()))
 
 
-def scan(raw: bytes, excepted: str = "", only: str = "") -> str:
+PRIVATE_KEY_END = re.compile(rb"-----END [^\r\n]*-----")
+VERDICT_ORDER = ("PRIVATE", "KNOWN", "SSH", "ASSIGNMENT")
+
+
+def match_identity(verdict: str, source: bytes, match: re.Match) -> bytes:
+    # A private-key header is the same for every key of a type; bind the whole block so a
+    # different key under an already-present header is still a new finding.
+    # Without an END marker there is no usable key, so the header line is the identity.
+    if verdict == "PRIVATE":
+        end = PRIVATE_KEY_END.search(source, match.end())
+        if end is None:
+            line_end = source.find(b"\n", match.end())
+            return source[match.start():line_end if line_end >= 0 else len(source)]
+        return source[match.start():end.end()]
+    return match.group()
+
+
+def findings(raw: bytes, excepted: str = "", only: str = "") -> list[tuple[str, bytes]]:
+    """Every detector match as (verdict, identity); scan() reports the first by priority."""
     if len(raw) > MAX_SCAN_BYTES:
         raise ValueError("content scan byte budget exceeded")
+    found: list[tuple[str, bytes]] = []
     document = None
     valid_json = False
     try:
@@ -158,10 +177,13 @@ def scan(raw: bytes, excepted: str = "", only: str = "") -> str:
     for name, pattern, verdict in PATTERNS:
         if (not only or only == name) and "|" + name + "|" not in excepted:
             detector = re.compile(pattern, re.I | re.M)
-            if any(detector.search(value) for value in (raw, *decoded)):
-                return verdict
+            for value in (raw, *decoded):
+                found.extend(
+                    (verdict, match_identity(verdict, value, match))
+                    for match in detector.finditer(value)
+                )
     if (only and only != "credential-assignment-v1") or "|credential-assignment-v1|" in excepted:
-        return "CLEAR"
+        return found
 
     retirement = document.get("branch_retirement_contract") if isinstance(document, dict) else None
     declaration = retirement.get("execution_authorization") if isinstance(retirement, dict) else None
@@ -189,19 +211,36 @@ def scan(raw: bytes, excepted: str = "", only: str = "") -> str:
             match = descriptions[0]
             masked = raw[:match.start()] + b'""' + raw[match.end():]
             declaration["token"] = ""
-    if ASSIGNMENT.search(masked):
-        return "ASSIGNMENT"
+    assignments = [match.group() for match in ASSIGNMENT.finditer(masked)]
     if valid_json:
-        return "ASSIGNMENT" if decoded_assignment(document) else "CLEAR"
-    # Decode adjacent JSON key/value literals without accepting an invalid
-    # document as the narrowly qualified public contract above.
-    def decode_match(match):
-        try:
-            return b'"' + json.loads(match.group()).encode() + b'"'
-        except (ValueError, UnicodeError):
-            return match.group()
-    decoded_text = LITERAL.sub(decode_match, masked)
-    return "ASSIGNMENT" if ASSIGNMENT.search(decoded_text) or any(ASSIGNMENT.search(value) for value in decoded) else "CLEAR"
+        assignments.extend(decoded_assignments(document))
+    else:
+        # Decode adjacent JSON key/value literals without accepting an invalid
+        # document as the narrowly qualified public contract above.
+        def decode_match(match):
+            try:
+                return b'"' + json.loads(match.group()).encode() + b'"'
+            except (ValueError, UnicodeError):
+                return match.group()
+        decoded_text = LITERAL.sub(decode_match, masked)
+        assignments.extend(match.group() for match in ASSIGNMENT.finditer(decoded_text))
+        for value in decoded:
+            assignments.extend(match.group() for match in ASSIGNMENT.finditer(value))
+    found.extend(("ASSIGNMENT", identity) for identity in assignments)
+    return found
+
+
+def scan(raw: bytes, excepted: str = "", only: str = "", baseline: bytes | None = None) -> str:
+    """Classify raw; with a baseline, only matches beyond the baseline's count are reported.
+
+    The baseline is content that is already published or was scanned when it was committed,
+    so re-reporting its matches adds no protection.
+    """
+    remaining = Counter(findings(raw, excepted, only))
+    if baseline is not None:
+        remaining -= Counter(findings(baseline, excepted, only))
+    verdicts = {verdict for verdict, _identity in remaining}
+    return next((verdict for verdict in VERDICT_ORDER if verdict in verdicts), "CLEAR")
 
 
 def git(repo: str, *args: str, env=None) -> bytes:
@@ -233,7 +272,10 @@ def candidate(repo: str, path: str) -> tuple[bytes, str]:
 
 def main() -> int:
     try:
-        kind, source, repo, excepted, only = sys.argv[1:]
+        kind, source, repo, excepted, only, *rest = sys.argv[1:]
+        if len(rest) > 1:
+            raise ValueError("unexpected scanner arguments")
+        baseline_oid = rest[0] if rest else ""
         report = kind.startswith("report-")
         if report:
             kind = kind.removeprefix("report-")
@@ -249,7 +291,8 @@ def main() -> int:
                 oid = source
             else:
                 raise ValueError("unknown scan kind")
-        verdict = scan(raw, excepted, only)
+        baseline = read_blob(repo, baseline_oid) if baseline_oid else None
+        verdict = scan(raw, excepted, only, baseline)
         if report:
             # Bind metadata to these same bytes, never a second scan or source read.
             print(verdict, len(raw), int(b"\0" in raw), hashlib.sha256(raw).hexdigest(),

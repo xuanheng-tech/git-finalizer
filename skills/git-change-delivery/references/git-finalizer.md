@@ -44,7 +44,9 @@ retirement 的 `--dry-run` 会做完整 live preflight，成功为 `RETIREMENT_P
 
 ## 测试 fixture 中的敏感内容
 
-已有测试 fixture 含 private key header、token 等合成样本时，扫描会拒绝该文件：
+扫描只报告相对基线新增的匹配：待发布 commit 以其第一父提交为基线，工作区和暂存区以 `HEAD`
+为基线。修改一个已含已发布合成样本的文件、但不改动样本本身时，不需要任何例外参数。
+只有新增、改动或复制合成样本时才需要：
 
 - commit-only / verify-only / 默认模式：`--allow-test-fixture tests/<file>`（只限 `tests/` 下）。
 - publish-existing-branch、sync-published-branch、resume 类入口：`--fixture-exceptions <绝对路径 JSON>`，

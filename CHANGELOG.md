@@ -13,6 +13,16 @@ section is invented for it.
 
 ## Unreleased
 
+## 1.9.9
+
+- Content scans report only detector matches that are new relative to the file's committed
+  baseline: the first parent for unpublished commit ranges (already published, or scanned earlier
+  in the range) and `HEAD` for working-tree and staged scans (publication rescans the range).
+  Editing a file that already holds a published synthetic key header, token or assignment literal
+  no longer needs `--allow-test-fixture` or a `--fixture-exceptions` review; any added, changed or
+  duplicated match is still refused. A private-key match is identified by its whole block up to the
+  END marker (or its header line when unterminated), so a different key under an existing header is
+  new. Raw content committed outside Finalizer is still caught at publication.
 - Slim the `git-change-delivery` Skill from about 30 KB to a concise workflow: mode table,
   authorization, uncertain-push recovery and stop conditions. Drop the mandatory three-line
   `Publication decision / Finalization scope / Finalization outcome` final-reply contract; the
