@@ -3,7 +3,7 @@
     "owner": "git-finalizer",
     "path": "skills/git-change-delivery/SKILL.md"
   },
-  "canonical_skill_sha256": "ce67de8983d4dd42ebf81b7412a5a7ae34acdf143f9ce338479d8017b7239748",
+  "canonical_skill_sha256": "433ab9b62b3d487b27b9a743bee1b9a874d37c0a6b95693725774ef309f45a2e",
   "compatibility_skill": {
     "name": "three-tool-git-workflow",
     "path": "skills/three-tool-git-workflow/SKILL.md",
@@ -22,10 +22,10 @@
       "snapshot-runner"
     ]
   },
-  "public_cli_contract_sha256": "03eddd754c966b94b421670fe176d7d5b5ec0d7a84a646637a451e52c05e8196",
+  "public_cli_contract_sha256": "5ffa7328d45f1edf4d1198b4525c608264b1e61cdc95d8ac7bc7304c852797fb",
   "schema_version": 2,
   "skill_contract_version": 2,
   "tool_commit": "@release",
   "tool_name": "snapshot-runner",
-  "tool_version": "2.5.12"
+  "tool_version": "2.5.13"
 }

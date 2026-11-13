@@ -21,6 +21,10 @@ section is invented for it.
 - Remove wording-marker assertions from `quick_validate.py` and the matching phrase-pinning Skill
   tests; structural validation (frontmatter, length, references) remains. No Finalizer behavior,
   CLI contract or toolchain contract changes.
+- Rewrite `references/git-finalizer.md` (41 KB → 8 KB) as a situation → entry table, result
+  reading, fixture/sensitive-source review schemas, plan-driven branch retirement and stop
+  conditions; drop prose restating checks the tool already enforces.
+- Pin the Snapshot Runner mirror manifest to 2.5.13 and its CLI contract digest.
 
 ## 1.9.8
 
