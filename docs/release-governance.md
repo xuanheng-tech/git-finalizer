@@ -133,6 +133,10 @@ sort order, or runner image), not something to paper over by publishing one host
   `permissions: contents: read`.
 - `release.yml` (both hosts): `permissions: contents: write` only — no packages, no pull-request
   writes, no id-token.
+- `publish-pypi.yml` (`.github/workflows/publish-pypi.yml`): manual `workflow_dispatch` only
+  (never triggered on tag push); `build` uses `permissions: contents: read` and `publish` uses
+  `permissions: contents: read` with `id-token: write` inside the `pypi` environment for PyPI
+  Trusted Publishing.
 - GitHub organization setting for this repository: default workflow permissions `read`, and
   workflows may not approve pull requests.
 - No repository secrets are used or required: each platform injects its own token

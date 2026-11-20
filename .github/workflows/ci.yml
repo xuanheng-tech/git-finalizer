@@ -35,11 +35,7 @@ jobs:
       - name: Ensure shellcheck
         run: command -v shellcheck || (sudo apt-get update -y && sudo apt-get install -y --no-install-recommends shellcheck)
       - name: Lint shell and Python
-        run: |
-          just lint
-          if ! command -v ruff >/dev/null 2>&1; then
-            uv tool run ruff check src tests scripts
-          fi
+        run: just lint
 
       - name: Run project checks
         run: just check

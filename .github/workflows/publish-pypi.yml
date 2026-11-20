@@ -1,0 +1,124 @@
+name: publish-pypi
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing annotated release tag (e.g. v2.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-pypi-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.19"
+          enable-cache: false
+          github-token: ""
+      - name: Verify annotated tag, main integration, and release metadata
+        id: verify
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PY'
+          import os, re, tomllib
+          tag = os.environ["RELEASE_TAG"]
+          if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag) is None:
+              raise SystemExit(f"invalid release tag: {tag}")
+          with open("pyproject.toml", "rb") as stream:
+              version = tomllib.load(stream)["project"]["version"]
+          expected = tag.removeprefix("v")
+          if version != expected:
+              raise SystemExit(f"pyproject.toml version {version!r} != {expected!r}")
+          PY
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          release_ref="refs/tags/${RELEASE_TAG}"
+          test "$(git cat-file -t "$release_ref")" = "tag"
+          tag_commit=$(git rev-parse "${release_ref}^{commit}")
+          test "$(git rev-parse 'HEAD^{commit}')" = "$tag_commit"
+          git merge-base --is-ancestor "$tag_commit" origin/main
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          python3 -B scripts/release.py preflight "$RELEASE_TAG"
+          printf 'version=%s\n' "${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: Build wheel and sdist
+        run: |
+          set -euo pipefail
+          uv build --no-sources --out-dir dist
+          rm -f dist/.gitignore
+      - name: Verify clean install of wheel and sdist
+        env:
+          EXPECTED_VERSION: ${{ steps.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          wheel="dist/git_finalizer-${EXPECTED_VERSION}-py3-none-any.whl"
+          sdist="dist/git_finalizer-${EXPECTED_VERSION}.tar.gz"
+          test -f "$wheel"
+          test -f "$sdist"
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 2
+          for pkg in "$wheel" "$sdist"; do
+            venv=$(mktemp -d)
+            uv venv --no-config --python 3.12 "$venv"
+            uv pip install --no-config --no-deps --python "$venv/bin/python" "$pkg"
+            test "$("$venv/bin/git-finalize" --version)" = "git-finalize $EXPECTED_VERSION"
+            test "$("$venv/bin/tool-skill-sync" --version)" = "tool-skill-sync $EXPECTED_VERSION"
+            test "$("$venv/bin/tool-temp-dir" --version)" = "tool-temp-dir $EXPECTED_VERSION"
+            rm -rf "$venv"
+          done
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          packages-dir: dist/
+      - name: Verify PyPI release JSON
+        env:
+          EXPECTED_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          url="https://pypi.org/pypi/git-finalizer/${EXPECTED_VERSION}/json"
+          code=000
+          for attempt in $(seq 1 12); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' "$url" || true)
+            if [ "$code" = "200" ]; then
+              echo "Verified $url -> HTTP 200"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "PyPI JSON check failed for $url (last HTTP $code)" >&2
+          exit 1

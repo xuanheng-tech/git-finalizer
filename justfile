@@ -16,7 +16,7 @@ toolchain-check source_root="..":
 
 lint:
     bash scripts/lint.sh
-    ruff check src tests scripts
+    if command -v ruff >/dev/null 2>&1; then ruff check src tests scripts; else uv tool run ruff check src tests scripts; fi
 
 shellcheck: lint
 
