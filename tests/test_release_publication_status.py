@@ -6,14 +6,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import runpy
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,9 +23,8 @@ class PublicationStatusTests(unittest.TestCase):
         cls.release = runpy.run_path(str(ROOT / "scripts/release.py"))
         cls.storage = tempfile.TemporaryDirectory(prefix="gf-publication-observation-")
         cls.addClassCleanup(cls.storage.cleanup)
-        match = re.search(r'^readonly VERSION="([0-9.]+)"$',
-                          (ROOT / "git-finalize").read_text(), re.MULTILINE)
-        cls.tag = f"v{match.group(1)}"
+        version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+        cls.tag = f"v{version}"
         cls.artifact = cls.release["build"](cls.tag, dist=Path(cls.storage.name) / "dist")
         cls.digest = hashlib.sha256(cls.artifact.read_bytes()).hexdigest()
 

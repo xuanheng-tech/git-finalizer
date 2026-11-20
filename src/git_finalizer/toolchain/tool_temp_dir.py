@@ -1,11 +1,11 @@
-#!/usr/bin/python3
-"""Create and safely clean registered task directories under /tmp."""
+#!/usr/bin/env python3
+"""Create and safely clean registered task directories under /tmp (portable pure Python)."""
 
 from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import hashlib
 import json
 import os
@@ -13,13 +13,16 @@ from pathlib import Path
 import re
 import secrets
 import stat
+import sys
 from typing import Any
 
+from git_finalizer import __version__
+from git_finalizer.errors import ErrorCode
 
 TMP_ROOT = Path("/tmp")
 STATE_ROOT = Path.home() / ".local/state/tool-temp-dir"
 RECORD_VERSION = 2
-TOOL_VERSION = "1.0.7"
+TOOL_VERSION = __version__
 PREFIX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 NAME_RE = re.compile(
     r"^tool-task-(?P<prefix>[A-Za-z0-9][A-Za-z0-9_-]{0,63})-"
@@ -29,6 +32,8 @@ MAX_RECORD_BYTES = 16_384
 FIXTURE_PREFIX_TOKENS = frozenset(
     {"fixture", "profile", "profiling", "pytest", "test", "tests"}
 )
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 
 
 class TempDirError(Exception):
@@ -37,6 +42,7 @@ class TempDirError(Exception):
     def __init__(self, code: str, reason: str) -> None:
         super().__init__(reason)
         self.code = code
+        self.error_code = ErrorCode.TEMP_DIR_FAILED
         self.reason = reason
 
 
@@ -48,7 +54,7 @@ class CleanupValidation:
     uid: int
     device: int
     inode: int
-    entries: tuple["CleanupEntry", ...]
+    entries: tuple[CleanupEntry, ...]
     fixture_socket_paths: frozenset[str] = frozenset()
     pytest_basetemps: frozenset[str] = frozenset()
 
@@ -62,6 +68,13 @@ class CleanupEntry:
     device: int
     inode: int
     size: int
+
+
+def _resolved_tmp_root() -> Path:
+    try:
+        return TMP_ROOT.resolve(strict=True)
+    except OSError:
+        return TMP_ROOT
 
 
 def _private_mode(path: Path, expected_mode: int) -> os.stat_result:
@@ -115,7 +128,7 @@ def _write_record(record_path: Path, record: dict[str, Any]) -> None:
         json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         + "\n"
     ).encode("utf-8")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_CLOEXEC | _O_NOFOLLOW
     old_umask = os.umask(0o077)
     try:
         descriptor = os.open(record_path, flags, 0o600)
@@ -137,7 +150,7 @@ def _write_record(record_path: Path, record: dict[str, Any]) -> None:
 
 
 def _read_record(record_path: Path) -> dict[str, Any]:
-    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    flags = os.O_RDONLY | _O_CLOEXEC | _O_NOFOLLOW
     try:
         descriptor = os.open(record_path, flags)
     except FileNotFoundError as exc:
@@ -191,6 +204,7 @@ def _validate_prefix(task_prefix: str) -> None:
 def create_directory(task_prefix: str) -> dict[str, Any]:
     _validate_prefix(task_prefix)
     records = _registry_dir(create=True)
+    tmp_resolved = _resolved_tmp_root()
     old_umask = os.umask(0o077)
     try:
         for _attempt in range(128):
@@ -208,11 +222,12 @@ def create_directory(task_prefix: str) -> dict[str, Any]:
         os.umask(old_umask)
 
     metadata = path.lstat()
+    canonical_expected = tmp_resolved / path.name
     record_path = records / f"{hashlib.sha256(os.fsencode(path)).hexdigest()}.json"
     try:
-        if path.parent != TMP_ROOT or NAME_RE.fullmatch(path.name) is None:
+        if path.parent.resolve(strict=True) != tmp_resolved or NAME_RE.fullmatch(path.name) is None:
             raise TempDirError("create_failed", "创建结果不符合固定 /tmp 命名合同")
-        if path.resolve(strict=True) != path:
+        if path.resolve(strict=True) != canonical_expected:
             raise TempDirError("create_failed", "创建结果无法规范化为原始路径")
         if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
             raise TempDirError("create_failed", "创建结果不是普通目录")
@@ -222,7 +237,7 @@ def create_directory(task_prefix: str) -> dict[str, Any]:
         metadata = path.lstat()
         if stat.S_IMODE(metadata.st_mode) != 0o700:
             raise TempDirError("create_failed", "创建目录权限不是 0700")
-        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        created_at = datetime.now(UTC).isoformat(timespec="seconds")
         record = {
             "version": RECORD_VERSION,
             "path": str(path),
@@ -284,24 +299,31 @@ def _decode_mount_path(value: str) -> str:
 
 def _read_mount_points() -> set[str]:
     mount_points: set[str] = set()
-    try:
-        with open("/proc/self/mountinfo", encoding="utf-8") as stream:
-            for line in stream:
-                fields = line.split()
-                if len(fields) < 5:
-                    raise TempDirError("mountinfo_invalid", "mountinfo 行格式异常")
-                mount_points.add(os.path.normpath(_decode_mount_path(fields[4])))
-    except OSError as exc:
-        raise TempDirError("mountinfo_unavailable", f"无法读取 mountinfo：{exc}") from exc
+    if sys.platform.startswith("linux") or Path("/proc/self/mountinfo").exists():
+        try:
+            with open("/proc/self/mountinfo", encoding="utf-8") as stream:
+                for line in stream:
+                    fields = line.split()
+                    if len(fields) < 5:
+                        raise TempDirError("mountinfo_invalid", "mountinfo 行格式异常")
+                    mount_points.add(os.path.normpath(_decode_mount_path(fields[4])))
+        except OSError as exc:
+            raise TempDirError("mountinfo_unavailable", f"无法读取 mountinfo：{exc}") from exc
     return mount_points
 
 
 def _reject_mounts(path: Path, mount_points: set[str]) -> None:
     target = str(path)
-    if target in mount_points:
+    resolved_target = str(_resolved_tmp_root() / path.name)
+    if os.path.ismount(path) or target in mount_points or resolved_target in mount_points:
         raise TempDirError("target_is_mount", "cleanup 目标本身是 mount point")
     prefix = target + os.sep
-    nested = sorted(point for point in mount_points if point.startswith(prefix))
+    resolved_prefix = resolved_target + os.sep
+    nested = sorted(
+        point
+        for point in mount_points
+        if point.startswith(prefix) or point.startswith(resolved_prefix)
+    )
     if nested:
         raise TempDirError("nested_mount", f"目录树包含挂载点：{nested[0]}")
 
@@ -391,8 +413,11 @@ def _fixture_socket_paths(
 
 
 def _ensure_fixture_socket_inactive(path: Path) -> None:
+    proc_unix = Path("/proc/net/unix")
+    if not sys.platform.startswith("linux") and not proc_unix.exists():
+        return
     try:
-        lines = Path("/proc/net/unix").read_text(
+        lines = proc_unix.read_text(
             encoding="utf-8", errors="surrogateescape"
         ).splitlines()
     except OSError as exc:
@@ -469,7 +494,7 @@ def _allowed_entry_kind(
 
 
 def _open_directory(path: str | bytes, *, dir_fd: int | None = None) -> int:
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    flags = os.O_RDONLY | os.O_DIRECTORY | _O_CLOEXEC | _O_NOFOLLOW
     try:
         return os.open(path, flags, dir_fd=dir_fd)
     except OSError as exc:
@@ -628,11 +653,12 @@ def validate_cleanup(
         raise TempDirError("target_symlink", "cleanup 目标本身不得是 symlink")
     if not stat.S_ISDIR(metadata.st_mode):
         raise TempDirError("target_not_directory", "cleanup 目标不是目录")
+    tmp_resolved = _resolved_tmp_root()
     try:
         resolved = path.resolve(strict=True)
     except OSError as exc:
         raise TempDirError("path_unresolvable", f"无法规范化 cleanup 目标：{exc}") from exc
-    if resolved != path or resolved.parent != TMP_ROOT:
+    if resolved != tmp_resolved / path.name or resolved.parent != tmp_resolved:
         raise TempDirError("path_not_canonical", "规范化后目标不再直接位于 /tmp")
 
     record_path = _record_path(path)

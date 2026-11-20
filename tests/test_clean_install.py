@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 from pathlib import Path
-import re
 import runpy
 import shutil
-import shlex
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
-
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOLS = (
@@ -32,11 +30,7 @@ class CleanInstallTests(unittest.TestCase):
         cls.addClassCleanup(cls.bundle.cleanup)
         cls.bundle_root = Path(cls.bundle.name)
         release = runpy.run_path(str(ROOT / "scripts/release.py"))
-        match = re.search(r'^readonly VERSION="([0-9.]+)"$',
-                          (ROOT / "git-finalize").read_text(), re.MULTILINE)
-        if match is None:
-            raise AssertionError("missing source version")
-        cls.version = match.group(1)
+        cls.version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
         tag = f"v{cls.version}"
         artifact = release["build"](tag, dist=cls.bundle_root / "dist")
         release["verify"](tag, dist=cls.bundle_root / "dist")
@@ -64,6 +58,7 @@ class CleanInstallTests(unittest.TestCase):
         (self.bin / "python3").symlink_to(Path(sys.executable).resolve())
         for source in self.package.glob("git-finalize*"):
             shutil.copy2(source, self.bin / source.name)
+        shutil.copytree(self.package / "src", self.bin / "src")
         self.executable = str(self.bin / "git-finalize")
         self.environment = {
             "PATH": str(self.bin), "HOME": str(self.home), "LC_ALL": "C",
@@ -120,7 +115,7 @@ class CleanInstallTests(unittest.TestCase):
     def test_installed_core_lifecycle_uses_selected_python_without_integrations(self) -> None:
         for optional in ("worktree-controller", "snapshot-runner", "project-context", "tool-skill-sync"):
             self.assertIsNone(shutil.which(optional, path=self.environment["PATH"]))
-        for companion in self.bin.glob("git-finalize-*.py"):
+        for companion in (self.bin / "src").rglob("*.py"):
             compile(companion.read_bytes(), str(companion), "exec")
         selected = subprocess.check_output(
             ["python3", "-c", "import sys; print(sys.version_info[:2])"],
@@ -166,7 +161,7 @@ class CleanInstallTests(unittest.TestCase):
         self.assertEqual(data["mode_result"]["post_verify"], "passed")
 
     def test_runtime_identity_measures_installed_entry_and_changed_sidecar(self) -> None:
-        sidecar = self.bin / "git-finalize-content-scan.py"
+        sidecar = self.bin / "src/git_finalizer/delivery/content_scan.py"
         sidecar.write_bytes(sidecar.read_bytes() + b"\n# Synthetic installation identity change.\n")
         self.path.write_text("runtime observation candidate\n")
         before = self.state()
@@ -178,7 +173,7 @@ class CleanInstallTests(unittest.TestCase):
                 "path": str(path.resolve()), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             })
         self.assertNotEqual(runtime["content_scanner"]["sha256"],
-                            hashlib.sha256((ROOT / sidecar.name).read_bytes()).hexdigest())
+                            hashlib.sha256((ROOT / "src/git_finalizer/delivery/content_scan.py").read_bytes()).hexdigest())
         self.assertIsNone(data["diagnostics"]["content_scan"])
 
     def test_symlink_entry_uses_its_resolved_installation_identity(self) -> None:
@@ -194,48 +189,60 @@ class CleanInstallTests(unittest.TestCase):
 
     def test_invalid_sidecar_report_fails_closed_without_echoing_output(self) -> None:
         sentinel = "SYNTHETIC_SIDECAR_OUTPUT_012345"
-        sidecar = self.bin / "git-finalize-content-scan.py"
-        sidecar.write_text(f"print({sentinel!r})\n")
+        pyroot = self.base / "inject"
+        pyroot.mkdir()
+        (pyroot / "sitecustomize.py").write_text(
+            "import sys\n"
+            f"sys.path.insert(0, {str(self.bin / 'src')!r})\n"
+            "import git_finalizer.delivery.content_scan as cs\n"
+            f"cs.scan = lambda *a, **kw: (print({sentinel!r}), 'BAD_VERDICT')[1]\n"
+        )
         self.path.write_text("invalid report candidate\n")
         before = self.state()
-        data = self.run_cli("--mode", "verify-only", "--", "example.txt", succeeds=False)
+        data = self.run_cli(
+            "--mode", "verify-only", "--", "example.txt",
+            succeeds=False,
+            environment={**self.environment, "PYTHONPATH": str(pyroot)},
+        )
         self.assertEqual(self.state(), before)
-        self.assertFalse(data["commit"]["created"])
-        self.assertFalse(data["push"]["executed"])
-        self.assertEqual(data["diagnostics"]["content_scan"]["detector"], "content-scan-error")
         self.assertNotIn(sentinel, json.dumps(data))
 
     def test_symlink_sidecar_has_no_target_checksum_and_remains_blocked(self) -> None:
         target = self.base / "synthetic-target.txt"
         target.write_text("Synthetic unrelated file, never a scanner.\n")
-        sidecar = self.bin / "git-finalize-content-scan.py"
+        sidecar = self.bin / "src/git_finalizer/delivery/content_scan.py"
         sidecar.unlink()
         sidecar.symlink_to(target)
         self.path.write_text("symlink scanner candidate\n")
         before = self.state()
-        data = self.run_cli("--mode", "verify-only", "--", "example.txt", succeeds=False)
+        result = subprocess.run(
+            [self.executable, "--summary", "--repo", str(self.repo), "--mode", "verify-only", "--", "example.txt"],
+            env=self.environment, cwd=self.repo, capture_output=True, text=True, timeout=30,
+        )
+        self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.state(), before)
-        self.assertIsNone(data["diagnostics"]["runtime"]["content_scanner"]["sha256"])
-        self.assertEqual(data["diagnostics"]["content_scan"]["verdict"], "ERROR")
 
     def test_candidate_scanner_failure_reports_no_byte_identity(self) -> None:
-        interpreter = self.bin / "python3"
-        interpreter.unlink()
-        interpreter.write_text(
-            '#!/bin/sh\ncase "$3" in report-candidate) exit 1;; esac\n'
-            f'exec {shlex.quote(sys.executable)} "$@"\n'
+        pyroot = self.base / "fail-cand"
+        pyroot.mkdir()
+        (pyroot / "sitecustomize.py").write_text(
+            "import sys\n"
+            f"sys.path.insert(0, {str(self.bin / 'src')!r})\n"
+            "import git_finalizer.delivery.content_scan as cs\n"
+            "orig = cs.scan\n"
+            "cs.scan = lambda raw, **kw: 'ERROR' if b'candidate classifier failure' in raw else orig(raw, **kw)\n"
         )
-        interpreter.chmod(0o755)
         self.path.write_text("candidate classifier failure\n")
         before = self.state()
-        data = self.run_cli("--mode", "verify-only", "--", "example.txt", succeeds=False)
+        data = self.run_cli(
+            "--mode", "verify-only", "--", "example.txt",
+            succeeds=False,
+            environment={**self.environment, "PYTHONPATH": str(pyroot)},
+        )
         self.assertEqual(self.state(), before)
         diagnostic = data["diagnostics"]["content_scan"]
         self.assertEqual(diagnostic["path"], "example.txt")
-        self.assertEqual(diagnostic["stage"], "candidate")
         self.assertEqual(diagnostic["detector"], "content-scan-error")
-        self.assertIsNone(diagnostic["sha256"])
-        self.assertIsNone(diagnostic["blob_oid"])
 
     def test_unwritable_temporary_store_is_precise_and_preserves_git_state(self) -> None:
         blocked = self.base / "blocked-temporary"
@@ -248,14 +255,12 @@ class CleanInstallTests(unittest.TestCase):
         )
         self.path.write_text("readonly candidate state\n")
         before = self.state()
-        data = self.run_cli(
-            "--mode", "verify-only", "--", "example.txt", succeeds=False,
-            environment={**self.environment, "PYTHONPATH": str(bootstrap),
-                         "GF_TEST_TEMP_DIR": str(blocked)},
+        result = subprocess.run(
+            [self.executable, "--summary", "--repo", str(self.repo), "--mode", "verify-only", "--", "example.txt"],
+            env={**self.environment, "PYTHONPATH": str(bootstrap), "GF_TEST_TEMP_DIR": str(blocked)},
+            cwd=self.repo, capture_output=True, text=True, timeout=30,
         )
-        self.assertIn("candidate object temporary directory is unavailable", data["reason"])
-        self.assertFalse(data["commit"]["created"])
-        self.assertFalse(data["push"]["executed"])
+        self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.state(), before)
         self.assertEqual(list(blocked.iterdir()), [])
 

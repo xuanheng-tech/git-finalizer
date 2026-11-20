@@ -748,26 +748,20 @@ test_resume_fixture_does_not_mask_other_content() {
 test_resume_fixture_scanner_failure() {
     local case_dir=$tmp_root/root-fixture-scanner-failure
     local output=$case_dir/output.log
-    local python
 
     make_unborn_fixture_repo "$case_dir"
     rm -- "$test_repo/root.txt"
     git -C "$test_repo" add -- tests/fixture.txt
     git -C "$test_repo" commit --quiet -m 'synthetic scanner refusal root'
     expected_head=$(git -C "$test_repo" rev-parse HEAD)
-    python=$(command -v python3)
-    mkdir -- "$case_dir/bin"
-    cat >"$case_dir/bin/python3" <<EOF
-#!/bin/bash
-for argument in "\$@"; do
-    if [[ \${argument##*/} == git-finalize-content-scan.py ]]; then
-        exit 23
-    fi
-done
-exec "$python" "\$@"
+    mkdir -- "$case_dir/pyroot"
+    cat >"$case_dir/pyroot/sitecustomize.py" <<EOF
+import sys
+sys.path.insert(0, '$project_root/src')
+import git_finalizer.delivery.content_scan as cs
+cs.scan = lambda *a, **kw: (_ for _ in ()).throw(ValueError('synthetic scanner failure'))
 EOF
-    chmod +x "$case_dir/bin/python3"
-    expect_failure "$output" env PATH="$case_dir/bin:$PATH" "$finalizer" \
+    expect_failure "$output" env PYTHONPATH="$case_dir/pyroot" "$finalizer" \
         --resume-initial-publish "$expected_head" --remote origin --repo "$test_repo" \
         --allow-test-fixture tests/fixture.txt --summary
     assert_file_contains "$output" '内容分类失败' 'fixture scanner failure was not classified'

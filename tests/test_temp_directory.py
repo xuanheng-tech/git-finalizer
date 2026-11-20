@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
-from importlib.machinery import SourceFileLoader
 import json
 import os
 from pathlib import Path
@@ -15,22 +13,14 @@ from typing import Any
 import unittest
 from unittest import mock
 
+ROOT = Path(__file__).resolve().parents[1]
+TOOL_PATH = ROOT / "tool-temp-dir"
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
 
-TOOL_PATH = Path(__file__).resolve().parents[1] / "tooling/tool_temp_dir.py"
+from git_finalizer.toolchain import tool_temp_dir as temp_tool
+
 OWNED_TEST_PREFIX = "tool-task-unittest-"
-
-
-def load_script(name: str, path: Path) -> Any:
-    loader = SourceFileLoader(name, str(path))
-    specification = importlib.util.spec_from_loader(name, loader)
-    assert specification is not None and specification.loader is not None
-    module = importlib.util.module_from_spec(specification)
-    sys.modules[name] = module
-    specification.loader.exec_module(module)
-    return module
-
-
-temp_tool = load_script("tool_temp_dir_test_target", TOOL_PATH)
 
 
 def remove_owned_test_path(path: Path) -> None:

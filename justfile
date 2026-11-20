@@ -16,14 +16,15 @@ toolchain-check source_root="..":
 
 lint:
     bash scripts/lint.sh
+    ruff check src tests scripts
 
 shellcheck: lint
 
 skill-check:
-    python3 -B skills/git-change-delivery/deploy.py check
+    ./tool-skill-sync --source-repo git-finalizer="$PWD" skill-check
 
 skill-install:
-    python3 -B skills/git-change-delivery/deploy.py install
+    ./tool-skill-sync --source-repo git-finalizer="$PWD" skill-install
 
 # Explicit local deployment gate; CI source-only checks remain independent.
 workflow-check repo="." source_root="..":

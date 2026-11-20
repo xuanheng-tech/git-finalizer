@@ -7,7 +7,6 @@ import subprocess
 import tempfile
 import unittest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = json.loads((ROOT / "tool_skill_manifest.json").read_text())
 FINALIZER = ROOT / MANIFEST["executable"]["entrypoints"][0]

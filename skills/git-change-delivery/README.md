@@ -36,7 +36,7 @@ just skill-install
 live 路径、payload 不完整，或 installed tree hash 不属于 `RELEASED_CANONICAL_SKILL_SHA256`
 登记的已发布 canonical 谱系（双向/人工漂移）时停止并给出逐文件诊断，不静默覆盖、不备份伪装；
 只有缺失整个目录的全新安装、与 source 一致的幂等安装、以及从已发布 canonical tree 出发的升级
-会继续。`deploy.py`、两个 `test_*.py` 和本 README 仅属于版本化恢复/测试资产，不安装到 live
+会继续。`test_unpublished_queue.py` 和本 README 仅属于版本化恢复/测试资产，不安装到 live
 目录。
 
 本 Skill 是可选的 Agent 工作流说明与 helper 集合：Git Finalizer 核心运行不依赖本目录，
@@ -47,6 +47,6 @@ installed copy 和 Skill 自身都不是授权来源，也不启用或扩大 com
 Completed-but-Unpublished Queue 只持久化用户私有 control-plane metadata，不执行 Git finalization
 或 worktree 清理。
 
-跨三工具的 binary/entry identity、Skill payload、CLI contract 和兼容性由仓库根目录的
-`tool-skill-sync` 验证。旧的 `deploy.py` 保留为已安装 Skill 的兼容检查/显式恢复入口；新发布
-流程以完整 ToolReleaseBundle 的 pair-level `CURRENT` 原子切换为 authority，不得只更新 Skill。
+跨三工具的 binary/entry identity、Skill payload、CLI contract 和兼容性及 Skill 同步安装均由仓库根目录的
+`tool-skill-sync` 验证（`tool-skill-sync skill-check` / `tool-skill-sync skill-install`，涵盖 `~/.agents/skills` 与多客户端联动）。新发布
+流程以完整 ToolReleaseBundle 的 pair-level `CURRENT` 原子切换与受管 package 更新为 authority，不得只更新 Skill。

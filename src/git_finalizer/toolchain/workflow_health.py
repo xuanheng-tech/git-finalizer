@@ -1,4 +1,5 @@
 """Read-only deployed workflow and instruction diagnostics; never activates a tool."""
+
 from __future__ import annotations
 
 import hashlib
@@ -18,8 +19,10 @@ except ImportError:
 
 
 def readonly_git(repo: Path, *arguments: str) -> str:
-    result = sync.run(["git", "-c", "core.fsmonitor=false", "-C", str(repo), *arguments],
-                      env=dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_NO_REPLACE_OBJECTS="1"))
+    result = sync.run(
+        ["git", "-c", "core.fsmonitor=false", "-C", str(repo), *arguments],
+        env=dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_NO_REPLACE_OBJECTS="1"),
+    )
     if result.returncode:
         raise sync.SyncError(f"read-only Git observation failed: {repo}")
     return result.stdout.strip()
@@ -35,12 +38,19 @@ def file_identity(path: Path) -> dict[str, Any]:
         raise sync.SyncError(f"instruction is not a regular file: {path}")
     content = resolved.read_bytes()
     content.decode("utf-8")
-    return {"path": str(path), "real_path": str(resolved),
-            "sha256": hashlib.sha256(content).hexdigest(), "bytes": len(content)}
+    return {
+        "path": str(path),
+        "real_path": str(resolved),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "bytes": len(content),
+    }
 
 
 def installed_tool(
-    sources: sync.Sources, tool: str, agents_root: Path, bin_dir: Path | None,
+    sources: sync.Sources,
+    tool: str,
+    agents_root: Path,
+    bin_dir: Path | None,
     hooks_dir: Path,
 ) -> dict[str, Any]:
     return sync.check_tool_deployment(sources, tool, agents_root, bin_dir, hooks_dir)
@@ -50,18 +60,23 @@ def controller_commit(runtime: Path) -> str:
     label = runtime.parent.name
     if sync.FULL_GIT_OID.fullmatch(label):
         return label
-    origins = list(runtime.glob(
-        "lib/python*/site-packages/worktree_controller-*.dist-info/direct_url.json"
-    ))
-    if (not 7 <= len(label) < 40 or any(char not in "0123456789abcdef" for char in label)
-            or len(origins) != 1):
+    origins = list(runtime.glob("lib/python*/site-packages/worktree_controller-*.dist-info/direct_url.json"))
+    if (
+        not 7 <= len(label) < 40
+        or any(char not in "0123456789abcdef" for char in label)
+        or len(origins) != 1
+    ):
         raise sync.SyncError("active runtime does not identify a full pinned commit")
     origin = json.loads(origins[0].read_text(encoding="utf-8"))
     vcs = origin.get("vcs_info") if isinstance(origin, dict) else None
     commit = vcs.get("commit_id") if isinstance(vcs, dict) else None
-    if (not isinstance(commit, str) or not sync.FULL_GIT_OID.fullmatch(commit)
-            or not commit.startswith(label) or vcs.get("vcs") != "git"
-            or vcs.get("requested_revision") not in (label, commit)):
+    if (
+        not isinstance(commit, str)
+        or not sync.FULL_GIT_OID.fullmatch(commit)
+        or not commit.startswith(label)
+        or vcs.get("vcs") != "git"
+        or vcs.get("requested_revision") not in (label, commit)
+    ):
         raise sync.SyncError("active runtime does not identify a full pinned commit")
     return commit
 
@@ -75,12 +90,25 @@ def controller_source(runtime: Path, commit: str, legacy: Path) -> tuple[Path, d
     if manifest.stat().st_mode & 0o022 or manifest.stat().st_size > 65536:
         raise sync.SyncError("Controller runtime source manifest is writable by others or oversized")
     value = sync.read_json(manifest)
-    expected = {"schema_version", "contract", "commit", "source_repository", "git_common_dir",
-                "root_commit", "contract_sha256", "skill_sha256"}
-    if (set(value) != expected or type(value.get("schema_version")) is not int
-            or value["schema_version"] != 1 or value.get("contract") != "controller-runtime-source/v1"
-            or value.get("commit") != commit or not isinstance(value.get("root_commit"), str)
-            or not sync.FULL_GIT_OID.fullmatch(value["root_commit"])):
+    expected = {
+        "schema_version",
+        "contract",
+        "commit",
+        "source_repository",
+        "git_common_dir",
+        "root_commit",
+        "contract_sha256",
+        "skill_sha256",
+    }
+    if (
+        set(value) != expected
+        or type(value.get("schema_version")) is not int
+        or value["schema_version"] != 1
+        or value.get("contract") != "controller-runtime-source/v1"
+        or value.get("commit") != commit
+        or not isinstance(value.get("root_commit"), str)
+        or not sync.FULL_GIT_OID.fullmatch(value["root_commit"])
+    ):
         raise sync.SyncError("Controller runtime source manifest identity is invalid")
     locations = []
     for key in ("source_repository", "git_common_dir"):
@@ -93,51 +121,70 @@ def controller_source(runtime: Path, commit: str, legacy: Path) -> tuple[Path, d
         sync.require_owned_directory(path)
         locations.append(path)
     repository, common = locations
-    if (Path(readonly_git(repository, "rev-parse", "--show-toplevel")).resolve() != repository
-            or Path(readonly_git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve() != common
-            or readonly_git(repository, "rev-list", "--max-parents=0", commit).splitlines() != [value["root_commit"]]):
+    if (
+        Path(readonly_git(repository, "rev-parse", "--show-toplevel")).resolve() != repository
+        or Path(readonly_git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve() != common
+        or readonly_git(repository, "rev-list", "--max-parents=0", commit).splitlines() != [value["root_commit"]]
+    ):
         raise sync.SyncError("Controller source repository identity changed")
-    return repository, {**file_identity(manifest), "contract_sha256": value["contract_sha256"],
-                        "skill_sha256": value["skill_sha256"]}
+    return repository, {
+        **file_identity(manifest),
+        "contract_sha256": value["contract_sha256"],
+        "skill_sha256": value["skill_sha256"],
+    }
 
 
 def controller_state(
-    requirements: dict[str, Any], entrypoint: Path | None,
-    runtime_root: Path, source_repo: Path, agents_root: Path,
+    requirements: dict[str, Any],
+    entrypoint: Path | None,
+    runtime_root: Path,
+    source_repo: Path,
+    agents_root: Path,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
-        "tool": "worktree-controller", "status": "FAIL", "errors": [],
-        "source_repo": str(source_repo), "source_is_candidate": True,
+        "tool": "worktree-controller",
+        "status": "FAIL",
+        "errors": [],
+        "source_repo": str(source_repo),
+        "source_is_candidate": True,
     }
     try:
         sync.validate_controller_requirements(requirements)
-        entry = entrypoint or (Path(shutil.which("worktree-controller"))
-                               if shutil.which("worktree-controller") else None)
+        entry = entrypoint or (Path(shutil.which("worktree-controller")) if shutil.which("worktree-controller") else None)
         if entry is None:
             raise sync.SyncError("worktree-controller is not installed")
         active = runtime_root / "active"
         runtime = active.resolve(strict=True)
-        environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", GIT_OPTIONAL_LOCKS="0",
-                           GIT_NO_REPLACE_OBJECTS="1")
+        environment = dict(
+            os.environ,
+            PYTHONDONTWRITEBYTECODE="1",
+            GIT_OPTIONAL_LOCKS="0",
+            GIT_NO_REPLACE_OBJECTS="1",
+        )
         command = sync.run([str(entry), "capabilities", "--json"], env=environment)
         if command.returncode != 0:
             raise sync.SyncError("installed Controller capabilities probe failed")
         envelope = json.loads(command.stdout)
-        if (not isinstance(envelope, dict) or envelope.get("errors")
-                or not isinstance(envelope.get("decision"), dict)):
+        if not isinstance(envelope, dict) or envelope.get("errors") or not isinstance(envelope.get("decision"), dict):
             raise sync.SyncError("Controller returned invalid capability evidence")
         caps = envelope["decision"]
-        result.update(entrypoint=str(entry), software_version=envelope.get("tool_version"),
-                      cli_contract_version=caps.get("contract_version"),
-                      capabilities_version=caps.get("capabilities_version"),
-                      storage_layout_version=caps.get("storage_layout_version"))
-        for key, allowed_key in [("contract_version", "cli_contract_versions"),
-                                 ("storage_layout_version", "storage_layout_versions")]:
+        result.update(
+            entrypoint=str(entry),
+            software_version=envelope.get("tool_version"),
+            cli_contract_version=caps.get("contract_version"),
+            capabilities_version=caps.get("capabilities_version"),
+            storage_layout_version=caps.get("storage_layout_version"),
+        )
+        for key, allowed_key in [
+            ("contract_version", "cli_contract_versions"),
+            ("storage_layout_version", "storage_layout_versions"),
+        ]:
             if type(caps.get(key)) is not int or caps.get(key) not in requirements[allowed_key]:
                 result["errors"].append(f"unreviewed {key}: {caps.get(key)}")
+        # Backward-compatible capability minimum: accept observed >= expected.
         for name, expected in requirements.get("capability_versions", {}).items():
-            if type(caps.get(name)) is not int or caps.get(name) != expected:
-                result["errors"].append(f"{name}: expected {expected}, observed {caps.get(name)}")
+            if type(caps.get(name)) is not int or caps.get(name) < expected:
+                result["errors"].append(f"{name}: expected >= {expected}, observed {caps.get(name)}")
         result["capability_versions"] = {
             name: caps.get(name) for name in requirements.get("capability_versions", {})
         }
@@ -146,8 +193,12 @@ def controller_state(
         if len(contracts) != 1:
             raise sync.SyncError("active Controller frozen contract is missing/ambiguous")
         contract = json.loads(contracts[0].read_text(encoding="utf-8"))
-        for name in ("contract_version", "capabilities_version", "storage_layout_version",
-                     *requirements.get("capability_versions", {})):
+        for name in dict.fromkeys((
+            "contract_version",
+            "capabilities_version",
+            "storage_layout_version",
+            *requirements.get("capability_versions", {}),
+        )):
             if caps.get(name) != contract.get(name):
                 result["errors"].append(f"runtime/frozen contract disagree: {name}")
         if envelope.get("tool_version") != contract.get("tool_version"):
@@ -164,8 +215,7 @@ def controller_state(
             result["source_manifest"] = source_manifest
             if source_manifest["contract_sha256"] != result["frozen_contract_sha256"]:
                 result["errors"].append("runtime source manifest contract hash differs from installed contract")
-        observed = sync.run(["git", "-C", str(source_repo), "show", f"{commit}:tool_cli_contract.json"],
-                            env=environment)
+        observed = sync.run(["git", "-C", str(source_repo), "show", f"{commit}:tool_cli_contract.json"], env=environment)
         if observed.returncode != 0 or hashlib.sha256(observed.stdout.encode()).hexdigest() != result["frozen_contract_sha256"]:
             result["errors"].append("frozen contract does not match active commit")
         result["source_head"] = sync.git_head(source_repo)
@@ -174,19 +224,25 @@ def controller_state(
         result["installed_skill"] = file_identity(skill)
         if source_manifest and source_manifest["skill_sha256"] != result["installed_skill"]["sha256"]:
             result["errors"].append("runtime source manifest Skill hash differs from installed Skill")
-        published_skill = sync.run([
-            "git", "-C", str(source_repo), "show", f"{commit}:skills/worktree-lifecycle/SKILL.md"
-        ], env=environment)
-        if (published_skill.returncode != 0 or hashlib.sha256(published_skill.stdout.encode()).hexdigest()
-                != result["installed_skill"]["sha256"]):
+        published_skill = sync.run(
+            ["git", "-C", str(source_repo), "show", f"{commit}:skills/worktree-lifecycle/SKILL.md"],
+            env=environment,
+        )
+        if (
+            published_skill.returncode != 0
+            or hashlib.sha256(published_skill.stdout.encode()).hexdigest() != result["installed_skill"]["sha256"]
+        ):
             result["errors"].append("installed worktree-lifecycle Skill differs from active commit; coordinate with WC owner")
         if active.resolve(strict=True) != runtime:
             result["errors"].append("Controller active runtime changed during observation; retry read-only check")
         if source_manifest:
             manifest_path = runtime / "controller-source.json"
             sync.require_owned_regular(manifest_path, "Controller runtime source manifest")
-            if (manifest_path.stat().st_mode & 0o022 or manifest_path.stat().st_size > 65536
-                    or sync.sha256_file(manifest_path) != source_manifest["sha256"]):
+            if (
+                manifest_path.stat().st_mode & 0o022
+                or manifest_path.stat().st_size > 65536
+                or sync.sha256_file(manifest_path) != source_manifest["sha256"]
+            ):
                 result["errors"].append("Controller source manifest changed during observation; retry read-only check")
         result["status"] = "FAIL" if result["errors"] else "PASS"
     except (OSError, ValueError, KeyError, TypeError, sync.SyncError, subprocess.SubprocessError) as exc:
@@ -204,11 +260,68 @@ def chosen_instruction(directory: Path, fallbacks: list[str]) -> Path | None:
     return None
 
 
+def _check_per_skill_client_exposure(
+    client_label: str,
+    client_skills_dir: Path,
+    shared_skills_dir: Path,
+    warnings: list[str],
+) -> None:
+    if client_skills_dir.is_symlink() and not client_skills_dir.exists():
+        warnings.append(f"{client_label} personal skills link is broken")
+        return
+    if not client_skills_dir.exists():
+        return
+    if client_skills_dir.resolve() == shared_skills_dir.resolve():
+        if (shared_skills_dir / "synced").exists():
+            warnings.append(f"{client_label}-synced skills leak into the shared personal skills root")
+        return
+    for path in sorted(shared_skills_dir.glob("*/SKILL.md")):
+        exposed = client_skills_dir / path.parent.name / "SKILL.md"
+        if not exposed.is_file() or exposed.resolve() != path.resolve():
+            warnings.append(f"{client_label} skills do not expose shared skill {path.parent.name}")
+
+
+def _inspect_optional_clients(
+    agents_root: Path,
+    home_dir: Path,
+    warnings: list[str],
+    references: list[dict[str, Any]],
+) -> None:
+    shared_skills = agents_root / "skills"
+    # Gemini CLI reads ~/.gemini/config/skills.json (skill roots / user config) & ~/.gemini/AGENTS.md
+    gemini_home = home_dir / ".gemini"
+    if gemini_home.is_dir():
+        gemini_agents = gemini_home / "AGENTS.md"
+        if gemini_agents.is_file():
+            references.append(file_identity(gemini_agents))
+        gemini_skills_cfg = gemini_home / "config" / "skills.json"
+        if gemini_skills_cfg.is_file():
+            references.append(file_identity(gemini_skills_cfg))
+
+    # Cursor (~/.cursor/skills or ~/.cursor/rules) & Qoder (~/.qoder / ~/.qoder-cn)
+    for label, client_dir in (
+        ("Cursor", home_dir / ".cursor"),
+        ("Qoder", home_dir / ".qoder"),
+        ("QoderCN", home_dir / ".qoder-cn"),
+    ):
+        if client_dir.is_dir():
+            agent_file = client_dir / "AGENTS.md"
+            if agent_file.is_file():
+                references.append(file_identity(agent_file))
+            _check_per_skill_client_exposure(label, client_dir / "skills", shared_skills, warnings)
+
+
 def instruction_state(
-    repo: Path | None, agents_root: Path, codex_home: Path, claude_home: Path | None = None,
+    repo: Path | None,
+    agents_root: Path,
+    codex_home: Path,
+    claude_home: Path | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
-        "files": [], "warnings": [], "errors": [], "pending_checkouts": [],
+        "files": [],
+        "warnings": [],
+        "errors": [],
+        "pending_checkouts": [],
         "session_reload": "reread changed files; the checker cannot verify model context",
     }
     try:
@@ -216,8 +329,12 @@ def instruction_state(
         config = tomllib.loads(config_path.read_text()) if config_path.is_file() else {}
         limit = config.get("project_doc_max_bytes", 32768)
         fallbacks = config.get("project_doc_fallback_filenames", [])
-        if (type(limit) is not int or limit <= 0 or not isinstance(fallbacks, list)
-                or any(not isinstance(name, str) or not name for name in fallbacks)):
+        if (
+            type(limit) is not int
+            or limit <= 0
+            or not isinstance(fallbacks, list)
+            or any(not isinstance(name, str) or not name for name in fallbacks)
+        ):
             raise sync.SyncError("invalid instruction discovery configuration")
         result["configured_limit_bytes"] = limit
         paths: list[Path] = []
@@ -229,8 +346,10 @@ def instruction_state(
             top = Path(readonly_git(cwd, "rev-parse", "--show-toplevel"))
             if not cwd.is_relative_to(top):
                 raise sync.SyncError("requested directory is outside resolved checkout")
-            for directory in [top, *[top.joinpath(*cwd.relative_to(top).parts[:n])
-                                      for n in range(1, len(cwd.relative_to(top).parts) + 1)]]:
+            for directory in [
+                top,
+                *[top.joinpath(*cwd.relative_to(top).parts[:n]) for n in range(1, len(cwd.relative_to(top).parts) + 1)],
+            ]:
                 candidate = chosen_instruction(directory, fallbacks)
                 if candidate is not None:
                     paths.append(candidate)
@@ -240,14 +359,19 @@ def instruction_state(
             checkouts = [Path(line[9:]) for line in raw.splitlines() if line.startswith("worktree ")]
             if checkouts:
                 result["canonical"] = str(checkouts[0])
-            reference_names = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md",
-                               "docs/engineering/development-workflow.md")
+            reference_names = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md")
             instruction_names = ["AGENTS.override.md", "AGENTS.md", *fallbacks, *reference_names]
             for checkout in checkouts[:64]:
                 if not checkout.is_dir():
                     continue
-                modified = readonly_git(checkout, "status", "--porcelain=v1", "--untracked-files=all",
-                                    "--", *instruction_names)
+                modified = readonly_git(
+                    checkout,
+                    "status",
+                    "--porcelain=v1",
+                    "--untracked-files=all",
+                    "--",
+                    *instruction_names,
+                )
                 if modified:
                     result["pending_checkouts"].append({"checkout": str(checkout), "changes": modified.splitlines()})
             if len(checkouts) > 64:
@@ -260,9 +384,7 @@ def instruction_state(
                 canonical_agent = chosen_instruction(checkouts[0], fallbacks)
                 if canonical_agent is not None:
                     canonical_paths.insert(0, canonical_agent)
-                result["canonical_references"] = [
-                    file_identity(path) for path in canonical_paths if path.is_file()
-                ]
+                result["canonical_references"] = [file_identity(path) for path in canonical_paths if path.is_file()]
                 local_agent = chosen_instruction(top, fallbacks)
                 if canonical_agent and local_agent and sync.sha256_file(canonical_agent) != sync.sha256_file(local_agent):
                     result["warnings"].append("checkout AGENTS differs from canonical; review live governance without overwriting branch rules")
@@ -274,29 +396,16 @@ def instruction_state(
         result["total_bytes"] = sum(item["bytes"] for item in result["files"])
         if result["total_bytes"] > limit:
             result["errors"].append("instruction chain exceeds configured discovery byte limit")
+        shared_skills = agents_root / "skills"
         result["skills"] = [
-            file_identity(path) for path in sorted((agents_root / "skills").glob("*/SKILL.md"))
-            if path.is_file()
+            file_identity(path) for path in sorted(shared_skills.glob("*/SKILL.md")) if path.is_file()
         ]
         claude_home = claude_home if claude_home is not None else codex_home.parent / ".claude"
-        claude_skills = claude_home / "skills"
-        if claude_skills.is_symlink() and not claude_skills.exists():
-            result["warnings"].append("Claude personal skills link is broken")
-        elif claude_skills.exists():
-            # Claude writes its account-synced skills under skills/synced; a whole-root link
-            # would publish them to every client reading the shared root.
-            shared_skills = agents_root / "skills"
-            if claude_skills.resolve() == shared_skills.resolve():
-                if (shared_skills / "synced").exists():
-                    result["warnings"].append("Claude-synced skills leak into the shared personal skills root")
-            else:
-                for path in sorted(shared_skills.glob("*/SKILL.md")):
-                    exposed = claude_skills / path.parent.name / "SKILL.md"
-                    if not exposed.is_file() or exposed.resolve() != path.resolve():
-                        result["warnings"].append(f"Claude skills do not expose shared skill {path.parent.name}")
+        _check_per_skill_client_exposure("Claude", claude_home / "skills", shared_skills, result["warnings"])
         bridge = claude_home / "CLAUDE.md"
         if bridge.is_file():
             result.setdefault("references", []).append(file_identity(bridge))
+        _inspect_optional_clients(agents_root, codex_home.parent, result["warnings"], result.setdefault("references", []))
     except (OSError, ValueError, TypeError, sync.SyncError, subprocess.SubprocessError) as exc:
         result["errors"].append(str(exc))
     result["status"] = "FAIL" if result["errors"] else "PASS"
@@ -304,10 +413,18 @@ def instruction_state(
 
 
 def doctor(
-    sources: sync.Sources, *, agents_root: Path, bin_dir: Path | None,
-    hooks_dir: Path, repo: Path | None, codex_home: Path,
-    controller: Path | None, controller_runtime_root: Path, controller_source: Path,
-    previous_fingerprint: str | None = None, claude_home: Path | None = None,
+    sources: sync.Sources,
+    *,
+    agents_root: Path,
+    bin_dir: Path | None,
+    hooks_dir: Path,
+    repo: Path | None,
+    codex_home: Path,
+    controller: Path | None,
+    controller_runtime_root: Path,
+    controller_source: Path,
+    previous_fingerprint: str | None = None,
+    claude_home: Path | None = None,
 ) -> dict[str, Any]:
     results = []
     for name in sources.names():
@@ -316,40 +433,72 @@ def doctor(
         except (OSError, ValueError, sync.SyncError, subprocess.SubprocessError) as exc:
             results.append({"tool": name, "status": "FAIL", "errors": [str(exc)]})
     runtime_requirements = sources.compatibility.get("runtime_requirements", {})
-    requirements = (runtime_requirements.get("worktree-controller")
-                    if isinstance(runtime_requirements, dict) else None)
+    requirements = runtime_requirements.get("worktree-controller") if isinstance(runtime_requirements, dict) else None
     results.append(controller_state(requirements, controller, controller_runtime_root, controller_source, agents_root))
     instructions = instruction_state(repo, agents_root, codex_home, claude_home)
     compatibility_sha = fingerprint(sources.compatibility)
     identity = {
         "compatibility_sha256": compatibility_sha,
-        "tools": [{k: v for k, v in item.items() if k not in {"artifact_verification"}}
-                  for item in results],
+        "tools": [{k: v for k, v in item.items() if k not in {"artifact_verification"}} for item in results],
         "instructions": instructions,
     }
     digest = fingerprint(identity)
     return {
-        "schema_version": 1, "operation": "doctor",
+        "schema_version": 1,
+        "operation": "doctor",
         "status": "PASS" if all(item["status"] == "PASS" for item in [*results, instructions]) else "FAIL",
         "fingerprint": digest,
         "compatibility_sha256": compatibility_sha,
         "toolchain_contract_version": sources.compatibility.get("toolchain_contract_version"),
         "refresh_required": previous_fingerprint != digest,
-        "tools": results, "instructions": instructions,
+        "tools": results,
+        "instructions": instructions,
         "mutation_performed": False,
     }
 
 
 def summary(result: dict[str, Any]) -> dict[str, Any]:
     return {
-        **{k: result[k] for k in ("schema_version", "operation", "status", "fingerprint",
-                                  "toolchain_contract_version", "compatibility_sha256",
-                                  "refresh_required", "mutation_performed")},
-        "tools": [{k: item.get(k) for k in ("tool", "status", "canonical_tool_version",
-                    "installed_binary_version", "software_version", "active_commit",
-                    "cli_contract_version", "storage_layout_version", "errors")}
-                  for item in result["tools"]],
-        "instructions": {k: result["instructions"].get(k) for k in (
-            "status", "total_bytes", "configured_limit_bytes", "warnings", "errors",
-            "pending_checkouts", "session_reload")},
+        **{
+            k: result[k]
+            for k in (
+                "schema_version",
+                "operation",
+                "status",
+                "fingerprint",
+                "toolchain_contract_version",
+                "compatibility_sha256",
+                "refresh_required",
+                "mutation_performed",
+            )
+        },
+        "tools": [
+            {
+                k: item.get(k)
+                for k in (
+                    "tool",
+                    "status",
+                    "canonical_tool_version",
+                    "installed_binary_version",
+                    "software_version",
+                    "active_commit",
+                    "cli_contract_version",
+                    "storage_layout_version",
+                    "errors",
+                )
+            }
+            for item in result["tools"]
+        ],
+        "instructions": {
+            k: result["instructions"].get(k)
+            for k in (
+                "status",
+                "total_bytes",
+                "configured_limit_bytes",
+                "warnings",
+                "errors",
+                "pending_checkouts",
+                "session_reload",
+            )
+        },
     }

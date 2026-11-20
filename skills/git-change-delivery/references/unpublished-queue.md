@@ -86,7 +86,7 @@ scope 静默新增 active record。
 - `intentionally_unpublished / not_applicable / not_run` → `pending`；
 - `publication_blocked / <known scope> / blocked` → `blocked`；
 - Finalizer 以 `publish_now` 开始但 outcome 为 `blocked` → queue `blocked`。这只是 ingestion
-  compatibility；最终三行报告仍必须按主合同归一为 `publication_blocked / <known scope> / blocked`；
+  compatibility；主合同结束报告仍必须归一为 `publication_blocked / <known scope> / blocked`；
 - `publish_now / commit_and_push / remote_pushed` → `blocked`；
 - `publish_now / commit_only / local_commit_created` → `pending`；
 - `not_applicable` 和没有既有 record 的 `publish_now / commit_and_push / remote_verified` 不创建

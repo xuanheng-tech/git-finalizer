@@ -1,10 +1,10 @@
 # GF Integration Boundary
 
-Git Finalizer（GF）核心只依赖 GNU bash、Git、GNU utilities 与 `PATH` 中的 Python 3.11+。所有外部集成都是
+Git Finalizer（GF）核心只依赖 Git 与 `PATH` 中的 Python 3.12+（零运行时第三方依赖）。所有外部集成都是
 **请求触发**的 adapter；本文件是适配器边界的权威清单，由
 `tests/test_integration_boundaries.sh` 机器核对。每个 adapter 在其**每个**承载文件中以唯一
 `# GF-INTEGRATION-ADAPTER: <name> (single site...)` 标记锚定外部布局知识；同一 adapter 可以
-跨文件（retirement 同时标记 CLI 与 protocol companion），但任何文件内不得出现第二处该标记，
+跨文件，但任何文件内不得出现第二处该标记，
 其他位置禁止新增同类布局字面量。
 
 ## 边界矩阵
@@ -14,7 +14,7 @@ Git Finalizer（GF）核心只依赖 GNU bash、Git、GNU utilities 与 `PATH` �
 | Worktree Controller（retirement） | `--retire-local-branch` / `--retire-remote-branch` + `--retirement-plan-id` | `capabilities --json` 中 `branch_retirement_version`、`branch_retirement_verify_version`、`branch_retirement_execution_version` 均为 1 | plan v1、公开 `branch-retirement-execution/v1` 与 `retirement-execution-result/v1` | 缺执行器 → `Worktree Controller is required`；能力拒绝/不匹配 → `Controller capabilities refused or failed` / `required public retirement protocols`；receipt 与 ref 矛盾 → `already records a consumed receipt`；仅有旧 namespace → `legacy codex-worktree namespace` | 只消费公开 status/verify/authorize/complete 与 executions/record；digest 不透明，不读私有文件。CLI 仅检查旧/新 namespace 的目录存在性以产生迁移 blocker |
 | Worktree Controller（integration publication） | 仅 `--publish-integration-candidate` | `capabilities --json` 中 `integration_publication_execution_version` 为 1 | 公开 `integration-publication-session/v1` JSON-line session | 缺执行器 → `Worktree Controller is required`；缺能力 → `required public integration publication protocol`；核验、授权或完成确认拒绝 → blocked；断连/超时先读远端事实再重入 | 只消费公开 identity、verify/authorize/complete 与 producer-observed completion；不读 lease、lock、binding、record、intent 或 prepared receipt 私有文件 |
 | Worktree Controller（reviewed sensitive source） | 仅 `--reviewed-sensitive-source <file>` | 无状态读取；linkage 四字段作为不透明 identity 消费 | review-file schema 由 GF 自身合同定义 | 缺 linkage → `source review 要求完整 Controller linkage` | 无（不触任何 WC state 布局） |
-| Workflow deployment health | 仅 `tool-skill-sync doctor` | 只读 installed Controller capabilities 与 frozen runtime contract | compatibility 中显式列出的 CLI、capability、storage 版本 | 无安装、字节或合同漂移 → `FAIL`；不激活 runtime | Controller 可执行文件名、active runtime 的 `site-packages/worktree_controller/tool_cli_contract.json`、installed instructions 与 Skills 的路径身份；只在 `tooling/workflow_health.py` 的独立 adapter 内 |
+| Workflow deployment health | 仅 `tool-skill-sync doctor` | 只读 installed Controller capabilities 与 frozen runtime contract | compatibility 中显式列出的 CLI、capability（`>=`）、storage 版本 | 无安装、字节或合同漂移 → `FAIL`；不激活 runtime | Controller 可执行文件名、active runtime 的 `site-packages/worktree_controller/tool_cli_contract.json`、installed instructions 与多客户端 Skills 路径身份；只在 `src/git_finalizer/toolchain/workflow_health.py` 的独立 adapter 内 |
 | Snapshot Runner evidence | 仅 `--initial-publish --snapshot <64hex>` | PATH 上的 `snapshot-runner`；调用方环境（含 `XDG_STATE_HOME`）原样传给 producer | 公开 `snapshot-runner read <id> --repo <root> [--field <name>]`，`evidence_schema_version` 1；产物 era、格式与私有存储由 producer 自行校验 | 缺执行器 → `Snapshot Runner is unavailable on PATH`；producer 拒绝 → `Snapshot Runner refused the evidence read (<CODE>)`；`partial`/gap/字段不符 → `snapshot evidence rejected: ...`，永不静默跳过 | 只消费公开 read JSON 与 diff-audit 初始发布字段；不读 store 布局、artifact 文件名或 security epoch |
 | Gitea repository bootstrap | 仅 `--repo-plan` / `--repo-ensure` | 无；目标 URL 每次显式传入，无默认主机 | Gitea REST `/api/v1`（credential-free 探测，凭据走 Git authority） | 缺 `--gitea-url`/`--owner`/`--repo-name`/`--visibility` → argparse 用法错误 exit 2；探测或权限失败 → `BLOCK_INVALID_CONFIG`/`BLOCK_PERMISSION`/`BLOCK_INVALID_OWNER`/`BLOCK_REMOTE_MISMATCH` + `status=blocked` + exit 2（其中 `BLOCK_REMOTE_MISMATCH` 可能在 repository 已创建之后产生，是否变更看 `bootstrap.executed`）；决策无法归类 → `status=failed` + exit 3 | 只读 GET 与显式 POST 的端点形状集中于此 companion；POST 只在决策为 `CREATE_ALLOWED` 且调用方显式给出 `--repo-ensure` 时发出（GF 侧不设交互确认门，显式命令本身即授权边界） |
 
@@ -53,12 +53,12 @@ Git Finalizer（GF）核心只依赖 GNU bash、Git、GNU utilities 与 `PATH` �
   `allocation_id,authority_key,branch,commit,dry_run,exit_code,final_phase,finalizer_version,mode,mode_result,next_action,next_action_omitted_characters,push,reason,reason_omitted_characters,repository,repository_id,requested_path_count,role,status,summary_schema_version,task_key,upstream,warning_characters_omitted,warnings,warnings_omitted,worktree_path`；
   `summary_schema_version` 保持 1。该集合与模式无关（由 `tests/test_integration_boundaries.sh` 对
   verify-only、commit-only 与 blocked 路径核对）。
-- 另有四个**条件键**只在相关场景出现，消费者必须按可选处理：`resume`（resume 接口的恢复上下文）、
+- 另有五个**条件键**只在相关场景出现，消费者必须按可选处理：`error_code`（所有非 `success` 响应上的结构化错误码）、`resume`（resume 接口的恢复上下文）、
   `fixture_exceptions`（fixture 例外记录）、`reviewed_sensitive_sources`（已消费的 sensitive-source
-  review 身份）、`diagnostics`（实际入口/sidecar 路径与摘要，以及同一次扫描绑定的首个内容拒绝元数据）。
+  review 身份）、`diagnostics`（实际入口/扫描器路径与摘要，以及同一次扫描绑定的首个内容拒绝元数据）。
   `diagnostics.schema_version` 为 1；内容 finding 仅含规则、路径、扫描阶段、大小、SHA-256 和可用的
   blob OID，不含命中值或源码片段。消费者忽略未知可选字段，继续按原三元组判断；其它拒绝的
-  `content_scan` 为 null。内容拒绝/风险自动带诊断，其它 bash core 场景通过 `--summary --diagnostics`
+  `content_scan` 为 null。内容拒绝/风险自动带诊断，其它 core 场景通过 `--summary --diagnostics`
   按需展开；普通摘要保持原输出预算。测试从源码提取条件键并要求本文件逐个列出，新增条件键必须同时改文档。
 - 序列化失败的兜底对象使用**不同**的键形状（`summary_status`/`operation_status`/
   `operation_exit_code`），它不是正常合同的一部分，只表示“无法产出合规摘要”，Agent 必须按失败处理。
@@ -89,8 +89,8 @@ Git Finalizer（GF）核心只依赖 GNU bash、Git、GNU utilities 与 `PATH` �
   列出的 bash `next_action` 枚举。Agent 不得假设 companion 输出与 `--summary` 同形。
   `progress` schema 1 保留精确执行阶段、已验证的 candidate/lease/run identity、push 尝试和退出码、
   live remote 观测与 Controller completion 状态；`blocked` 不表示远端未变化。字段定义见
-  [agent-contract.md](agent-contract.md)。核心 envelope 的内部序列化归 `git-finalize-runtime.py`，
-  通过命名状态传入，不再依赖位置参数顺序。
+  字段定义见 [agent-contract.md](agent-contract.md)。核心 envelope 的内部序列化归
+  `src/git_finalizer/delivery/runtime.py`，通过命名状态传入，不再依赖位置参数顺序。
   `tool_cli_contract.json.exit_codes` 与 bootstrap 的分类实现由 `tests/test_tool_contract.py`
   双向核对，且核对是“反谎话”的：合同文本必须声明 `BLOCK_*` 为 `status=blocked`、必须把远端变更
   事实指向 `bootstrap.executed`、必须承认 `1` 来自 pre-execution guard/未捕获异常，并禁止任何
@@ -112,14 +112,14 @@ Git Finalizer（GF）核心只依赖 GNU bash、Git、GNU utilities 与 `PATH` �
 
 ## 禁止扩散清单（测试强制）
 
-强制范围是**生产代码面**：根 CLI `git-finalize`、根目录 `git-finalize-*.py` 伴生与
-`tooling/*.py`，按文件系统枚举（含未纳入 git 的同类新文件）。测试 fixture、文档与本文件、
+强制范围是**生产代码面**：根入口 `git-finalize`、`tool-skill-sync`、`tool-temp-dir` 与
+`src/git_finalizer/**/*.py`，按文件系统枚举（含未纳入 git 的同类新文件）。测试 fixture、文档与本文件、
 Skill 参考和 `.gitea/workflows` 不在该范围内：前者必须能构造外部状态才能验证合同，后者不含
-运行时布局推导。`tooling/tool_skill_sync.py` 会按**名称**引用 sibling 工具（它是安装器），但
+运行时布局推导。`src/git_finalizer/toolchain/tool_skill_sync.py` 会按**名称**引用 sibling 工具（它是安装器），但
 不引用任何对端 state 布局；下面的 ledger 因此按布局字面量与外部可执行文件探测位点约束它。
 
-- `codex-worktree` 只允许出现在 CLI 的 namespace 迁移 blocker。
-- `worktree-controller/v1` 状态根只允许出现在 CLI 的目录存在性检查。
+- `codex-worktree` 只允许出现在 retirement adapter 的 namespace 迁移 blocker。
+- `worktree-controller/v1` 状态根只允许出现在 retirement adapter 的目录存在性检查。
 - `repo.lock`、`publication-lease` 及 allocation/intent/prepared receipt 私有布局禁止出现在生产代码。
 - `branch-retirement-plans`/`branch-retirement-receipts` 文件名和 `worktree-policy.toml` policy term
   禁止出现在生产代码；retirement 只消费公开接口。

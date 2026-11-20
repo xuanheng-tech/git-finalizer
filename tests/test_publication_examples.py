@@ -8,7 +8,6 @@ import unittest
 
 import test_fixture_exceptions as fixtures
 
-
 HEADER = "-" * 5 + "BEGIN PRIVATE KEY" + "-" * 5
 BASELINE = "# Changelog\n\n## 0.1.0\n\nExample: `" + HEADER + "` is a header literal.\nHistorical notes.\n"
 PREPARED = BASELINE.replace("## 0.1.0", "## 0.2.0\n\nPrepared release notes.\n\n## 0.1.0")

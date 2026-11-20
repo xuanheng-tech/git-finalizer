@@ -127,8 +127,8 @@ era、格式与私有存储由 Snapshot Runner 自行校验，因此需以普通
 路径集合或 snapshot artifact 漂移都会停止。未提供 `--snapshot` 时，既有 normal、initial 和
 resume 工作流语义保持不变。
 
-`git-finalize-snapshot-verify.py` 是主入口同目录下的标准库-only companion，由主入口
-固定定位和调用，不是独立发布命令；安装 Finalizer 时必须与主脚本一起部署。
+`src/git_finalizer/delivery/snapshot_verify.py` 是内嵌在纯 Python 包中的标准库证据验证 adapter，由主入口
+按需调用，不暴露独立外部依赖。
 
 若首次发布已经创建 root commit、但 push 未确认完成，可用完整 HEAD OID 恢复同一次发布：
 
@@ -171,8 +171,9 @@ git-finalize \
   --summary
 ```
 
-该入口要求 candidate clean、attached，并绑定 pre-0.6 `VALIDATED` intent 或 Controller 0.6+
-`PUBLISHING` V2 intent；V2 还必须精确匹配 publication identity 与完整 prepared receipt。
+该入口要求 candidate clean、attached，由 Controller 在受控 integration lease 与
+`publication-execution-session` 协议（`integration_publication_execution_version == 1`，`INTEGRATING`
+allocation 与 `PUBLISHING` intent）下驱动；还必须精确匹配 publication identity 与完整 prepared receipt。
 Controller allocation 必须处于 `INTEGRATING`。它在 Controller 现有 repository lock 下串行执行
 live expected-main 检查、
 non-force `candidate:refs/heads/<target>` push 和 remote verify；不修改 canonical files、index 或

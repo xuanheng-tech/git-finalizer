@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 import os
@@ -48,7 +48,7 @@ class ReviewedSourceTests(unittest.TestCase):
         )
         self.evidence.chmod(0o600)
         self.file = self.base / "review.json"
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.review = {
             "schema_version": 1,
             "kind": "reviewed-sensitive-source",
@@ -456,7 +456,7 @@ class ReviewedSourceTests(unittest.TestCase):
                 self.write_review()
                 self.assert_publish_blocked()
         self.review = copy.deepcopy(original)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.review["reviewed_at"] = (now - timedelta(days=2)).isoformat()
         self.review["expires_at"] = (now - timedelta(days=1)).isoformat()
         self.write_review()
@@ -582,7 +582,7 @@ class ReviewedSourceTests(unittest.TestCase):
         self.assert_blocked()
 
     def test_expired_and_overlong_review_block(self) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.review["reviewed_at"] = (now - timedelta(days=2)).isoformat()
         self.review["expires_at"] = (now - timedelta(days=1)).isoformat()
         self.write_review()
@@ -655,6 +655,36 @@ class ReviewedSourceTests(unittest.TestCase):
         self.assertTrue(data["commit"]["created"])
         self.assertFalse(data["push"]["executed"])
         self.assertEqual(self.git("rev-parse", "HEAD"), data["commit"]["sha"])
+
+    def test_benign_edit_with_committed_baseline_passes_while_new_secret_blocks(self) -> None:
+        remote = self.prepare_branch_publication()
+        baseline = 'DEFAULT_NOTE = "token = \'SYNTHETIC_BASELINE_ONLY_VALUE\'"\ndef role():\n    return "production"\n'
+        self.source.write_text(baseline, encoding="utf-8")
+        self.commit_fixture()
+        self.git("push", "-qu", "origin", "feature/reviewed-source")
+
+        benign = baseline + 'def note():\n    return "benign update"\n'
+        self.source.write_text(benign, encoding="utf-8")
+        self.review["reviews"][0]["sha256"] = sha(benign.encode("utf-8"))
+        self.write_review()
+
+        status, data = self.run_finalizer("verify-only")
+        self.assertEqual(status, 0, data)
+        self.assertEqual(data["reviewed_sensitive_sources"][0]["content_scan"], "passed")
+
+        status, data = self.run_finalizer("commit-only")
+        self.assertEqual(status, 0, data)
+        self.assertTrue(data["commit"]["created"])
+        self.assertEqual(data["reviewed_sensitive_sources"][0]["content_scan"], "passed")
+
+        new_secret = benign + 'pass' + 'word = "SYNTHETIC_NEW_BLOCKED_SECRET_123"\n'
+        self.source.write_text(new_secret, encoding="utf-8")
+        self.review["reviews"][0]["sha256"] = sha(new_secret.encode("utf-8"))
+        self.write_review()
+        blocked = self.assert_blocked()
+        self.assertNotIn("SYNTHETIC_NEW_BLOCKED_SECRET_123", json.dumps(blocked))
+        self.assertNotEqual(blocked["reviewed_sensitive_sources"][0]["content_scan"], "passed")
+        self.assertTrue(remote.is_dir())
 
 
 if __name__ == "__main__":

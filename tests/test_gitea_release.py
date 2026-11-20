@@ -13,7 +13,6 @@ import threading
 import unittest
 import urllib.parse
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 

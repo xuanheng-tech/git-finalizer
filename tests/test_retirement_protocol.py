@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 from contextlib import redirect_stderr
 from datetime import UTC, datetime, timedelta
-import importlib.util
 import io
 import json
 import os
@@ -14,8 +13,11 @@ import tempfile
 import unittest
 from unittest import mock
 
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
+
+from git_finalizer.delivery import retirement_plan as _retirement_plan
 
 
 class RetirementProtocolTests(unittest.TestCase):
@@ -38,10 +40,7 @@ class RetirementProtocolTests(unittest.TestCase):
         self.git("commit", "-m", "fixture")
         self.oid = self.git("rev-parse", "HEAD")
         self.git("branch", "feat/retire")
-        spec = importlib.util.spec_from_file_location("retirement_protocol", ROOT / "git-finalize-retirement-plan.py")
-        assert spec is not None and spec.loader is not None
-        self.protocol = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(self.protocol)
+        self.protocol = _retirement_plan
         self.arguments = argparse.Namespace(
             repo=self.repo, plan_id="1" * 64, operation="local", branch="feat/retire",
             remote="origin", integrated_into="main", expected_oid=self.oid,
@@ -112,10 +111,15 @@ class RetirementProtocolTests(unittest.TestCase):
 
     def blocked(self, operation) -> str:
         diagnostics = io.StringIO()
-        with redirect_stderr(diagnostics), self.assertRaises(SystemExit) as stopped:
-            operation()
-        self.assertEqual(stopped.exception.code, 1)
-        return diagnostics.getvalue()
+        try:
+            with redirect_stderr(diagnostics):
+                operation()
+        except self.protocol.RetirementBlocked as exc:
+            return str(exc) + diagnostics.getvalue()
+        except SystemExit as stopped:
+            self.assertEqual(stopped.code, 1)
+            return diagnostics.getvalue()
+        self.fail("expected RetirementBlocked or SystemExit(1)")
 
     def test_actual_cas_requires_controller_completion(self) -> None:
         with mock.patch.object(self.protocol, "controller_call", side_effect=self.controller):
@@ -240,7 +244,10 @@ class RetirementProtocolTests(unittest.TestCase):
             with self.subTest(code=code):
                 calls: list[str] = []
 
-                def controller(repo: Path, command: str, *arguments: str) -> dict:
+                def controller(
+                    repo: Path, command: str, *arguments: str,
+                    calls=calls, code=code, blockers=blockers,
+                ) -> dict:
                     calls.append(command)
                     if command == "branch-retirement-authorize":
                         return {"code": code, "blockers": blockers, "authorization": None}
@@ -279,7 +286,7 @@ class RetirementProtocolTests(unittest.TestCase):
                      mock.patch.object(self.protocol, "git_run", wraps=self.protocol.git_run) as git_run:
                     progress = {"mutation_attempted": False, "controller_complete": False,
                                 "authorization_id": None}
-                    self.blocked(lambda: self.protocol.execute(self.arguments, progress=progress))
+                    self.blocked(lambda p=progress: self.protocol.execute(self.arguments, progress=p))
                 self.assertFalse(progress["controller_complete"])
                 self.assertNotIn("receipt_id", progress)
                 self.assertFalse(any(call.kwargs.get("mutation") for call in git_run.call_args_list))

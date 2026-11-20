@@ -55,37 +55,40 @@ run_case() {
     printf 'ok - %s\n' "$current_case"
 }
 
-# Production code surface: the root CLI, its root-level companions and tooling/.
-# Enumerated from the filesystem so a brand-new untracked companion cannot escape
+# Production code surface: the root CLI wrappers and pure-Python package sources.
+# Enumerated from the filesystem so a brand-new untracked module cannot escape
 # the ledger before it is committed.
 production_surface() {
     local path
     for path in "$project_root"/git-finalize \
-        "$project_root"/git-finalize-*.py \
-        "$project_root"/tooling/*.py; do
+        "$project_root"/tool-skill-sync \
+        "$project_root"/tool-temp-dir; do
         if [[ -f $path ]]; then
             printf '%s\n' "${path#"$project_root"/}"
         fi
     done
+    while IFS= read -r path; do
+        [[ -n $path ]] && printf '%s\n' "${path#"$project_root"/}"
+    done < <(find "$project_root/src/git_finalizer" -type f -name '*.py' | LC_ALL=C sort)
 }
 
 adapter_files() {
     case "$1" in
-        legacy-namespace) printf 'git-finalize ' ;;
+        legacy-namespace) printf 'src/git_finalizer/delivery/retirement_plan.py ' ;;
         controller-state-root)
-            printf 'git-finalize ' ;;
+            printf 'src/git_finalizer/delivery/retirement_plan.py ' ;;
         controller-lock)
             printf '' ;;
         controller-lease)
             printf '' ;;
         controller-private-inventory) printf '' ;;
         snapshot-state-root) printf '' ;;
-        snapshot-executable-probe) printf 'git-finalize-snapshot-verify.py ' ;;
-        gitea-api) printf 'git-finalize-repo-bootstrap.py ' ;;
+        snapshot-executable-probe) printf 'src/git_finalizer/delivery/snapshot_verify.py ' ;;
+        gitea-api) printf 'src/git_finalizer/delivery/repo_bootstrap.py ' ;;
         retirement-plan-files) printf '' ;;
         controller-policy-term) printf '' ;;
-        controller-executable-probe) printf 'git-finalize-integration-publish.py git-finalize-retirement-plan.py tooling/workflow_health.py ' ;;
-        controller-runtime-contract) printf 'tooling/workflow_health.py ' ;;
+        controller-executable-probe) printf 'src/git_finalizer/delivery/integration_publish.py src/git_finalizer/delivery/retirement_plan.py src/git_finalizer/toolchain/workflow_health.py ' ;;
+        controller-runtime-contract) printf 'src/git_finalizer/toolchain/workflow_health.py ' ;;
         *) printf 'unknown ledger: %s\n' "$1" >&2; return 1 ;;
     esac
 }
@@ -112,12 +115,11 @@ assert_ledger() {
 test_adapter_markers_are_single_sites() {
     local entry file marker hits
     for entry in \
-        'git-finalize:worktree-controller-retirement' \
-        'git-finalize-retirement-plan.py:worktree-controller-retirement' \
-        'git-finalize-integration-publish.py:worktree-controller-integration-publication' \
-        'git-finalize-snapshot-verify.py:snapshot-runner-evidence' \
-        'git-finalize-repo-bootstrap.py:gitea-repository-bootstrap' \
-        'tooling/workflow_health.py:workflow-deployment-health'; do
+        'src/git_finalizer/delivery/retirement_plan.py:worktree-controller-retirement' \
+        'src/git_finalizer/delivery/integration_publish.py:worktree-controller-integration-publication' \
+        'src/git_finalizer/delivery/snapshot_verify.py:snapshot-runner-evidence' \
+        'src/git_finalizer/delivery/repo_bootstrap.py:gitea-repository-bootstrap' \
+        'src/git_finalizer/toolchain/workflow_health.py:workflow-deployment-health'; do
         file=${entry%%:*}
         marker=${entry#*:}
         # Counted by match, not by line, so two markers on one line cannot hide.
@@ -169,19 +171,19 @@ test_documented_matrix_matches_code() {
         [[ -n $needle ]] || continue
         grep -q -F -- "$needle" "$doc" ||
             fail_assertion "boundary matrix lost its blocker wording: $needle"
-        git -C "$project_root" grep -q -F -- "$needle" -- "$needle_file" ||
+        grep -q -F -- "$needle" "$project_root/$needle_file" ||
             fail_assertion "documented blocker missing from ${needle_file}: $needle"
     done <<'NEEDLES'
-refused or failed	git-finalize-retirement-plan.py
-required public retirement protocols	git-finalize-retirement-plan.py
-required public integration publication protocol	git-finalize-integration-publish.py
-already records a consumed receipt	git-finalize-retirement-plan.py
-Worktree Controller is required	git-finalize-retirement-plan.py
-legacy codex-worktree namespace	git-finalize
-source review 要求完整 Controller linkage	git-finalize
-snapshot evidence rejected	git-finalize-snapshot-verify.py
-BLOCK_INVALID_CONFIG	git-finalize-repo-bootstrap.py
-CREATE_ALLOWED	git-finalize-repo-bootstrap.py
+refused or failed	src/git_finalizer/delivery/retirement_plan.py
+required public retirement protocols	src/git_finalizer/delivery/retirement_plan.py
+required public integration publication protocol	src/git_finalizer/delivery/integration_publish.py
+already records a consumed receipt	src/git_finalizer/delivery/retirement_plan.py
+Worktree Controller is required	src/git_finalizer/delivery/retirement_plan.py
+legacy codex-worktree namespace	src/git_finalizer/delivery/retirement_plan.py
+source review 要求完整 Controller linkage	src/git_finalizer/delivery/source_review.py
+snapshot evidence rejected	src/git_finalizer/delivery/snapshot_verify.py
+BLOCK_INVALID_CONFIG	src/git_finalizer/delivery/repo_bootstrap.py
+CREATE_ALLOWED	src/git_finalizer/delivery/repo_bootstrap.py
 NEEDLES
     for needle in 'XDG_STATE_HOME' 'summary_schema_version' \
         'resolve_blocker_and_retry' 'commit_retained' 'GF-INTEGRATION-ADAPTER'; do
@@ -227,12 +229,19 @@ test_summary_vocabulary_is_closed() {
         [[ -n $literal ]] || continue
         grep -q -F -- "\`$literal\`" "$doc" ||
             fail_assertion "undocumented next_action value: $literal"
-    done < <(grep -o "summary_next_action='[a-z_]*'" "$finalizer" |
-        sed "s/.*='\(.*\)'/\1/" | grep -v '^$' | sort -u)
+    done < <(PYTHONPATH="$project_root/src" python3 -B -c '
+from git_finalizer.delivery.runtime import ALLOWED_NEXT_ACTIONS
+for item in sorted(ALLOWED_NEXT_ACTIONS):
+    if item:
+        print(item)
+')
 
     local statuses
-    statuses=$(grep -o "summary_status='[a-z_]*'" "$finalizer" |
-        sed "s/.*='\(.*\)'/\1/" | sort -u)
+    statuses=$(PYTHONPATH="$project_root/src" python3 -B -c '
+from git_finalizer.delivery.runtime import ALLOWED_STATUSES
+for item in sorted(ALLOWED_STATUSES):
+    print(item)
+')
     [[ $(printf '%s\n' "$statuses" | wc -l) -ge 3 ]] ||
         fail_assertion 'summary status extraction collapsed'
     while IFS= read -r literal; do
@@ -249,8 +258,11 @@ test_summary_vocabulary_is_closed() {
         [[ ",$fixed," == *",$key,"* ]] && continue
         grep -q -F -- "\`$key\`" "$doc" ||
             fail_assertion "conditional summary key is undocumented: $key"
-    done < <(grep -o '^        result\["[a-z_]*"\] = ' "$project_root/git-finalize-runtime.py" |
-        sed 's/.*\["\([a-z_]*\)"\].*/\1/' | sort -u)
+    done < <(PYTHONPATH="$project_root/src" python3 -B -c '
+from git_finalizer.delivery.runtime import CONDITIONAL_SUMMARY_KEYS
+for item in sorted(CONDITIONAL_SUMMARY_KEYS):
+    print(item)
+')
 }
 
 test_companions_emit_their_own_receipts() {
@@ -265,8 +277,8 @@ test_companions_emit_their_own_receipts() {
     git -C "$repo" commit --quiet -m seed
 
     rc=0
-    HOME=$case_dir/fakehome python3 -B \
-        "$project_root/git-finalize-repo-bootstrap.py" --repo-plan \
+    HOME=$case_dir/fakehome PYTHONPATH="$project_root/src" python3 -B \
+        -m git_finalizer.delivery.repo_bootstrap --repo-plan \
         --repo "$repo" --gitea-url http://127.0.0.1:9 --owner boundary \
         --repo-name boundary-probe --visibility private --timeout 3 --summary \
         >"$case_dir/bootstrap.json" 2>&1 || rc=$?
@@ -282,7 +294,7 @@ assert document["status"] in {"blocked", "failed"}, document["status"]
         fail_assertion 'bootstrap companion drifted away from its own receipt shape'
 
     rc=0
-    python3 -B "$project_root/git-finalize-integration-publish.py" \
+    PYTHONPATH="$project_root/src" python3 -B -m git_finalizer.delivery.integration_publish \
         --publish-integration-candidate "$(git -C "$repo" rev-parse HEAD)" \
         --repo "$repo" --lease-id 00000000-0000-0000-0000-000000000000 \
         --run-id boundary-probe --summary \
@@ -292,7 +304,7 @@ assert document["status"] in {"blocked", "failed"}, document["status"]
 import json, sys
 document = json.load(open(sys.argv[1]))
 assert sorted(document) == sorted(
-    "final_phase finalizer_version mode next_action progress reason status summary_schema_version".split()
+    "error_code final_phase finalizer_version mode next_action progress reason status summary_schema_version".split()
 ), sorted(document)
 assert document["status"] == "blocked", document["status"]
 assert document["next_action"] == "read_remote_fact_and_reenter_controller_publish_gate"
@@ -340,7 +352,7 @@ assert document["final_phase"] == "cli", document["final_phase"]
 assert document["next_action"] == "resolve_blocker_and_retry", document["next_action"]
 assert document["exit_code"] == int(sys.argv[3]), (document["exit_code"], sys.argv[3])
 assert document["reason"], "blocked summary lost its reason"
-assert set(document) == set(json.load(open(sys.argv[2]))), "error path changed the key set"
+assert set(document) - {"error_code"} == set(json.load(open(sys.argv[2]))), "error path changed the key set"
 ' "$case_dir/blocked.json" "$case_dir/ok.json" "$rc" ||
         fail_assertion 'blocked summary broke the machine contract'
 
@@ -383,9 +395,10 @@ test_snapshot_adapter_reads_only_through_the_public_runner() {
         'printf "workflow_failed: ARTIFACT_NOT_FOUND: snapshot not found\n" >&2' \
         'exit 2' >"$stub_bin/snapshot-runner"
     chmod 700 "$stub_bin/snapshot-runner"
-    if env -u PYTHONDONTWRITEBYTECODE PATH="$stub_bin:$PATH" READER_LOG="$case_dir/reader.log" \
+    if env -u PYTHONDONTWRITEBYTECODE PATH="$stub_bin:$PATH" PYTHONPATH="$project_root/src" \
+        READER_LOG="$case_dir/reader.log" \
         XDG_STATE_HOME="$case_dir/redirected-state" "$python" -B \
-        "$project_root/git-finalize-snapshot-verify.py" \
+        -m git_finalizer.delivery.snapshot_verify \
         "$snapshot_id" "$repo" head f >"$case_dir/refused.log" 2>&1; then
         fail_assertion 'snapshot adapter accepted a refused evidence read'
     fi
@@ -404,7 +417,8 @@ test_snapshot_adapter_reads_only_through_the_public_runner() {
     # Without an installed producer the adapter fails closed instead of reading files.
     empty_bin=$case_dir/empty-bin
     mkdir -p -- "$empty_bin"
-    if env PATH="$empty_bin" "$python" -B "$project_root/git-finalize-snapshot-verify.py" \
+    if env PATH="$empty_bin" PYTHONPATH="$project_root/src" "$python" -B \
+        -m git_finalizer.delivery.snapshot_verify \
         "$snapshot_id" "$repo" head f >"$case_dir/absent.log" 2>&1; then
         fail_assertion 'snapshot adapter accepted evidence without Snapshot Runner'
     fi

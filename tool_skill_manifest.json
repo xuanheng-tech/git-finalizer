@@ -3,7 +3,7 @@
     "owner": "git-finalizer",
     "path": "skills/git-change-delivery/SKILL.md"
   },
-  "canonical_skill_sha256": "010cb09faf50921149b5d22b26093d9445d15461e8d3f10b7faff35259cd8e45",
+  "canonical_skill_sha256": "d1525f9aeb9dcdda18fc9a5e8914ba3ba7c7ed26d9ec5463ca1359b428940bf1",
   "compatibility_skill": {
     "name": "three-tool-git-workflow",
     "path": "skills/three-tool-git-workflow/SKILL.md",
@@ -12,48 +12,24 @@
   "compatible_toolchain_contract_version": 6,
   "executable": {
     "entrypoints": [
-      "git-finalize"
-    ],
-    "kind": "source_files",
-    "paths": [
       "git-finalize",
-      "git-finalize-integration-publish.py",
-      "git-finalize-repo-bootstrap.py",
-      "git-finalize-retirement-plan.py",
-      "git-finalize-snapshot-verify.py",
-      "git-finalize-source-review.py",
       "tool-skill-sync",
-      "tooling/tool_skill_sync.py",
-      "tooling/tool_temp_dir.py",
-      "tooling/workflow_health.py",
-      "git-finalize-content-scan.py",
-      "git-finalize-runtime.py"
+      "tool-temp-dir"
     ],
-    "production_targets": {
-      "git-finalize": "bin/git-finalize",
-      "git-finalize-content-scan.py": "bin/git-finalize-content-scan.py",
-      "git-finalize-integration-publish.py": "bin/git-finalize-integration-publish.py",
-      "git-finalize-repo-bootstrap.py": "bin/git-finalize-repo-bootstrap.py",
-      "git-finalize-retirement-plan.py": "bin/git-finalize-retirement-plan.py",
-      "git-finalize-runtime.py": "bin/git-finalize-runtime.py",
-      "git-finalize-snapshot-verify.py": "bin/git-finalize-snapshot-verify.py",
-      "git-finalize-source-review.py": "bin/git-finalize-source-review.py",
-      "tool-skill-sync": "bin/tool-skill-sync",
-      "tooling/tool_skill_sync.py": "bin/tool-skill-sync-support/tool_skill_sync.py",
-      "tooling/tool_temp_dir.py": "bin/tool-temp-dir",
-      "tooling/workflow_health.py": "bin/tool-skill-sync-support/workflow_health.py"
-    }
+    "kind": "python_console_scripts"
   },
   "install_targets": {
     "skill_directory": "git-change-delivery",
     "stable_entries": [
-      "git-finalize"
+      "git-finalize",
+      "tool-skill-sync",
+      "tool-temp-dir"
     ]
   },
-  "public_cli_contract_sha256": "9bac54a6637998375afc98e5e3c5e48faa506ff1d0f17987938b1e8102f50282",
+  "public_cli_contract_sha256": "20c9a33eeeb47d80a1b83ccf878b906e13bda4465e044cbe525894e3bf5f36a5",
   "schema_version": 2,
   "skill_contract_version": 2,
   "tool_commit": "@release",
   "tool_name": "git-finalizer",
-  "tool_version": "1.9.9"
+  "tool_version": "2.0.0"
 }

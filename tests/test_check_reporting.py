@@ -1,7 +1,7 @@
 """Keep skipped execution and failed groups visible at the existing check entry point."""
 from __future__ import annotations
 
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
 from pathlib import Path
@@ -90,15 +90,14 @@ class CheckReportingTests(unittest.TestCase):
                            "reason": "fixture unavailable" if status == "SKIP" else ""}
                           for status in statuses]
 
-                def run(command, **kwargs):
+                def run(command, *, groups=groups, exit_code=exit_code, **kwargs):
                     record = Path(kwargs["env"]["GF_TEST_GROUP_RESULTS"])
                     record.write_text("".join(json.dumps(group) + "\n" for group in groups))
                     return subprocess.CompletedProcess(command, exit_code)
 
                 results: list[dict[str, str]] = []
-                with patch.object(subprocess, "run", side_effect=run):
-                    with redirect_stdout(io.StringIO()):
-                        passed = CHECK["shell_groups"](results, **{option: True})
+                with patch.object(subprocess, "run", side_effect=run), redirect_stdout(io.StringIO()):
+                    passed = CHECK["shell_groups"](results, **{option: True})
                 self.assertEqual(passed, expected)
                 if not expected:
                     self.assertIn("FAIL", [result["status"] for result in results])
@@ -109,10 +108,13 @@ class CheckReportingTests(unittest.TestCase):
     def run_units(self, cases: list[unittest.TestCase]) -> tuple[bool, list[dict[str, str]], str]:
         results: list[dict[str, str]] = []
         output = io.StringIO()
-        with patch.object(unittest.TestLoader, "discover", return_value=unittest.TestSuite(cases)):
-            with redirect_stdout(output), redirect_stderr(output):
-                passed = CHECK["unit_group"](results, "fixture", Path("unused"))
-                CHECK["summary"](results)
+        with (
+            patch.object(unittest.TestLoader, "discover", return_value=unittest.TestSuite(cases)),
+            redirect_stdout(output),
+            redirect_stderr(output),
+        ):
+            passed = CHECK["unit_group"](results, "fixture", Path("unused"))
+            CHECK["summary"](results)
         return passed, results, output.getvalue()
 
     def test_skipped_tests_keep_their_reason_and_are_not_counted_as_execution(self) -> None:
@@ -150,9 +152,8 @@ class CheckReportingTests(unittest.TestCase):
 
     def test_failed_external_group_keeps_nonzero_status(self) -> None:
         results: list[dict[str, str]] = []
-        with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 7)):
-            with redirect_stdout(io.StringIO()):
-                self.assertFalse(CHECK["command_group"](results, "fixture", ["unused"]))
+        with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 7)), redirect_stdout(io.StringIO()):
+            self.assertFalse(CHECK["command_group"](results, "fixture", ["unused"]))
         self.assertEqual(results, [{"status": "FAIL", "group": "fixture", "reason": "exit 7"}])
 
     def test_shell_skip_is_retained_and_nonzero_exit_cannot_become_pass(self) -> None:

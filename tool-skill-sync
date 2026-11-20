@@ -1,11 +1,18 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env -S python3 -B
+"""Thin repository-root wrapper for `tool-skill-sync` pure-Python CLI."""
 
-script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-implementation="$script_dir/tooling/tool_skill_sync.py"
-if [[ ! -f "$implementation" ]]; then
-    implementation="$script_dir/tool-skill-sync-support/tool_skill_sync.py"
-    source_root=${TOOL_SKILL_SYNC_SOURCE_ROOT:-"$HOME/projects"}
-    exec python3 -B "$implementation" --source-root "$source_root" "$@"
-fi
-exec python3 -B "$implementation" "$@"
+from __future__ import annotations
+
+import sys
+
+sys.dont_write_bytecode = True
+
+from pathlib import Path  # noqa: E402
+_SRC = Path(__file__).resolve().parent / "src"
+if _SRC.is_dir() and str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from git_finalizer.toolchain.tool_skill_sync import main  # noqa: E402
+
+if __name__ == "__main__":
+    raise SystemExit(main())

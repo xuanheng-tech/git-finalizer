@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import re
-import sys
 from datetime import date
 from pathlib import Path
+import re
+import sys
 
 _VERSION_PATTERN = r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
 _VERSION_RE = re.compile(rf"^{_VERSION_PATTERN}$")

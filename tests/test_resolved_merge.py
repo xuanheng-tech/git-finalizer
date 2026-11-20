@@ -7,7 +7,6 @@ import subprocess
 import tempfile
 import unittest
 
-
 FINALIZER = Path(__file__).resolve().parents[1] / "git-finalize"
 
 
@@ -61,9 +60,11 @@ class ResolvedMergeTests(unittest.TestCase):
 
     def finalize(self, mode: str = "verify-only", *, flags: list[str] | None = None) -> dict:
         args = [str(FINALIZER), "--summary", "--repo", str(self.repo)]
-        if mode: args += ["--mode", mode]
+        if mode:
+            args += ["--mode", mode]
         args += flags if flags is not None else ["--merge-parent", self.parent]
-        if mode != "verify-only": args += ["--message", "Complete reviewed merge"]
+        if mode != "verify-only":
+            args += ["--message", "Complete reviewed merge"]
         result = subprocess.run(
             [*args, "--", "f.txt"], env=self.env, capture_output=True,
             text=True, timeout=20,
@@ -103,7 +104,8 @@ class ResolvedMergeTests(unittest.TestCase):
     def test_parent_must_match_exactly_and_only_once(self) -> None:
         for flags in (["--merge-parent", self.base], ["--merge-parent", self.parent[:12]],
                       ["--merge-parent", self.parent, "--merge-parent", self.parent]):
-            with self.subTest(flags=flags): self.blocked_unchanged(flags=flags)
+            with self.subTest(flags=flags):
+                self.blocked_unchanged(flags=flags)
 
     def test_direct_publication_is_never_accepted(self) -> None:
         self.blocked_unchanged(mode="")

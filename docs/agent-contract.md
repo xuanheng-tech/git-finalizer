@@ -17,7 +17,7 @@ fails if a value exists in code but not here, so this page cannot silently drift
 
 ## Envelope
 
-One JSON object per run, always present when a bash-owned lifecycle command runs with
+One JSON object per run, always present when a core lifecycle command runs with
 `--summary`, including on refusals. Field set is mode-independent:
 
 ```
@@ -32,10 +32,11 @@ warnings_omitted, worktree_path
 
 | Key | Appears when |
 | --- | --- |
+| `error_code` | included on every non-success summary (`status != "success"`) with a structured `ErrorCode` |
 | `resume` | a resume interface reported recovery context |
 | `fixture_exceptions` | the run consumed documented fixture exceptions |
 | `reviewed_sensitive_sources` | `--reviewed-sensitive-source` reviews were consumed |
-| `diagnostics` | the bash entrypoint captured its runtime identity and a content refusal/risk occurred, or `--diagnostics` was requested |
+| `diagnostics` | runtime identity was captured and a content refusal/risk occurred, or `--diagnostics` was requested |
 
 ### Metadata-only diagnostics
 
@@ -211,9 +212,9 @@ Thus a completion refusal may be `blocked` while `mutation_attempted=true` and
 infer absence of remote writes from the top-level status. No protocol capability token, Git output
 or matched source content is added to this object.
 
-The Bash core sends named internal state to `git-finalize-runtime.py`; argument order has no
-meaning. Unknown, duplicate or missing fields fail serialization and retain the documented
-serialization-failure fallback. The public core envelope and its schema version are unchanged.
+The Python CLI core serializes `SummaryState` through `src/git_finalizer/delivery/runtime.py`;
+argument order has no external effect. Serialization failures retain the documented fallback object.
+The public core envelope and its schema version remain backward-compatible.
 
 `1` is also possible on either companion when the entrypoint's pre-execution guard finds the
 companion file missing or unsafe, or when an uncaught traceback occurs.

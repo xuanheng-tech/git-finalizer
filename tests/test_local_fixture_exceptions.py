@@ -8,9 +8,8 @@ import shutil
 import subprocess
 import unittest
 
-import test_fixture_exceptions as fixtures
 import test_assignment_content as assignments
-
+import test_fixture_exceptions as fixtures
 
 FAKE = "wrong_" + "secret" + " = '" + "SYNTHETIC_WRONG_RECONNECT_VALUE" + "'\n"
 MODES = ("verify-only", "commit-only")
@@ -135,7 +134,7 @@ class LocalFixtureExceptionTests(unittest.TestCase):
             for staged in (False, True):
                 for mode in MODES:
                     with self.subTest(kind=index, staged=staged, mode=mode):
-                        document = assignments.schema()
+                        document = assignments.metadata_document()
                         document["wrong_secret"] = "SYNTHETIC_WRONG_RECONNECT_VALUE"
                         document["description"] = value
                         raw = json.dumps(document).encode().replace(literal, escaped)

@@ -1,71 +1,29 @@
-"""Exercise NUL transport and producer failure without repository or caller state."""
+"""Exercise NUL transport and producer failure cleanly in pure Python."""
 
 from pathlib import Path
-import re
-import subprocess
+import sys
 import unittest
 
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
+
+from git_finalizer.git_io import parse_nul_records
 
 
 class NulRecordsTests(unittest.TestCase):
-    def run_shell(self, body: str) -> subprocess.CompletedProcess[str]:
-        source = (ROOT / "git-finalize").read_text(encoding="utf-8")
-        match = re.search(r"(?ms)^read_nul_records\(\) \{\n.*?^\}\n", source)
-        self.assertIsNotNone(match)
-        return subprocess.run(
-            ["/bin/bash", "--noprofile", "--norc"],
-            input="set -Eeuo pipefail\n" + match[0] + body,
-            env={"PATH": "/usr/bin:/bin", "LC_ALL": "C", "BASH_ENV": "/dev/null"},
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
+    def test_literal_records_include_empty_tabs_and_newlines(self) -> None:
+        raw = b"tab\tname\x00line\nname\x00\x00"
+        self.assertEqual(parse_nul_records(raw), ["tab\tname", "line\nname", ""])
 
-    def test_literal_records_include_empty_tabs_and_newlines(self):
-        result = self.run_shell(r'''
-values=(stale)
-read_nul_records values printf '%s\0' $'tab\tname' $'line\nname' ''
-printf '%s\0' "${values[@]}"
-''')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "tab\tname\0line\nname\0\0")
+    def test_empty_buffer_returns_empty_list(self) -> None:
+        self.assertEqual(parse_nul_records(b""), [])
 
-    def test_failed_producer_discards_partial_records(self):
-        result = self.run_shell(r'''
-producer() { printf 'partial\0'; return 7; }
-values=(stale)
-if read_nul_records values producer; then exit 90; fi
-printf '%s\n' "${#values[@]}"
-''')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "0\n")
+    def test_unterminated_trailing_record_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_nul_records(b"partial\x00unterminated")
 
-    def test_fast_producers_do_not_spuriously_fail(self):
-        result = self.run_shell(r'''
-values=()
-for ((i=0; i<2048; i++)); do
-    read_nul_records values printf 'refs/heads/main\0'
-    [[ ${#values[@]} == 1 && ${values[0]} == refs/heads/main ]]
-done
-''')
-        self.assertEqual(result.returncode, 0, result.stderr)
-
-    def test_lastpipe_and_monitor_options_are_restored(self):
-        result = self.run_shell(r'''
-values=()
-for lastpipe in on off; do
-    if [[ $lastpipe == on ]]; then shopt -s lastpipe; else shopt -u lastpipe; fi
-    for monitor in on off; do
-        if [[ $monitor == on ]]; then set -m; else set +m; fi
-        before_lastpipe=$(shopt -p lastpipe || :)
-        before_flags=$-
-        read_nul_records values printf 'one\0'
-        [[ $(shopt -p lastpipe || :) == "$before_lastpipe" && $- == "$before_flags" ]]
-        [[ ${#values[@]} == 1 && ${values[0]} == one ]]
-    done
-done
-''')
-        self.assertEqual(result.returncode, 0, result.stderr)
+    def test_fast_repeated_parsing_remains_exact(self) -> None:
+        payload = b"refs/heads/main\x00"
+        for _ in range(2048):
+            self.assertEqual(parse_nul_records(payload), ["refs/heads/main"])

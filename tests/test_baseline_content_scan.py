@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
+from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
-from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
+
+from git_finalizer.delivery import content_scan as SCANNER
+
 FINALIZER = ROOT / json.loads((ROOT / "tool_skill_manifest.json").read_text())["executable"]["entrypoints"][0]
-SPEC = importlib.util.spec_from_file_location("content_scan", ROOT / "git-finalize-content-scan.py")
-assert SPEC and SPEC.loader
-SCANNER = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(SCANNER)
 
 HEADER = "-" * 5 + "BEGIN PRIVATE KEY" + "-" * 5
 FOOTER = "-" * 5 + "END PRIVATE KEY" + "-" * 5

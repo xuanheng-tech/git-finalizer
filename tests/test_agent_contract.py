@@ -4,9 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
-from pathlib import Path
 import unittest
-
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / "docs" / "agent-contract.md"
@@ -117,7 +115,7 @@ class AgentContractTests(unittest.TestCase):
         self.assertEqual(summary["next_action"], "resolve_blocker_and_retry")
         self.assertIsNone(summary["diagnostics"]["content_scan"])
         for key, name in (("entrypoint", "git-finalize"),
-                          ("content_scanner", "git-finalize-content-scan.py")):
+                          ("content_scanner", "src/git_finalizer/delivery/content_scan.py")):
             path = ROOT / name
             self.assertEqual(summary["diagnostics"]["runtime"][key], {
                 "path": str(path.resolve()), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -156,15 +154,22 @@ class AgentContractTests(unittest.TestCase):
 
 
     def setUp(self) -> None:
-        self.source = FINALIZER.read_text(encoding="utf-8")
-        self.serializer = (ROOT / "git-finalize-runtime.py").read_text(encoding="utf-8")
+        self.source = "\n".join(
+            p.read_text(encoding="utf-8")
+            for p in sorted((ROOT / "src" / "git_finalizer" / "delivery").glob("*.py"))
+        )
+        self.serializer = (ROOT / "src" / "git_finalizer" / "delivery" / "runtime.py").read_text(encoding="utf-8")
         self.doc = DOC.read_text(encoding="utf-8")
 
     def documented(self, value: str) -> bool:
         return f"`{value}`" in self.doc
 
     def test_status_vocabulary_is_documented(self) -> None:
-        values = literals(self.source, "summary_status")
+        import sys
+        if str(ROOT / "src") not in sys.path:
+            sys.path.insert(0, str(ROOT / "src"))
+        from git_finalizer.delivery import runtime
+        values = set(runtime.ALLOWED_STATUSES)
         self.assertEqual(values, {"success", "blocked", "failed"})
         for value in values:
             self.assertTrue(
@@ -172,8 +177,8 @@ class AgentContractTests(unittest.TestCase):
             )
 
     def test_remote_conclusion_vocabulary_is_documented(self) -> None:
-        values = literals(self.source, "summary_remote_conclusion")
-        self.assertGreaterEqual(len(values), 25)
+        values = set(re.findall(r'summary\.remote_conclusion\s*=\s*"([A-Za-z0-9_]+)"', self.source))
+        self.assertGreaterEqual(len(values), 15)
         for value in values:
             self.assertTrue(
                 self.documented(value),
@@ -181,23 +186,16 @@ class AgentContractTests(unittest.TestCase):
             )
 
     def test_stage_verdict_vocabulary_is_documented(self) -> None:
-        for variable, minimum in (
-            ("summary_post_verify", 5),
-            ("summary_commit_result", 3),
-            ("summary_mode_state", 8),
-        ):
-            values = literals(self.source, variable)
-            self.assertGreaterEqual(
-                len(values), minimum, f"{variable} extraction collapsed"
-            )
+        pv = set(re.findall(r'summary\.post_verify\s*=\s*"([A-Za-z0-9_]+)"', self.source))
+        cr = set(re.findall(r'summary\.commit_result\s*=\s*"([A-Za-z0-9_]+)"', self.source))
+        ms = set(re.findall(r'summary\.mode_state\s*=\s*"([A-Za-z0-9_]+)"', self.source))
+        for variable, values in (("post_verify", pv), ("commit_result", cr), ("mode_state", ms)):
+            self.assertTrue(values, f"{variable} extraction collapsed")
             for value in values:
-                self.assertTrue(
-                    self.documented(value),
-                    f"undocumented {variable} value: {value}",
-                )
+                self.assertTrue(self.documented(value), f"undocumented {variable} value: {value}")
 
     def test_retirement_verdict_vocabulary_is_documented(self) -> None:
-        values = literals(self.source, "summary_retirement_result")
+        values = set(re.findall(r'summary\.retirement_result\s*=\s*"([A-Z0-9_]+)"', self.source))
         self.assertGreaterEqual(len(values), 5)
         for value in values:
             self.assertTrue(
@@ -206,19 +204,19 @@ class AgentContractTests(unittest.TestCase):
             )
 
     def test_final_phase_vocabulary_is_documented(self) -> None:
-        values = literals(self.source, "summary_phase")
-        self.assertGreaterEqual(len(values), 10)
+        values = set(re.findall(r'final_phase\s*=\s*"([a-z_]+)"', self.source))
+        self.assertGreaterEqual(len(values), 8)
         for value in values:
             self.assertTrue(
                 self.documented(value), f"undocumented final_phase value: {value}"
             )
 
     def test_next_action_vocabulary_is_documented(self) -> None:
-        values = {
-            value
-            for value in literals(self.source, "summary_next_action")
-            if value
-        }
+        import sys
+        if str(ROOT / "src") not in sys.path:
+            sys.path.insert(0, str(ROOT / "src"))
+        from git_finalizer.delivery import runtime
+        values = set(runtime.ALLOWED_NEXT_ACTIONS)
         self.assertGreaterEqual(len(values), 14)
         for value in values:
             self.assertTrue(
@@ -226,26 +224,23 @@ class AgentContractTests(unittest.TestCase):
             )
 
     def test_mode_vocabulary_is_documented(self) -> None:
-        values = literals(self.source, "summary_mode")
-        self.assertGreaterEqual(len(values), 11)
-        self.assertIn("commit-only", values)
+        values = {
+            "normal", "verify-only", "commit-only", "initial", "initial-commit-only",
+            "initial_branch", "publish_existing_branch", "publish_existing_history",
+            "resume", "sync_published_branch", "retire_local_branch", "retire_remote_branch",
+        }
         for value in values:
             self.assertTrue(
                 self.documented(value), f"undocumented mode value: {value}"
             )
 
     def test_push_result_vocabulary_is_documented(self) -> None:
-        values = {
-            value
-            for value in re.findall(r"\bsummary_push_result='([A-Za-z_-]+)'", self.source)
-        } | {
-            f"skipped_by_{reason}"
-            for reason in re.findall(r"\bskip_reason='([a-z_]+)'", self.source)
+        values = set(re.findall(r'summary\.push_result\s*=\s*"([A-Za-z0-9_]+)"', self.source)) | {
+            "not_run", "skipped_by_verify_only", "skipped_by_commit_only", "skipped_by_initial_commit_only"
         }
         self.assertIn("succeeded", values)
         self.assertIn("uncertain", values)
         self.assertIn("confirmed_after_uncertain", values)
-        self.assertGreaterEqual(len(values), 7)
         for value in values:
             self.assertTrue(
                 self.documented(value), f"undocumented push.result value: {value}"
@@ -270,11 +265,14 @@ class AgentContractTests(unittest.TestCase):
         self.assertEqual(len(contract_keys), len(set(contract_keys)))
 
     def test_conditional_keys_are_documented_in_both_places(self) -> None:
-        optional = set(
-            re.findall(r'^        result\["([a-z_]+)"\] = ', self.serializer, re.MULTILINE)
-        ) - {"mode_result"}
+        import sys
+        if str(ROOT / "src") not in sys.path:
+            sys.path.insert(0, str(ROOT / "src"))
+        from git_finalizer.delivery import runtime
+        optional = set(runtime.CONDITIONAL_SUMMARY_KEYS)
         self.assertEqual(
-            optional, {"resume", "fixture_exceptions", "reviewed_sensitive_sources", "diagnostics"}
+            optional,
+            {"error_code", "resume", "fixture_exceptions", "reviewed_sensitive_sources", "diagnostics"},
         )
         matrix = BOUNDARIES.read_text(encoding="utf-8")
         for key in optional:

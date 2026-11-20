@@ -34,8 +34,12 @@ jobs:
           github-token: ${{ github.token }}
       - name: Ensure shellcheck
         run: command -v shellcheck || (sudo apt-get update -y && sudo apt-get install -y --no-install-recommends shellcheck)
-      - name: Lint shell scripts
-        run: just lint
+      - name: Lint shell and Python
+        run: |
+          just lint
+          if ! command -v ruff >/dev/null 2>&1; then
+            uv tool run ruff check src tests scripts
+          fi
 
       - name: Run project checks
         run: just check
@@ -43,7 +47,7 @@ jobs:
       - name: Verify clean release installation on supported Python versions
         run: |
           set -euo pipefail
-          for GF_TEST_PYTHON in 3.11 3.12; do
+          for GF_TEST_PYTHON in 3.12 3.13; do
             uv run --no-project --no-config --python "$GF_TEST_PYTHON" \
               python -B -m unittest discover -s tests -p 'test_clean_install.py' -v
           done

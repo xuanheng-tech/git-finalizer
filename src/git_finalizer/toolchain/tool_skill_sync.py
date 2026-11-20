@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
+from collections.abc import Sequence
 from contextlib import contextmanager
 import fcntl
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -16,12 +19,13 @@ import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
+import time
 import tomllib
-from typing import Any, Sequence
+from typing import Any
 
-
-VERSION = "2.1.4"
+VERSION = "2.0.0"
 SCHEMA_VERSION = 1
 TOOL_SKILL_MANIFEST_SCHEMA_VERSION = 2
 SKILL_NAME = "git-change-delivery"
@@ -41,11 +45,12 @@ SKILL_PAYLOAD = (
 HEX_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 FULL_GIT_OID = re.compile(r"[0-9a-f]{40,64}\Z")
 SAFE_NAME = re.compile(r"[a-z0-9][a-z0-9._-]*\Z")
+VERSION_LITERAL_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\Z")
+DEFAULT_LOCK_TIMEOUT = 10.0
 # Payload-tree digests of previously released canonical Skill lines that may
-# legally sit in production before an upgrade. Mirrors deploy.py in the Skill
-# bundle; tests/test_tool_contract.py locks the two registries equal. Never
-# add a digest produced by local hand-editing. This module must keep exactly
-# one x-dot-y-dot-z numeral (the VERSION constant) for bundled_sync_version.
+# legally sit in production before an upgrade. Never add a digest produced by
+# local hand-editing. Keep RELEASED_CANONICAL_SKILL_SHA256 strictly bound to
+# digests published in tagged/integrated git history.
 RELEASED_CANONICAL_SKILL_SHA256 = frozenset(
     {
         # Provider-neutral payload of the first shipped canonical line.
@@ -65,6 +70,8 @@ RELEASED_CANONICAL_SKILL_SHA256 = frozenset(
         "943ebf4e56ae344cf88ab3dc579d5e497663b052c8ccbade5c42f1f52b5efa93",
         # Published canonical payload at commit 67e3e6c.
         "288d3126d9459913714aa2e3934773111b2d4430fb73a8385fd33511807a823c",
+        # Published canonical payload at v1.9.9 (ceae77f).
+        "010cb09faf50921149b5d22b26093d9445d15461e8d3f10b7faff35259cd8e45",
     }
 )
 
@@ -123,8 +130,20 @@ def require_owned_directory(path: Path, *, create: bool = False) -> None:
         raise SyncError(f"directory is not owned by current user: {path}")
 
 
+def _flock_exclusive_bounded(descriptor: int, *, timeout: float = DEFAULT_LOCK_TIMEOUT, label: str = "lock") -> None:
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError as exc:
+            if time.monotonic() >= deadline:
+                raise SyncError(f"timed out waiting for {label}") from exc
+            time.sleep(0.05)
+
+
 @contextmanager
-def deployment_lock(*roots: Path):
+def deployment_lock(*roots: Path, timeout: float = DEFAULT_LOCK_TIMEOUT):
     """Serialize installers through the same persistent locks, including rollback."""
     descriptors = []
     try:
@@ -139,7 +158,7 @@ def deployment_lock(*roots: Path):
             info = os.fstat(descriptor)
             if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
                 raise SyncError("unsafe deployment lock")
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            _flock_exclusive_bounded(descriptor, timeout=timeout, label="deployment lock")
         yield
     finally:
         for descriptor in reversed(descriptors):
@@ -204,9 +223,12 @@ def git_dirty(repo: Path) -> bool:
     return bool(result.stdout.strip())
 
 
-def project_version(repo: Path, tool_name: str) -> tuple[str, tuple[str, ...]]:
-    if tool_name in {"context-loader", "snapshot-runner"}:
-        pyproject = repo / "pyproject.toml"
+def project_version(repo: Path, tool_name: str, *, kind: str | None = None) -> tuple[str, tuple[str, ...]]:
+    pyproject = repo / "pyproject.toml"
+    use_pyproject = kind == "python_console_scripts" or (
+        kind is None and tool_name in {"context-loader", "snapshot-runner", "git-finalizer"} and pyproject.is_file()
+    )
+    if use_pyproject:
         require_regular(pyproject, "project metadata")
         with pyproject.open("rb") as stream:
             data = tomllib.load(stream)
@@ -216,16 +238,23 @@ def project_version(repo: Path, tool_name: str) -> tuple[str, tuple[str, ...]]:
             raise SyncError(f"invalid project version/scripts: {pyproject}")
         return version, tuple(sorted(str(name) for name in scripts))
 
-    manifest = read_json(repo / "tool_skill_manifest.json")
+    manifest_candidates = (
+        repo / "tool_skill_manifest.json",
+        repo / "manifests" / tool_name / "tool_skill_manifest.json",
+    )
+    manifest_path = next((p for p in manifest_candidates if p.exists()), manifest_candidates[0])
+    manifest = read_json(manifest_path)
     entrypoints = validate_install_targets(manifest)
+    if manifest["executable"]["kind"] == "python_console_scripts":
+        return project_version(repo, tool_name, kind="python_console_scripts")
     executable = repo / entrypoints[0]
     require_regular(executable, "Git Finalizer executable")
     match = re.search(
-        rb"(?m)^(?:readonly )?VERSION=['\"]([0-9]+\.[0-9]+\.[0-9]+)['\"]$",
+        rb"(?m)^(?:readonly )?(?:VERSION|__version__)\s*=\s*['\"]([0-9]+\.[0-9]+\.[0-9]+)['\"]$",
         executable.read_bytes(),
     )
     if match is None:
-        raise SyncError("cannot read Git Finalizer source version")
+        raise SyncError("cannot read source version")
     return match.group(1).decode(), tuple(sorted(entrypoints))
 
 
@@ -297,9 +326,9 @@ class Sources:
             raise SyncError(f"pinned source file is unavailable: {tool}/{relative}")
         return result.stdout
 
-    def project_identity(self, tool: str) -> tuple[str, tuple[str, ...]]:
+    def project_identity(self, tool: str, *, kind: str | None = None) -> tuple[str, tuple[str, ...]]:
         if tool not in self.source_refs:
-            return project_version(self.repo(tool), tool)
+            return project_version(self.repo(tool), tool, kind=kind)
         data = tomllib.loads(self.source_bytes(tool, "pyproject.toml").decode())
         return data["project"]["version"], tuple(sorted(data["project"]["scripts"]))
 
@@ -519,7 +548,9 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
         validate_contract_shape(contract)
         if manifest.get("tool_version") != contract.get("tool_version"):
             raise SyncError("tool version mismatch between manifest and CLI contract")
-        source_version, source_entrypoints = sources.project_identity(tool)
+        source_version, source_entrypoints = sources.project_identity(
+            tool, kind=manifest.get("executable", {}).get("kind")
+        )
         if source_version != manifest.get("tool_version"):
             raise SyncError("source version does not match ToolSkillManifest")
         entrypoints = validate_install_targets(manifest)
@@ -564,20 +595,20 @@ def check_tool(sources: Sources, tool: str) -> dict[str, Any]:
             "skill_contract_version"
         ):
             raise SyncError("Skill contract version is incompatible with workflow")
-        controller_contract = sources.compatibility.get(
-            "worktree_controller_contract_version"
+        controller_adapter = sources.compatibility.get(
+            "worktree_controller_adapter_version"
         )
         controller_status = sources.compatibility.get("worktree_controller_status")
         if compatibility_version == 1:
             if (
-                controller_contract is not None
+                controller_adapter is not None
                 or controller_status != "planned_unavailable"
             ):
                 raise SyncError(
                     "v1 requires Worktree Controller contract to remain null/planned"
                 )
         elif (
-            controller_contract
+            controller_adapter
             != (3 if compatibility_version >= 5 else 2 if compatibility_version >= 4 else 1)
             or controller_status != "available_external"
         ):
@@ -610,17 +641,36 @@ def extract_version(output: str) -> str | None:
 
 
 def bundled_sync_version(bundle: Path) -> str:
-    implementation = bundle / "executable" / "tooling" / "tool_skill_sync.py"
-    require_regular(implementation, "bundled tool-skill-sync implementation")
-    versions = set(
-        re.findall(
-            r"(?<![0-9])([0-9]+\.[0-9]+\.[0-9]+)(?![0-9])",
-            implementation.read_text(encoding="utf-8"),
-        )
+    candidates = (
+        bundle / "executable" / "src" / "git_finalizer" / "toolchain" / "tool_skill_sync.py",
+        bundle / "executable" / "tooling" / "tool_skill_sync.py",
     )
+    implementation = next((p for p in candidates if p.exists() or p.is_symlink()), candidates[0])
+    require_regular(implementation, "bundled tool-skill-sync implementation")
+    try:
+        tree = ast.parse(implementation.read_text(encoding="utf-8"), filename=str(implementation))
+    except (SyntaxError, UnicodeDecodeError) as exc:
+        raise SyncError(f"bundled tool-skill-sync implementation is unparseable: {exc}") from exc
+    versions: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            value = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            targets = [node.target.id]
+            value = node.value
+        else:
+            continue
+        if (
+            "VERSION" in targets
+            and isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+            and VERSION_LITERAL_RE.fullmatch(value.value)
+        ):
+            versions.append(value.value)
     if len(versions) != 1:
-        raise SyncError("bundled tool-skill-sync version is ambiguous")
-    return versions.pop()
+        raise SyncError("bundled tool-skill-sync VERSION constant is missing or ambiguous")
+    return versions[0]
 
 
 def resolve_entry(name: str, bin_dir: Path | None) -> Path | None:
@@ -906,6 +956,124 @@ def install_python_tool(
         )
 
 
+def install_local_python_tool(
+    tool: str,
+    source_path: Path,
+    *,
+    bin_dir: str,
+    no_build: bool,
+) -> None:
+    """Install one tool offline from a verified local checkout or exported commit tree."""
+    argv = [UV_EXECUTABLE, "tool", "install", "--force", "--offline"]
+    if no_build:
+        argv.append("--no-build")
+    argv.append(os.fspath(source_path))
+    environment = dict(os.environ, UV_TOOL_BIN_DIR=bin_dir)
+    result = subprocess.run(
+        argv, capture_output=True, text=True, check=False, env=environment
+    )
+    if result.returncode:
+        raise SyncError(
+            f"uv tool offline install failed for {tool} "
+            f"(exit {result.returncode}): {result.stderr.strip()[:200]}"
+        )
+
+
+def _resolves_into_python_venv(entry: Path) -> bool:
+    resolved = entry.resolve(strict=False)
+    return any((parent / "pyvenv.cfg").is_file() for parent in list(resolved.parents)[:3])
+
+
+def _legacy_source_files_installation(
+    entrypoints: Sequence[str], bin_dir: Path | None
+) -> dict[str, Any] | None:
+    """Describe a legacy `source_files` install so 1.x -> 2.x wheel upgrade works cleanly."""
+    targets: dict[str, Path] = {}
+    dirs: set[Path] = set()
+    for name in entrypoints:
+        if bin_dir is not None:
+            candidate = bin_dir / name
+        else:
+            found = shutil.which(name)
+            if not found:
+                return None
+            candidate = Path(found)
+        if not candidate.exists() or _resolves_into_python_venv(candidate):
+            return None
+        targets[name] = candidate
+        dirs.add(candidate.parent.resolve())
+    if len(dirs) != 1:
+        return None
+    target_bin = dirs.pop()
+    return {
+        "root": None,
+        "bin_dir": str(target_bin),
+        "indexes": [],
+        "no_build": False,
+        "entry_targets": {},
+        "resolved": {},
+        "legacy_targets": {name: str(path) for name, path in sorted(targets.items())},
+        "legacy_source_files": True,
+    }
+
+
+def _backup_legacy_entries(entry_map: dict[str, str]) -> dict[Path, dict[str, Any]]:
+    snapshot: dict[Path, dict[str, Any]] = {}
+    for raw_path in entry_map.values():
+        path = Path(raw_path)
+        if path.is_symlink():
+            snapshot[path] = {"symlink": os.readlink(path)}
+        elif path.is_file():
+            snapshot[path] = {
+                "bytes": path.read_bytes(),
+                "mode": stat.S_IMODE(path.stat().st_mode),
+            }
+    return snapshot
+
+
+def _restore_legacy_entries(snapshot: dict[Path, dict[str, Any]]) -> None:
+    for path, info in snapshot.items():
+        if "symlink" in info:
+            atomic_symlink(path.parent, path.name, Path(info["symlink"]))
+            continue
+        fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.restore-")
+        os.close(fd)
+        tmp = Path(tmp_name)
+        try:
+            tmp.write_bytes(info["bytes"])
+            tmp.chmod(info["mode"])
+            os.replace(tmp, path)
+            fsync_directory(path.parent)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
+
+
+@contextmanager
+def _local_install_source(sources: Sources, tool: str):
+    repo = sources.repo(tool)
+    if tool not in sources.source_refs:
+        yield repo
+        return
+    oid = sources.source_refs[tool]
+    if not FULL_GIT_OID.fullmatch(oid):
+        raise SyncError("source-ref requires a full commit OID")
+    with tempfile.TemporaryDirectory(prefix=f".{tool}-src-") as staging:
+        archive = subprocess.run(
+            ["git", "-C", str(repo), "archive", "--format=tar", oid],
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        if archive.returncode:
+            raise SyncError(f"git archive failed for pinned {tool}@{oid}")
+        target_dir = Path(staging) / tool
+        target_dir.mkdir(mode=0o700)
+        with tarfile.open(fileobj=io.BytesIO(archive.stdout), mode="r:*") as tf:
+            tf.extractall(target_dir, filter="data")
+        yield target_dir
+
+
 def canonical_install_policy(
     sources: Sources, tool: str, observed: dict[str, Any]
 ) -> tuple[dict[str, Any], bool]:
@@ -1022,17 +1190,34 @@ def upgrade(
     if previous_bundle is not None:
         verify_bundle(previous_bundle, tool)
         previous_manifest = read_json(previous_bundle / "tool_skill_manifest.json")
-        if previous_manifest["executable"]["kind"] != "python_console_scripts":
-            raise SyncError("previous bundle is not a Python console-script tool")
+        if previous_manifest["executable"]["kind"] not in {"python_console_scripts", "source_files"}:
+            raise SyncError("previous bundle is not a supported executable kind")
         previous_entries = validate_install_targets(previous_manifest, allow_legacy=True)
-    before = python_tool_installation(previous_entries, bin_dir)
+    if previous_manifest is not None and previous_manifest["executable"]["kind"] == "source_files":
+        before = _legacy_source_files_installation(previous_entries, bin_dir)
+        if before is None:
+            raise SyncError("legacy source_files installation is incomplete or unavailable")
+    else:
+        try:
+            before = python_tool_installation(previous_entries, bin_dir)
+        except SyncError:
+            legacy = (
+                _legacy_source_files_installation(previous_entries, bin_dir)
+                if previous_manifest is None
+                else None
+            )
+            if legacy is None:
+                raise
+            before = legacy
     intended, drifted = canonical_install_policy(sources, tool, before)
+    legacy_upgrade = bool(before.get("legacy_source_files"))
     previous_version = installed_binary_state(previous_entries, bin_dir)["version"]
     if previous_manifest is not None:
         if previous_version != previous_manifest["tool_version"]:
             raise SyncError("installed release does not match the explicit previous bundle")
-        verify_python_tool(tool, previous_version, previous_entries, bin_dir, before)
-    stable_paths = intended["bin_dir"] == before["bin_dir"]
+        if not legacy_upgrade:
+            verify_python_tool(tool, previous_version, previous_entries, bin_dir, before)
+    stable_paths = intended["bin_dir"] == before["bin_dir"] and not legacy_upgrade
     plan = {
         "schema_version": SCHEMA_VERSION,
         "operation": "upgrade",
@@ -1046,7 +1231,12 @@ def upgrade(
         "observed_bin_dir": before["bin_dir"],
         "observed_no_build": before["no_build"],
     }
-    if previous_version == target_version and not drifted and previous_entries == entrypoints:
+    if (
+        not legacy_upgrade
+        and previous_version == target_version
+        and not drifted
+        and previous_entries == entrypoints
+    ):
         plan["status"] = "UNCHANGED"
         plan["verification"] = verify_python_tool(
             tool, target_version, entrypoints, bin_dir, intended
@@ -1055,14 +1245,26 @@ def upgrade(
     if dry_run:
         plan["status"] = "DRY_RUN_NORMALIZE" if drifted else "DRY_RUN"
         return plan
+    legacy_backup = (
+        _backup_legacy_entries(before.get("legacy_targets", {})) if legacy_upgrade else None
+    )
     try:
-        install_python_tool(
-            tool,
-            target_version,
-            bin_dir=intended["bin_dir"],
-            indexes=intended["indexes"],
-            no_build=intended["no_build"],
-        )
+        if intended["indexes"]:
+            install_python_tool(
+                tool,
+                target_version,
+                bin_dir=intended["bin_dir"],
+                indexes=intended["indexes"],
+                no_build=intended["no_build"],
+            )
+        else:
+            with _local_install_source(sources, tool) as local_source:
+                install_local_python_tool(
+                    tool,
+                    local_source,
+                    bin_dir=intended["bin_dir"],
+                    no_build=intended["no_build"],
+                )
         plan["verification"] = verify_python_tool(
             tool,
             target_version,
@@ -1074,6 +1276,20 @@ def upgrade(
     except (SyncError, OSError, subprocess.SubprocessError, KeyboardInterrupt) as exc:
         plan["status"] = "RESTORED"
         plan["error"] = str(exc)
+        if legacy_backup is not None:
+            try:
+                _restore_legacy_entries(legacy_backup)
+                plan["restored_shape"] = "legacy_source_files"
+            except (SyncError, OSError, subprocess.SubprocessError) as restore_error:
+                plan["status"] = "FAILED"
+                raise SyncError(
+                    f"{exc}; restoring legacy {previous_version} also failed: {restore_error}"
+                ) from None
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            raise SyncError(
+                f"upgrade failed and legacy {previous_version} was restored: {exc}"
+            ) from None
         if previous_version is None:
             plan["status"] = "FAILED"
             raise SyncError(f"{exc}; no previous version recorded to restore") from None
@@ -1103,7 +1319,9 @@ def upgrade(
         raise SyncError(
             f"upgrade failed and {previous_version} was restored: {exc}"
         ) from None
-    plan["status"] = "NORMALIZED" if previous_version == target_version else "UPGRADED"
+    plan["status"] = (
+        "NORMALIZED" if (not legacy_upgrade and previous_version == target_version) else "UPGRADED"
+    )
     return plan
 
 
@@ -1158,7 +1376,6 @@ def status(sources: Sources, agents_root: Path, bin_dir: Path | None) -> dict[st
 
     for tool in sources.names():
         checked = check_tool(sources, tool)
-        repo = sources.repo(tool)
         try:
             manifest = read_json(sources.manifest_path(tool))
             entrypoints = validate_install_targets(manifest)
@@ -1785,9 +2002,8 @@ def validate_production_skill_trusted(
         return
     if live_tree in RELEASED_CANONICAL_SKILL_SHA256:
         return
-    if previous_bundle is not None:
-        if verify_bundle(previous_bundle)["skill_sha"] == live_tree:
-            return
+    if previous_bundle is not None and verify_bundle(previous_bundle)["skill_sha"] == live_tree:
+        return
     manifest = read_json(bundle / "tool_skill_manifest.json")
     installed_skill_name = (
         COMPATIBILITY_SKILL_NAME
@@ -1834,7 +2050,7 @@ def replace_production_pair(targets: dict[Path, Path]) -> None:
 
 
 @contextmanager
-def finalizer_execution_lock(targets: Sequence[Path]):
+def finalizer_execution_lock(targets: Sequence[Path], *, timeout: float = DEFAULT_LOCK_TIMEOUT):
     """Keep active CLI readers out of a production activation or rollback."""
     entries = [target for target in targets if target.name == "git-finalize"]
     if not entries:
@@ -1849,7 +2065,7 @@ def finalizer_execution_lock(targets: Sequence[Path]):
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
             raise SyncError("unsafe Finalizer execution lock")
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        _flock_exclusive_bounded(descriptor, timeout=timeout, label="Finalizer execution lock")
         yield
     finally:
         os.close(descriptor)
@@ -1882,13 +2098,47 @@ def activate_production_bundle(
         # property of the previous manifest. Installed-version consistency is
         # asserted against the incoming bundle and by the post-activation
         # verification, never against the superseded release.
-        previous_targets, _ = production_target_sources(
+        prev_manifest = read_json(previous_bundle / "tool_skill_manifest.json")
+        cur_manifest = read_json(bundle / "tool_skill_manifest.json")
+        prev_kind = prev_manifest["executable"]["kind"]
+        cur_kind = cur_manifest["executable"]["kind"]
+        prev_bin_dir = live_bin_dir
+        new_entrypoints = validate_install_targets(cur_manifest, allow_legacy=True)
+        if prev_bin_dir is None and prev_kind == "source_files":
+            for name in new_entrypoints:
+                found = shutil.which(name)
+                if found:
+                    prev_bin_dir = Path(found).parent
+                    break
+        previous_targets, resolved_prev_bin = production_target_sources(
             previous_bundle,
             agents_root=agents_root,
-            bin_dir=live_bin_dir,
+            bin_dir=prev_bin_dir,
             hooks_dir=hooks_dir,
             assert_installed_version=False,
         )
+        if prev_kind == "source_files" and cur_kind == "python_console_scripts":
+            # Keep active console scripts managed by uv tool install; only retire
+            # genuinely obsolete source_files sidecars and helpers.
+            new_entry_set = set(new_entrypoints)
+            active_console_paths: set[Path] = set()
+            for dir_cand in (resolved_prev_bin, bin_dir.resolve() if bin_dir else None):
+                if dir_cand is not None:
+                    for name in new_entry_set:
+                        active_console_paths.add(dir_cand / name)
+            try:
+                uv_info = python_tool_installation(new_entrypoints, bin_dir)
+                active_console_paths.update(
+                    Path(entry_path) for entry_path in uv_info["entry_targets"].values()
+                )
+            except SyncError:
+                pass
+            previous_targets = {
+                target: source
+                for target, source in previous_targets.items()
+                if target not in active_console_paths
+                and not (target.name in new_entry_set and target.is_symlink())
+            }
     retired = set(previous_targets) - set(targets)
     for target in retired:
         if not target.exists() and not target.is_symlink():
@@ -2262,11 +2512,326 @@ def _rollback_unlocked(
     }
 
 
+SKILL_LINK_CLIENTS = ("claude", "cursor", "qoder", "qoder-cn")
+MANAGED_SKILL_NAMES = (SKILL_NAME, COMPATIBILITY_SKILL_NAME)
+
+
+def _validate_skill_frontmatter_and_refs(skill_root: Path) -> None:
+    skill_md = skill_root / "SKILL.md"
+    require_regular(skill_md, "canonical SKILL.md")
+    content = skill_md.read_text(encoding="utf-8")
+    frontmatter = re.match(r"\A---\n(.*?)\n---\n", content, re.DOTALL)
+    if frontmatter is None:
+        raise SyncError("invalid YAML frontmatter delimiters in SKILL.md")
+    lines = [line for line in frontmatter.group(1).splitlines() if line.strip()]
+    fields = [line.split(":", 1)[0].strip() for line in lines if ":" in line]
+    if fields != ["name", "description"]:
+        raise SyncError("SKILL.md frontmatter must contain only name and description")
+    name = next((line.split(":", 1)[1].strip() for line in lines if line.startswith("name:")), "")
+    description = next((line.split(":", 1)[1].strip() for line in lines if line.startswith("description:")), "")
+    if name != SKILL_NAME or not description or len(description) > 1024 or "<" in description or ">" in description:
+        raise SyncError("SKILL.md frontmatter name or description is invalid")
+    if len(content.splitlines()) >= 500 or any(line.endswith((" ", "\t")) for line in content.splitlines()):
+        raise SyncError("SKILL.md exceeds line limit or contains trailing whitespace")
+    for rel in SKILL_PAYLOAD:
+        if rel.startswith("references/") and f"]({rel})" not in content:
+            raise SyncError(f"SKILL.md does not link required reference: {rel}")
+
+
+def _validate_skill_source(sources: Sources) -> tuple[str, str]:
+    require_owned_directory(sources.skill_root)
+    for rel in SKILL_PAYLOAD:
+        p = sources.skill_root / rel
+        require_owned_regular(p, "canonical Skill payload")
+        mode = stat.S_IMODE(p.stat().st_mode)
+        if mode & 0o111 or mode & 0o002:
+            raise SyncError(f"unsafe canonical Skill file permissions: {p} ({mode:#05o})")
+    _validate_skill_frontmatter_and_refs(sources.skill_root)
+    require_owned_directory(sources.compatibility_skill_root)
+    compat_md = sources.compatibility_skill_root / "SKILL.md"
+    require_owned_regular(compat_md, "compatibility Skill")
+    compat_text = compat_md.read_text(encoding="utf-8")
+    for marker in ("name: three-tool-git-workflow", "Deprecated compatibility entry", f"${SKILL_NAME}"):
+        if marker not in compat_text:
+            raise SyncError("compatibility Skill does not point to canonical Skill")
+    return tree_sha256(sources.skill_root, SKILL_PAYLOAD), sha256_file(compat_md)
+
+
+def _default_client_homes(home_dir: Path | None = None) -> dict[str, Path]:
+    base = home_dir or Path.home()
+    return {
+        "codex": Path(os.environ.get("CODEX_HOME", base / ".codex")),
+        "claude": Path(os.environ.get("CLAUDE_CONFIG_DIR", base / ".claude")),
+        "gemini": Path(os.environ.get("GEMINI_HOME", base / ".gemini")),
+        "cursor": Path(os.environ.get("CURSOR_HOME", base / ".cursor")),
+        "qoder": Path(os.environ.get("QODER_HOME", base / ".qoder")),
+        "qoder-cn": Path(os.environ.get("QODER_CN_HOME", base / ".qoder-cn")),
+    }
+
+
+def _check_multi_client_skills(
+    agents_root: Path,
+    client_homes: dict[str, Path],
+) -> dict[str, Any]:
+    shared_skills = agents_root / "skills"
+    clients: dict[str, Any] = {}
+    if (shared_skills / "synced").exists():
+        raise SyncError("personal skill root contains disallowed account-synced directory: skills/synced")
+
+    # Codex reads ~/.agents/skills directly and adds no duplicate symlinks under ~/.codex/skills.
+    codex_dir = client_homes["codex"]
+    codex_dup = [
+        name for name in MANAGED_SKILL_NAMES
+        if (codex_dir / "skills" / name).exists() or (codex_dir / "skills" / name).is_symlink()
+    ]
+    clients["codex"] = {
+        "present": codex_dir.is_dir(),
+        "uses_shared_root": True,
+        "duplicate_links": codex_dup,
+        "status": "FAIL" if codex_dup else "PASS",
+    }
+
+    for cname in SKILL_LINK_CLIENTS:
+        cdir = client_homes[cname]
+        if not cdir.is_dir():
+            clients[cname] = {"present": False, "status": "SKIP"}
+            continue
+        cskills = cdir / "skills"
+        if cskills.is_symlink() and cskills.resolve(strict=False) == shared_skills.resolve(strict=False):
+            clients[cname] = {
+                "present": True,
+                "status": "FAIL",
+                "error": f"{cname} uses a whole-root symlink to ~/.agents/skills instead of per-Skill links",
+            }
+            continue
+        exposed: dict[str, bool] = {}
+        for sname in MANAGED_SKILL_NAMES:
+            link = cskills / sname
+            target = shared_skills / sname
+            exposed[sname] = link.exists() and link.resolve(strict=False) == target.resolve(strict=False)
+        clients[cname] = {
+            "present": True,
+            "per_skill_links": exposed,
+            "status": "PASS" if all(exposed.values()) else "DRIFT",
+        }
+
+    gemini_dir = client_homes["gemini"]
+    if not gemini_dir.is_dir():
+        clients["gemini"] = {"present": False, "status": "SKIP"}
+    else:
+        cfg_path = gemini_dir / "config" / "skills.json"
+        if not cfg_path.is_file():
+            clients["gemini"] = {"present": True, "config": str(cfg_path), "status": "DRIFT"}
+        else:
+            try:
+                cfg_data = json.loads(cfg_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                clients["gemini"] = {"present": True, "config": str(cfg_path), "status": "FAIL"}
+            else:
+                expected_roots = {str(shared_skills), str(shared_skills / SKILL_NAME)}
+                recorded: set[str] = set()
+                if isinstance(cfg_data, dict):
+                    for key in ("paths", "skillPaths", "skills"):
+                        val = cfg_data.get(key)
+                        if isinstance(val, list):
+                            recorded.update(str(v) for v in val if isinstance(v, str))
+                clients["gemini"] = {
+                    "present": True,
+                    "config": str(cfg_path),
+                    "registered_paths": sorted(recorded & expected_roots),
+                    "status": "PASS" if (recorded & expected_roots) else "DRIFT",
+                }
+    return clients
+
+
+def skill_check(
+    sources: Sources,
+    *,
+    agents_root: Path,
+    client_homes: dict[str, Path] | None = None,
+) -> dict[str, Any]:
+    canonical_sha, compat_sha = _validate_skill_source(sources)
+    installed_sha, installed_compat_sha = installed_skill_hashes(agents_root)
+    homes = _default_client_homes() if client_homes is None else client_homes
+    clients = _check_multi_client_skills(agents_root, homes)
+    trusted = (
+        installed_sha in (None, canonical_sha)
+        or installed_sha in RELEASED_CANONICAL_SKILL_SHA256
+    )
+    payload_match = installed_sha == canonical_sha and installed_compat_sha == compat_sha
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "operation": "skill-check",
+        "status": "PASS" if (payload_match and trusted) else ("DRIFT" if trusted else "FAIL"),
+        "source_skill_sha256": canonical_sha,
+        "source_compatibility_sha256": compat_sha,
+        "installed_skill_sha256": installed_sha,
+        "installed_compatibility_sha256": installed_compat_sha,
+        "trusted_lineage": trusted,
+        "clients": clients,
+    }
+
+
+def _sync_multi_client_skills(
+    agents_root: Path,
+    client_homes: dict[str, Path],
+) -> dict[str, Any]:
+    shared_skills = agents_root / "skills"
+    require_owned_directory(shared_skills)
+    if (shared_skills / "synced").exists():
+        raise SyncError("refusing to sync while skills/synced exists inside shared personal root")
+    results: dict[str, Any] = {}
+
+    for cname in SKILL_LINK_CLIENTS:
+        cdir = client_homes[cname]
+        if not cdir.is_dir():
+            results[cname] = {"status": "SKIP"}
+            continue
+        cskills = cdir / "skills"
+        if cskills.is_symlink():
+            if cskills.resolve(strict=False) == shared_skills.resolve(strict=False):
+                raise SyncError(f"{cname} skills directory must not symlink whole shared root")
+            raise SyncError(f"{cname} skills directory is an unsafe symlink: {cskills}")
+        require_owned_directory(cskills, create=True)
+        linked: list[str] = []
+        for sname in MANAGED_SKILL_NAMES:
+            link_path = cskills / sname
+            target = shared_skills / sname
+            if link_path.is_symlink():
+                if link_path.resolve(strict=False) == target.resolve(strict=False):
+                    linked.append(sname)
+                    continue
+                link_path.unlink()
+            elif link_path.exists():
+                raise SyncError(f"{cname} already has non-symlink skill at {link_path}; preserve manually")
+            os.symlink(str(target), link_path)
+            linked.append(sname)
+        results[cname] = {"status": "SYNCED", "linked": linked}
+
+    gemini_dir = client_homes["gemini"]
+    if not gemini_dir.is_dir():
+        results["gemini"] = {"status": "SKIP"}
+    else:
+        cfg_dir = ensure_owned_subdirectory(gemini_dir, Path("config"))
+        cfg_path = cfg_dir / "skills.json"
+        if cfg_path.is_symlink():
+            raise SyncError(f"unsafe Gemini config symlink: {cfg_path}")
+        if cfg_path.exists():
+            try:
+                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise SyncError(f"invalid existing Gemini skills.json: {exc}") from exc
+            if not isinstance(cfg, dict):
+                raise SyncError("Gemini skills.json root must be an object")
+        else:
+            cfg = {}
+        key = "paths" if "paths" in cfg or "skillPaths" not in cfg else "skillPaths"
+        existing = cfg.get(key)
+        if existing is None:
+            entries: list[str] = []
+        elif isinstance(existing, list) and all(isinstance(x, str) for x in existing):
+            entries = list(existing)
+        else:
+            raise SyncError(f"Gemini skills.json field {key} must be a list of strings")
+        shared_str = str(shared_skills)
+        if shared_str not in entries:
+            entries.append(shared_str)
+        cfg[key] = entries
+        write_json(cfg_path, cfg, mode=0o600)
+        results["gemini"] = {"status": "SYNCED", "config": str(cfg_path), "registered": shared_str}
+
+    codex_dir = client_homes["codex"]
+    results["codex"] = {"status": "NATIVE", "shared_root": str(shared_skills), "present": codex_dir.is_dir()}
+    return results
+
+
+def skill_install(
+    sources: Sources,
+    *,
+    agents_root: Path,
+    client_homes: dict[str, Path] | None = None,
+    sync_clients: bool = True,
+) -> dict[str, Any]:
+    canonical_sha, compat_sha = _validate_skill_source(sources)
+    require_owned_directory(agents_root, create=True)
+    skills_root = ensure_owned_subdirectory(agents_root, Path("skills"))
+    if (skills_root / "synced").exists():
+        raise SyncError("refusing installation while skills/synced exists inside shared root")
+    with deployment_lock(skills_root):
+        live_canonical = skills_root / SKILL_NAME
+        if live_canonical.exists():
+            if live_canonical.is_symlink():
+                raise SyncError(f"live Skill target is a symlink: {live_canonical}")
+            installed_sha, _ = installed_skill_hashes(agents_root)
+            if installed_sha not in (canonical_sha, None) and installed_sha not in RELEASED_CANONICAL_SKILL_SHA256:
+                raise SyncError("unknown content drift in live Skill; preserve before installing")
+
+        stage_root = Path(tempfile.mkdtemp(prefix=".skill-stage-", dir=skills_root))
+        try:
+            copy_skill_payload(sources.skill_root, stage_root / SKILL_NAME)
+            copy_compatibility_skill(sources.compatibility_skill_root, stage_root)
+            canon_target = ensure_owned_subdirectory(skills_root, Path(SKILL_NAME))
+            for rel in SKILL_PAYLOAD:
+                dest = canon_target / rel
+                ensure_owned_subdirectory(canon_target, Path(rel).parent)
+                if dest.is_symlink():
+                    raise SyncError(f"live target file is a symlink: {dest}")
+                shutil.copyfile(sources.skill_root / rel, dest)
+                dest.chmod(0o600)
+            compat_dir = ensure_owned_subdirectory(skills_root, Path(COMPATIBILITY_SKILL_NAME))
+            compat_dest = compat_dir / "SKILL.md"
+            if compat_dest.is_symlink():
+                raise SyncError(f"live compatibility target is a symlink: {compat_dest}")
+            shutil.copyfile(sources.compatibility_skill_root / "SKILL.md", compat_dest)
+            compat_dest.chmod(0o600)
+        finally:
+            if stage_root.exists():
+                shutil.rmtree(stage_root)
+
+        homes = _default_client_homes() if client_homes is None else client_homes
+        clients = _sync_multi_client_skills(agents_root, homes) if sync_clients else {}
+
+    installed_sha, installed_compat_sha = installed_skill_hashes(agents_root)
+    if installed_sha != canonical_sha or installed_compat_sha != compat_sha:
+        raise SyncError("post-install Skill payload hash verification failed")
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "operation": "skill-install",
+        "status": "INSTALLED",
+        "skill_sha256": installed_sha,
+        "compatibility_skill_sha256": installed_compat_sha,
+        "clients": clients,
+    }
+
+
+def _default_source_root(repo: Path | None = None) -> Path:
+    env_root = os.environ.get("TOOL_SKILL_SYNC_SOURCE_ROOT", "").strip()
+    if env_root:
+        return Path(env_root).expanduser()
+    resolved_file = Path(__file__).resolve()
+    if len(resolved_file.parents) > 3:
+        checkout_root = resolved_file.parents[3]
+        if (checkout_root / "toolchain_compatibility.json").is_file():
+            return checkout_root.parent
+    if repo is not None:
+        candidate = repo.resolve(strict=False)
+        for parent in (candidate, *candidate.parents):
+            if (parent / "toolchain_compatibility.json").is_file():
+                return parent.parent
+    projects_root = Path.home() / "projects"
+    if (projects_root / "git-finalizer" / "toolchain_compatibility.json").is_file():
+        return projects_root
+    cwd = Path.cwd().resolve(strict=False)
+    for parent in (cwd, *cwd.parents):
+        if (parent / "toolchain_compatibility.json").is_file():
+            return parent.parent
+    return projects_root
+
+
 def parser() -> argparse.ArgumentParser:
-    owner_repo = Path(__file__).resolve().parent.parent
     result = argparse.ArgumentParser(prog="tool-skill-sync")
     result.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
-    result.add_argument("--source-root", type=Path, default=owner_repo.parent)
+    result.add_argument("--source-root", type=Path, default=_default_source_root())
     result.add_argument(
         "--source-repo", action="append", default=[], metavar="TOOL=PATH",
         help="explicit source checkout; repeat for independently allocated worktrees",
@@ -2287,20 +2852,38 @@ def parser() -> argparse.ArgumentParser:
     )
     subcommands = result.add_subparsers(dest="command", required=True)
     subcommands.add_parser("status")
+    for sname in ("skill-check", "skill-install"):
+        sp = subcommands.add_parser(sname)
+        sp.add_argument("--codex-home", type=Path)
+        sp.add_argument("--claude-home", type=Path)
+        sp.add_argument("--gemini-home", type=Path)
+        sp.add_argument("--cursor-home", type=Path)
+        sp.add_argument("--qoder-home", type=Path)
+        if sname == "skill-install":
+            sp.add_argument("--no-sync-clients", action="store_true")
     doctor_parser = subcommands.add_parser(
-        "doctor", help="read-only four-tool deployment and instruction freshness check"
+        "doctor", help="read-only toolchain deployment and instruction freshness check"
     )
     doctor_parser.add_argument("--repo", type=Path)
     doctor_parser.add_argument("--summary", action="store_true")
     doctor_parser.add_argument("--previous-fingerprint")
-    doctor_parser.add_argument("--codex-home", type=Path,
-                               default=Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")))
-    doctor_parser.add_argument("--claude-home", type=Path,
-                               default=Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")))
+    doctor_parser.add_argument(
+        "--codex-home",
+        type=Path,
+        default=Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")),
+    )
+    doctor_parser.add_argument(
+        "--claude-home",
+        type=Path,
+        default=Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")),
+    )
     doctor_parser.add_argument("--controller", type=Path)
     doctor_parser.add_argument("--controller-source", type=Path)
-    doctor_parser.add_argument("--controller-runtime-root", type=Path,
-                               default=Path.home() / ".local/share/worktree-controller")
+    doctor_parser.add_argument(
+        "--controller-runtime-root",
+        type=Path,
+        default=Path.home() / ".local/share/worktree-controller",
+    )
     check_parser = subcommands.add_parser("check")
     check_parser.add_argument("tool")
     check_parser.add_argument(
@@ -2319,7 +2902,8 @@ def parser() -> argparse.ArgumentParser:
     upgrade_parser.add_argument("tool")
     upgrade_parser.add_argument("--dry-run", action="store_true")
     upgrade_parser.add_argument(
-        "--previous-bundle", type=Path,
+        "--previous-bundle",
+        type=Path,
         help="verified prior release identity when all console-script names changed",
     )
     rollback_parser = subcommands.add_parser("rollback")
@@ -2329,7 +2913,18 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
-    args = parser().parse_args(arguments)
+    raw_argv = list(sys.argv[1:] if arguments is None else arguments)
+    args = parser().parse_args(raw_argv)
+    explicit_source_root = any(
+        tok == "--source-root" or tok.startswith("--source-root=") for tok in raw_argv
+    )
+    source_root = args.source_root
+    if (
+        not explicit_source_root
+        and getattr(args, "repo", None) is not None
+        and not (source_root / "git-finalizer" / "toolchain_compatibility.json").is_file()
+    ):
+        source_root = _default_source_root(repo=args.repo)
     try:
         source_repos = {}
         for value in args.source_repo:
@@ -2347,19 +2942,44 @@ def main(arguments: Sequence[str] | None = None) -> int:
             if name in source_refs:
                 raise SyncError("source-ref contains a duplicate tool")
             source_refs[name] = oid
-        sources = Sources(args.source_root, source_repos, source_refs)
+        sources = Sources(source_root, source_repos, source_refs)
+        if args.command in {"skill-check", "skill-install"}:
+            homes = _default_client_homes()
+            for key, attr in (
+                ("codex", "codex_home"),
+                ("claude", "claude_home"),
+                ("gemini", "gemini_home"),
+                ("cursor", "cursor_home"),
+                ("qoder", "qoder_home"),
+            ):
+                val = getattr(args, attr, None)
+                if val is not None:
+                    homes[key] = val.resolve()
+            if args.command == "skill-check":
+                output = skill_check(sources, agents_root=args.agents_root.resolve(), client_homes=homes)
+                print(canonical_json(output).decode(), end="")
+                return 0 if output["status"] == "PASS" else 1
+            output = skill_install(
+                sources,
+                agents_root=args.agents_root.resolve(),
+                client_homes=homes,
+                sync_clients=not args.no_sync_clients,
+            )
+            print(canonical_json(output).decode(), end="")
+            return 0
         if args.command == "doctor":
-            try:
-                from . import workflow_health
-            except ImportError:
-                import workflow_health
+            from . import workflow_health
             output = workflow_health.doctor(
-                sources, agents_root=args.agents_root.resolve(), bin_dir=args.bin_dir,
-                hooks_dir=args.hooks_dir.resolve(), repo=args.repo,
-                codex_home=args.codex_home.resolve(), controller=args.controller,
+                sources,
+                agents_root=args.agents_root.resolve(),
+                bin_dir=args.bin_dir,
+                hooks_dir=args.hooks_dir.resolve(),
+                repo=args.repo,
+                codex_home=args.codex_home.resolve(),
+                controller=args.controller,
                 claude_home=args.claude_home.resolve(),
                 controller_runtime_root=args.controller_runtime_root,
-                controller_source=args.controller_source or args.source_root / "worktree-controller",
+                controller_source=args.controller_source or source_root / "worktree-controller",
                 previous_fingerprint=args.previous_fingerprint,
             )
             print(canonical_json(workflow_health.summary(output) if args.summary else output).decode(), end="")

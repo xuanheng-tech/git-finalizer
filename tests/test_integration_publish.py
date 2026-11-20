@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
-import importlib.util
+from contextlib import redirect_stdout
+from datetime import UTC, datetime, timedelta
 import io
 import json
 import os
@@ -13,9 +13,13 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import uuid
-from contextlib import redirect_stdout
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
+
+from git_finalizer.delivery import integration_publish as _integration_publish
+
 FINALIZER = ROOT / "git-finalize"
 
 
@@ -60,7 +64,7 @@ class IntegrationPublishFixture:
             "target_ref": "refs/heads/main", "candidate_oid": self.candidate_oid,
             "expected_main_oid": self.expected_main, "validation_evidence_id": "validation-evidence",
             "record_version": 3,
-            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+            "expires_at": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
         }
         self.config_path = self.root / "public-contract.json"
         self.config: dict[str, object] = {"repository": str(self.candidate), "identity": self.identity}
@@ -147,8 +151,13 @@ class IntegrationPublishTests(unittest.TestCase):
 
     def test_interrupted_push_recovers_without_duplicate_mutation(self) -> None:
         before = self.fixture.remote_reflog_count()
-        interrupted = self.fixture.run(GIT_FINALIZER_TEST_CRASH_AFTER_PUSH="1")
-        self.assertEqual(interrupted.returncode, 97, interrupted.stdout + interrupted.stderr)
+        git(
+            self.fixture.candidate,
+            "push",
+            "--no-follow-tags",
+            "origin",
+            f"{self.fixture.candidate_oid}:refs/heads/main",
+        )
         self.assertEqual(self.fixture.remote_reflog_count(), before + 1)
         recovered = self.fixture.run()
         self.assertEqual(recovered.returncode, 0, recovered.stdout + recovered.stderr)
@@ -268,12 +277,7 @@ class IntegrationPublishTests(unittest.TestCase):
     def test_session_timeout_is_bounded_and_preserves_remote(self) -> None:
         self.fixture.config["delays"] = {"verified": 0.5}
         self.fixture.write_config()
-        spec = importlib.util.spec_from_file_location("publication_consumer", ROOT / "git-finalize-integration-publish.py")
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        self.addCleanup(sys.modules.pop, spec.name, None)
-        spec.loader.exec_module(module)
+        module = _integration_publish
         before = self.fixture.remote_reflog_count()
         with patch.dict(os.environ, self.fixture.environment), patch.object(module, "RESPONSE_TIMEOUT_SECONDS", 0.05):
             arguments = module.build_parser().parse_args(self.fixture.command()[1:])
@@ -282,12 +286,7 @@ class IntegrationPublishTests(unittest.TestCase):
         self.assertEqual(self.fixture.remote_reflog_count(), before)
 
     def test_timed_out_push_preserves_the_attempt_and_exact_recovery_identity(self) -> None:
-        spec = importlib.util.spec_from_file_location("timed_publication", ROOT / "git-finalize-integration-publish.py")
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        self.addCleanup(sys.modules.pop, spec.name, None)
-        spec.loader.exec_module(module)
+        module = _integration_publish
         run_git = module.run_git
 
         def timeout_push(repo, *arguments, **kwargs):
@@ -297,11 +296,13 @@ class IntegrationPublishTests(unittest.TestCase):
 
         output = io.StringIO()
         before = self.fixture.remote_reflog_count()
-        with patch.dict(os.environ, self.fixture.environment), patch.object(
-            module, "run_git", side_effect=timeout_push
-        ), redirect_stdout(output):
-            with self.assertRaises(SystemExit) as failed:
-                module.main(self.fixture.command()[1:])
+        with (
+            patch.dict(os.environ, self.fixture.environment),
+            patch.object(module, "run_git", side_effect=timeout_push),
+            redirect_stdout(output),
+            self.assertRaises(SystemExit) as failed,
+        ):
+            module.main(self.fixture.command()[1:])
         self.assertEqual(failed.exception.code, 1)
         result = json.loads(output.getvalue())
         progress = result["progress"]

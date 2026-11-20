@@ -1984,8 +1984,7 @@ test_release_contract() {
         >"$fake_bin/git"
     chmod 700 "$fake_bin/git"
     local version_declared
-    version_declared=$(sed -n 's/^readonly VERSION="\([0-9.]*\)"$/\1/p' \
-        "$project_root/git-finalize" | head -1)
+    version_declared=$(python3 -B -c "import pathlib, tomllib; print(tomllib.loads(pathlib.Path('$project_root/pyproject.toml').read_text(encoding='utf-8'))['project']['version'])")
     [[ -n $version_declared ]] || fail_assertion 'script version constant is unreadable'
     printf 'git-finalize %s\n' "$version_declared" >"$version_expected"
 
@@ -1998,7 +1997,7 @@ test_release_contract() {
 
     expect_success "$help_output" "$finalizer" --help
     assert_file_contains "$help_output" \
-        'git-finalize --repo <absolute-repo>' 'normal mode missing from help'
+        'git-finalize --repo <repo> --message <msg>' 'normal mode missing from help'
     assert_file_contains "$help_output" '--mode commit-only' \
         'commit-only mode missing from help'
     assert_file_contains "$help_output" '--initial-commit-only' \
@@ -2026,8 +2025,7 @@ test_release_contract() {
     assert_file_contains "$help_output" '--snapshot' \
         'snapshot evidence option missing from help'
     local declared_version
-    declared_version=$(sed -n 's/^readonly VERSION="\([0-9.]*\)"$/\1/p' \
-        "$project_root/git-finalize" | head -1)
+    declared_version=$(python3 -B -c "import pathlib, tomllib; print(tomllib.loads(pathlib.Path('$project_root/pyproject.toml').read_text(encoding='utf-8'))['project']['version'])")
     [[ -n $declared_version ]] || fail_assertion 'script version constant is unreadable'
     assert_file_contains "$project_root/README.md" "当前版本：\`${declared_version}\`" \
         'README Chinese version declaration drifted'
@@ -2055,16 +2053,15 @@ test_release_contract() {
     assert_file_contains "$project_root/tool_skill_manifest.json" \
         "\"tool_version\": \"${declared_version}\"" \
         'root manifest version declaration drifted'
-    for companion in git-finalize-integration-publish.py git-finalize-repo-bootstrap.py \
-        git-finalize-retirement-plan.py; do
-        assert_file_contains "$project_root/$companion" \
-            "VERSION = \"${declared_version}\"" "$companion version drifted"
+    for module in __init__.py delivery/integration_publish.py delivery/repo_bootstrap.py \
+        delivery/retirement_plan.py delivery/snapshot_verify.py toolchain/tool_skill_sync.py; do
+        [[ -f "$project_root/src/git_finalizer/$module" ]] ||
+            fail_assertion "pure-Python module missing: src/git_finalizer/$module"
     done
-    [[ -f "$project_root/git-finalize-snapshot-verify.py" ]] ||
-        fail_assertion 'snapshot verifier companion is missing'
-    assert_file_contains "$project_root/git-finalize" \
-        '"$PYTHON3_EXECUTABLE" -B "$snapshot_verifier"' \
-        'snapshot verifier invocation does not disable bytecode writes'
+    assert_file_contains "$project_root/src/git_finalizer/__init__.py" \
+        "__version__ = \"${declared_version}\"" 'package __version__ drifted'
+    assert_file_contains "$project_root/src/git_finalizer/toolchain/tool_skill_sync.py" \
+        "VERSION = \"${declared_version}\"" 'tool-skill-sync VERSION drifted'
 }
 
 run_case() {

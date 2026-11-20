@@ -36,7 +36,7 @@ retirement 的 `--dry-run` 会做完整 live preflight，成功为 `RETIREMENT_P
 `push.executed=true`、`push.result=succeeded`（integration candidate 为 `published`，
 中断后重入为 `already_published_recovered`）。commit-only 要求 `commit.created=true` 并给出 OID。
 
-`status` 为 `blocked`/`failed`/`partial` 时，读 `reason`、`next_action` 和 `resume`：
+`status` 为 `blocked`/`failed` 时，读 `reason`、`next_action` 和 `resume`：
 
 - `resolve_blocker_and_retry`：修正 `reason` 指出的问题后，用同一入口重试。
 - commit 已创建但 push 失败：保留该 commit，用 resume 入口和报告的 OID 继续，不要 recommit。

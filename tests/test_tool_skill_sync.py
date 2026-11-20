@@ -6,12 +6,16 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
-from tooling import tool_skill_sync as sync
+_SRC = str(Path(__file__).resolve().parents[1] / "src")
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
 
+from git_finalizer.toolchain import tool_skill_sync as sync
 
 TOOLS = {
     "context-loader": ("0.1.5", ("project-context",)),
@@ -96,7 +100,7 @@ class SkillSyncTests(unittest.TestCase):
             "context_loader_contract_version": 1,
             "snapshot_runner_contract_version": 1,
             "git_finalizer_contract_version": 1,
-            "worktree_controller_contract_version": 1,
+            "worktree_controller_adapter_version": 1,
             "worktree_controller_status": "available_external",
             "tools": {
                 name: {
@@ -169,6 +173,7 @@ class SkillSyncTests(unittest.TestCase):
                 sync_implementation.parent.mkdir()
                 sync_implementation.write_text(
                     "#!/usr/bin/env python3\n"
+                    f"VERSION = {sync.VERSION!r}\n"
                     "import argparse\n"
                     "parser = argparse.ArgumentParser(prog='tool-skill-sync')\n"
                     "parser.add_argument('--version', action='version', "
@@ -496,7 +501,7 @@ class SkillSyncTests(unittest.TestCase):
 
     def _overlay_released_production_tree(self, ref: str = "v1.3.0") -> bool:
         """Put the payload a released tag carried into the live Skill directory."""
-        repository = Path(sync.__file__).resolve().parents[1]
+        repository = Path(__file__).resolve().parents[1]
         installed = self.agents_root / "skills" / sync.SKILL_NAME
         blobs = {}
         for relative in sync.SKILL_PAYLOAD:
@@ -605,7 +610,7 @@ class SkillSyncTests(unittest.TestCase):
 
     @staticmethod
     def _released_ref_available(ref: str) -> bool:
-        repository = Path(sync.__file__).resolve().parents[1]
+        repository = Path(sync.__file__).resolve().parents[3]
         return subprocess.run(
             ["git", "rev-parse", "--verify", "--quiet", f"refs/tags/{ref}"],
             cwd=repository,
@@ -652,9 +657,11 @@ class SkillSyncTests(unittest.TestCase):
         previous = self._current("git-finalizer")
         original = (self.bin_dir / "git-finalize").read_bytes()
         self._rename_primary("git-finalize", "new-finalize")
-        with mock.patch.object(sync, "verify_production_bundle", side_effect=KeyboardInterrupt):
-            with self.assertRaises(KeyboardInterrupt):
-                self._install_production("git-finalizer", allow_dirty_source=True)
+        with (
+            mock.patch.object(sync, "verify_production_bundle", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            self._install_production("git-finalizer", allow_dirty_source=True)
         self.assertEqual(self._current("git-finalizer"), previous)
         self.assertEqual((self.bin_dir / "git-finalize").read_bytes(), original)
         self.assertFalse((self.bin_dir / "new-finalize").exists())
@@ -830,9 +837,11 @@ class SkillSyncTests(unittest.TestCase):
                 )
             self._uv_tool_layout(version)
 
-        with mock.patch.object(sync, "install_python_tool", fake_install):
-            with self.assertRaises(sync.SyncError) as error:
-                self._upgrade()
+        with (
+            mock.patch.object(sync, "install_python_tool", fake_install),
+            self.assertRaises(sync.SyncError) as error,
+        ):
+            self._upgrade()
         self.assertIn("restored", str(error.exception))
         self.assertEqual(attempts, ["1.4.0", "1.3.0"])
         # The previous release is installed and every entrypoint still works.
@@ -847,9 +856,11 @@ class SkillSyncTests(unittest.TestCase):
             # Simulate an install that silently produced the wrong version.
             self._uv_tool_layout("9.9.9" if version == "1.4.0" else version)
 
-        with mock.patch.object(sync, "install_python_tool", fake_install):
-            with self.assertRaises(sync.SyncError):
-                self._upgrade()
+        with (
+            mock.patch.object(sync, "install_python_tool", fake_install),
+            self.assertRaises(sync.SyncError),
+        ):
+            self._upgrade()
         state = sync.installed_binary_state(TOOLS["snapshot-runner"][1], self.bin_dir)
         self.assertEqual(state["version"], "1.3.0")
 
@@ -866,7 +877,7 @@ class SkillSyncTests(unittest.TestCase):
     def test_upgrade_accepts_a_release_that_removes_entrypoints(self) -> None:
         """A major release may drop console scripts; retained ones must keep their paths."""
         legacy = ("snapshot-runner", "legacy-alias")
-        root = self._uv_tool_layout("1.3.0", entrypoints=legacy)
+        self._uv_tool_layout("1.3.0", entrypoints=legacy)
         self.assertTrue((self.bin_dir / "legacy-alias").exists())
 
         def fake_install(tool, version, *, bin_dir, indexes, no_build):
@@ -936,10 +947,12 @@ class SkillSyncTests(unittest.TestCase):
                 raise KeyboardInterrupt
             self._uv_tool_layout(version, entrypoints=("legacy-runner",))
             (self.bin_dir / "snapshot-runner").unlink()
-        with mock.patch.object(sync, "install_python_tool", fake_install):
-            with self.assertRaises(KeyboardInterrupt):
-                sync.upgrade(self.sources, "snapshot-runner", bin_dir=self.bin_dir,
-                             previous_bundle=previous)
+        with (
+            mock.patch.object(sync, "install_python_tool", fake_install),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            sync.upgrade(self.sources, "snapshot-runner", bin_dir=self.bin_dir,
+                         previous_bundle=previous)
         self.assertEqual(attempts, ["1.4.0", "1.3.0"])
         self.assertEqual(sync.installed_binary_state(["legacy-runner"], self.bin_dir)["version"], "1.3.0")
         self.assertFalse((self.bin_dir / "snapshot-runner").exists())
@@ -962,9 +975,11 @@ class SkillSyncTests(unittest.TestCase):
             link.symlink_to(target)
 
         # Relocating a retained entrypoint out of its uv tool root must fail closed.
-        with mock.patch.object(sync, "install_python_tool", fake_install):
-            with self.assertRaises(sync.SyncError):
-                self._upgrade()
+        with (
+            mock.patch.object(sync, "install_python_tool", fake_install),
+            self.assertRaises(sync.SyncError),
+        ):
+            self._upgrade()
 
     def _declare_uv_policy(self, bin_dir: Path, *, no_build: bool = True) -> None:
         path = self.sources_root / "git-finalizer" / "toolchain_compatibility.json"
@@ -1113,16 +1128,18 @@ class SkillSyncTests(unittest.TestCase):
             allow_dirty_source=False,
         )
         before = self._current("git-finalizer")
-        with mock.patch.object(
-            sync, "smoke_bundle", side_effect=sync.SyncError("smoke failed")
+        with (
+            mock.patch.object(
+                sync, "smoke_bundle", side_effect=sync.SyncError("smoke failed")
+            ),
+            self.assertRaisesRegex(sync.SyncError, "smoke failed"),
         ):
-            with self.assertRaisesRegex(sync.SyncError, "smoke failed"):
-                sync.install(
-                    self.sources,
-                    "git-finalizer",
-                    self.install_root,
-                    allow_dirty_source=False,
-                )
+            sync.install(
+                self.sources,
+                "git-finalizer",
+                self.install_root,
+                allow_dirty_source=False,
+            )
         self.assertEqual(self._current("git-finalizer"), before)
 
     def test_pre_rename_bundle_remains_verifiable_for_migration(self) -> None:
@@ -1480,13 +1497,15 @@ class SkillSyncTests(unittest.TestCase):
         before = (binary.read_bytes(), skill.read_bytes(), bridge.read_bytes())
         real_verify = sync.verify_production_bundle
 
-        with mock.patch.object(
-            sync,
-            "verify_production_bundle",
-            side_effect=[sync.SyncError("post-install verify failed")],
+        with (
+            mock.patch.object(
+                sync,
+                "verify_production_bundle",
+                side_effect=[sync.SyncError("post-install verify failed")],
+            ),
+            self.assertRaisesRegex(sync.SyncError, "post-install verify failed"),
         ):
-            with self.assertRaisesRegex(sync.SyncError, "post-install verify failed"):
-                self._install_production("git-finalizer")
+            self._install_production("git-finalizer")
 
         self.assertEqual(
             (binary.read_bytes(), skill.read_bytes(), bridge.read_bytes()), before
@@ -1501,11 +1520,13 @@ class SkillSyncTests(unittest.TestCase):
         skill = self.agents_root / "skills" / sync.SKILL_NAME / "SKILL.md"
         before = (binary.read_bytes(), skill.read_bytes())
 
-        with mock.patch.object(
-            sync, "verify_production_bundle", side_effect=KeyboardInterrupt
+        with (
+            mock.patch.object(
+                sync, "verify_production_bundle", side_effect=KeyboardInterrupt
+            ),
+            self.assertRaises(KeyboardInterrupt),
         ):
-            with self.assertRaises(KeyboardInterrupt):
-                self._install_production("git-finalizer")
+            self._install_production("git-finalizer")
 
         self.assertEqual((binary.read_bytes(), skill.read_bytes()), before)
         self.assertFalse(
@@ -1520,14 +1541,16 @@ class SkillSyncTests(unittest.TestCase):
             allow_dirty_source=False,
         )
         before = self._current("git-finalizer")
-        with mock.patch.object(sync, "smoke_bundle", side_effect=KeyboardInterrupt):
-            with self.assertRaises(KeyboardInterrupt):
-                sync.install(
-                    self.sources,
-                    "git-finalizer",
-                    self.install_root,
-                    allow_dirty_source=False,
-                )
+        with (
+            mock.patch.object(sync, "smoke_bundle", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            sync.install(
+                self.sources,
+                "git-finalizer",
+                self.install_root,
+                allow_dirty_source=False,
+            )
         self.assertEqual(self._current("git-finalizer"), before)
         bundle_root = self.install_root / "bundles" / "git-finalizer"
         self.assertFalse(

@@ -446,9 +446,9 @@ Changelog after ignoring final newlines. The clean candidate passed `just releas
 tagging: 16 PASS, 0 SKIP, 0 FAIL, including 449 Python tests, 68 Skill tests and the real Controller
 suite. Supported installation activated the clean published candidate; installed checks, doctor
 and six focused smoke tests passed, including a three-file resolved merge and clean-filter guards.
-Read-only default scans of the three QP test files passed for their raw, stage-0 and candidate
+Read-only default scans of the three downstream test files passed for their raw, stage-0 and candidate
 blobs, with known-token, private-key, SSH, other-assignment and credential-child-file controls still
-refused. QP sources and their stage-0 identities stayed unchanged; no QP fixture exception was used.
+refused. Downstream sources and their stage-0 identities stayed unchanged; no downstream fixture exception was used.
 
 `v1.8.18` adds metadata-only core-summary diagnostics for the actual entrypoint/scanner and the
 first content refusal's scanned-byte hash, blob, detector and scan stage. Content refusals/risks include
@@ -469,7 +469,7 @@ and failure guards. The default four-tool doctor passed. The installed entrypoin
 SHA-256 are respectively `0db81425a80d721790c2f49e8a7114528ce6a606d40966cb44b056073beac3f1`
 and `5596b5c5c3a04f14ca651aa9eef3c1b2bbfb3207c47752ebf8ac88b2c98329e0`.
 Code publication receipt `c18db012-e14f-4df2-bf07-3d6c597288ff` is remote verified; source release
-receipt `f286695e-c063-45f0-8c7f-8cb495429546` has COMPLETE proof. No QP checkout was read or changed
+receipt `f286695e-c063-45f0-8c7f-8cb495429546` has COMPLETE proof. No external checkout was read or changed
 for this delivery.
 
 `v1.8.19` preserves the exact single-space marker required by empty unified-diff context lines.

@@ -7,7 +7,6 @@ import unittest
 
 import test_fixture_exceptions as fixtures
 
-
 MODE = "--publish-existing-branch"
 SYNTHETIC = fixtures.SYNTHETIC
 

@@ -18,7 +18,9 @@ byte-identical, and the file set must equal the installation contract.
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -29,17 +31,26 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+SRC = ROOT / "src"
+for _entry in (str(SRC), str(ROOT)):
+    if _entry not in sys.path:
+        sys.path.insert(0, _entry)
 
-from tooling import tool_skill_sync as sync  # noqa: E402  (path setup above)
+from git_finalizer.toolchain import tool_skill_sync as sync  # noqa: E402  (path setup above)
 
-COMPANIONS = (
-    "git-finalize-integration-publish.py",
-    "git-finalize-repo-bootstrap.py",
-    "git-finalize-retirement-plan.py",
+ENTRYPOINTS = (
+    "git-finalize",
+    "tool-skill-sync",
+    "tool-temp-dir",
+)
+PACKAGE_METADATA_FILES = (
+    "pyproject.toml",
+    ".python-version",
+    "uv.lock",
 )
 METADATA_FILES = (
     "README.md",
@@ -72,8 +83,14 @@ def tag_version(version_tag: str) -> str:
 
 def package_paths() -> set[str]:
     manifest = sync.read_json(ROOT / "tool_skill_manifest.json")
-    paths = set(manifest["executable"]["paths"])
+    paths: set[str] = set(ENTRYPOINTS)
+    paths.update(PACKAGE_METADATA_FILES)
     paths.update(METADATA_FILES)
+    src_pkg = ROOT / "src" / "git_finalizer"
+    if src_pkg.is_dir():
+        for pyfile in sorted(src_pkg.rglob("*.py")):
+            if "__pycache__" not in pyfile.parts:
+                paths.add(str(pyfile.relative_to(ROOT)))
     paths.update(f"skills/{sync.SKILL_NAME}/{p}" for p in sync.SKILL_PAYLOAD)
     paths.add(manifest["compatibility_skill"]["path"])
     paths.update(
@@ -92,22 +109,25 @@ def read_version_literal(path: Path, pattern: str) -> str:
 
 def preflight(version_tag: str) -> str:
     version = tag_version(version_tag)
-    script_version = read_version_literal(
-        ROOT / "git-finalize", r'^readonly VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$'
+    with (ROOT / "pyproject.toml").open("rb") as stream:
+        pyproject_version = tomllib.load(stream).get("project", {}).get("version")
+    if pyproject_version != version:
+        raise ReleaseError("pyproject.toml declares a different version")
+    init_version = read_version_literal(
+        ROOT / "src" / "git_finalizer" / "__init__.py",
+        r'^__version__ = "([0-9]+\.[0-9]+\.[0-9]+)"$',
+    )
+    sync_version = read_version_literal(
+        ROOT / "src" / "git_finalizer" / "toolchain" / "tool_skill_sync.py",
+        r'^VERSION = "([0-9]+\.[0-9]+\.[0-9]+)"$',
     )
     readme_version = read_version_literal(
         ROOT / "README.md", r"^当前版本：`([0-9]+\.[0-9]+\.[0-9]+)`$"
     )
-    if script_version != readme_version:
+    if init_version != readme_version or init_version != sync_version:
         raise ReleaseError("Finalizer version declarations disagree")
-    if version_tag != f"v{script_version}":
-        raise ReleaseError(f"tag {version_tag} does not match Finalizer version {script_version}")
-    for companion in COMPANIONS:
-        companion_version = read_version_literal(
-            ROOT / companion, r'^VERSION = "([0-9]+\.[0-9]+\.[0-9]+)"$'
-        )
-        if companion_version != version:
-            raise ReleaseError(f"companion declares a different version: {companion}")
+    if version_tag != f"v{init_version}":
+        raise ReleaseError(f"tag {version_tag} does not match Finalizer version {init_version}")
     contract = sync.read_json(ROOT / "tool_cli_contract.json")
     manifest = sync.read_json(ROOT / "tool_skill_manifest.json")
     compatibility = sync.read_json(ROOT / "toolchain_compatibility.json")
@@ -177,10 +197,12 @@ def stage(stage_root: Path, version_tag: str) -> None:
 
 
 def commit_timestamp() -> str:
+    env = dict(os.environ, LC_ALL="C")
     result = subprocess.run(
         ["git", "-C", str(ROOT), "show", "-s", "--format=%ct", "HEAD"],
         capture_output=True,
         text=True,
+        env=env,
         check=False,
     )
     if result.returncode != 0 or not result.stdout.strip():
@@ -189,25 +211,33 @@ def commit_timestamp() -> str:
 
 
 def tar_bytes(stage_root: Path, package: str, timestamp: str) -> bytes:
-    command = [
-        "tar",
-        "--sort=name",
-        "--format=ustar",
-        "--owner=0",
-        "--group=0",
-        "--numeric-owner",
-        f"--mtime=@{timestamp}",
-        "-C",
-        str(stage_root),
-        "-cf",
-        "-",
-        package,
-    ]
-    archive = subprocess.run(command, capture_output=True, check=True).stdout
-    gzip = subprocess.run(
-        ["gzip", "-n"], input=archive, capture_output=True, check=True
-    ).stdout
-    return gzip
+    """Create a portable deterministic ustar+gzip archive purely with stdlib (`tarfile` + `gzip`)."""
+    mtime = int(timestamp)
+    root_dir = stage_root / package
+    entries: list[Path] = [root_dir]
+    for item in sorted(root_dir.rglob("*"), key=lambda p: p.relative_to(stage_root).as_posix()):
+        entries.append(item)
+    tar_buffer = io.BytesIO()
+    with tarfile.open(fileobj=tar_buffer, mode="w", format=tarfile.USTAR_FORMAT) as archive:
+        for path in entries:
+            arcname = path.relative_to(stage_root).as_posix()
+            info = archive.gettarinfo(str(path), arcname=arcname)
+            info.uid = 0
+            info.gid = 0
+            info.uname = ""
+            info.gname = ""
+            info.mtime = mtime
+            if path.is_dir():
+                info.mode = 0o755
+                archive.addfile(info)
+            else:
+                info.mode = 0o755 if stat.S_IMODE(path.stat().st_mode) & 0o111 else 0o644
+                with path.open("rb") as payload:
+                    archive.addfile(info, payload)
+    gz_buffer = io.BytesIO()
+    with gzip.GzipFile(filename="", mode="wb", fileobj=gz_buffer, mtime=0) as gz:
+        gz.write(tar_buffer.getvalue())
+    return gz_buffer.getvalue()
 
 
 def build(version_tag: str, dist: Path | None = None, staging: Path | None = None) -> Path:
@@ -250,52 +280,53 @@ def verify_bytes(artifact: Path, version_tag: str) -> None:
     package = package_name(version)
     expected = {f"{package}/{p}" for p in package_paths()}
     try:
-        archive = tarfile.open(artifact, "r:gz")
+        with tarfile.open(artifact, "r:gz") as archive:
+            members = archive.getmembers()
+            names = [member.name.rstrip("/") for member in members]
+            if len(names) != len(set(names)):
+                raise ReleaseError("release package contains duplicate members")
+            files = {member.name for member in members if member.isfile()}
+            if files != expected:
+                missing = sorted(expected - files)
+                extra = sorted(files - expected)
+                raise ReleaseError(
+                    "release package file set does not match the installation contract "
+                    f"(missing={missing} extra={extra})"
+                )
+            for member in members:
+                path = PurePosixPath(member.name)
+                if path.is_absolute() or ".." in path.parts or path.as_posix() != member.name.rstrip("/"):
+                    raise ReleaseError(f"release package contains an unsafe path: {member.name}")
+                if not member.isfile() and not member.isdir():
+                    raise ReleaseError(f"release package contains a link or special member: {member.name}")
+            expected_directories = {
+                str(parent) for name in expected for parent in PurePosixPath(name).parents
+                if str(parent) != "."
+            }
+            directories = {member.name.rstrip("/") for member in members if member.isdir()}
+            if directories != expected_directories:
+                raise ReleaseError("release package directory file set does not match the installation contract")
+            for ep in ENTRYPOINTS:
+                entry = archive.getmember(f"{package}/{ep}")
+                if stat.S_IMODE(entry.mode) != 0o755:
+                    raise ReleaseError(f"Finalizer entry point {ep} is not executable in the release package")
+            for member in members:
+                if member.isdir() and stat.S_IMODE(member.mode) != 0o755:
+                    raise ReleaseError(
+                        "release package directory mode depends on the builder umask: "
+                        f"{member.name} mode={stat.S_IMODE(member.mode):#o}"
+                    )
+            pkg_init = archive.getmember(f"{package}/src/git_finalizer/__init__.py")
+            stream = archive.extractfile(pkg_init)
+            if stream is None:
+                raise ReleaseError("Package version module is unreadable in the release package")
+            match = re.search(
+                rb'^__version__ = "([0-9]+\.[0-9]+\.[0-9]+)"$', stream.read(), re.MULTILINE
+            )
+            if match is None or match.group(1).decode() != version:
+                raise ReleaseError("release package contains the wrong Finalizer version")
     except tarfile.TarError as error:
         raise ReleaseError(f"release artifact is not a readable gzip tarball: {error}") from error
-    with archive:
-        members = archive.getmembers()
-        names = [member.name.rstrip("/") for member in members]
-        if len(names) != len(set(names)):
-            raise ReleaseError("release package contains duplicate members")
-        files = {member.name for member in members if member.isfile()}
-        if files != expected:
-            missing = sorted(expected - files)
-            extra = sorted(files - expected)
-            raise ReleaseError(
-                "release package file set does not match the installation contract "
-                f"(missing={missing} extra={extra})"
-            )
-        for member in members:
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts or path.as_posix() != member.name.rstrip("/"):
-                raise ReleaseError(f"release package contains an unsafe path: {member.name}")
-            if not member.isfile() and not member.isdir():
-                raise ReleaseError(f"release package contains a link or special member: {member.name}")
-        expected_directories = {
-            str(parent) for name in expected for parent in PurePosixPath(name).parents
-            if str(parent) != "."
-        }
-        directories = {member.name.rstrip("/") for member in members if member.isdir()}
-        if directories != expected_directories:
-            raise ReleaseError("release package directory file set does not match the installation contract")
-        entry = archive.getmember(f"{package}/git-finalize")
-        if stat.S_IMODE(entry.mode) != 0o755:
-            raise ReleaseError("Finalizer entry point is not executable in the release package")
-        for member in members:
-            if member.isdir() and stat.S_IMODE(member.mode) != 0o755:
-                raise ReleaseError(
-                    "release package directory mode depends on the builder umask: "
-                    f"{member.name} mode={stat.S_IMODE(member.mode):#o}"
-                )
-        stream = archive.extractfile(entry)
-        if stream is None:
-            raise ReleaseError("Finalizer entry point is unreadable in the release package")
-        match = re.search(
-            rb'^readonly VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$', stream.read(), re.MULTILINE
-        )
-        if match is None or match.group(1).decode() != version:
-            raise ReleaseError("release package contains the wrong Finalizer version")
 
 
 def verify(version_tag: str, dist: Path | None = None) -> str:
@@ -333,7 +364,7 @@ def selfcheck(version_tag: str) -> str:
 
 
 def inspection_command(command: list[str], *, timeout: int = 30) -> str:
-    environment = dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="Never")
+    environment = dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="Never", LC_ALL="C")
     try:
         result = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True,
                                 text=True, timeout=timeout, check=False)
@@ -359,11 +390,20 @@ def github_repository(remote: str) -> str:
         parsed = urlparse(endpoint)
         if parsed.hostname != "github.com" or parsed.query or parsed.fragment:
             raise ReleaseError("publication-status supports an explicit github.com remote")
-        if (parsed.scheme == "https" and not parsed.username and not parsed.password
-                and parsed.port in (None, 443)):
-            path = parsed.path.lstrip("/")
-        elif (parsed.scheme == "ssh" and parsed.username == "git" and not parsed.password
-              and parsed.port in (None, 22)):
+        if (
+            (
+                parsed.scheme == "https"
+                and not parsed.username
+                and not parsed.password
+                and parsed.port in (None, 443)
+            )
+            or (
+                parsed.scheme == "ssh"
+                and parsed.username == "git"
+                and not parsed.password
+                and parsed.port in (None, 22)
+            )
+        ):
             path = parsed.path.lstrip("/")
         else:
             raise ReleaseError("unsupported or credential-bearing release endpoint")
@@ -378,11 +418,13 @@ def github_response(repository: str, suffix: str = "") -> tuple[int, dict]:
     try:
         result = subprocess.run(
             ["gh", "api", "--hostname", "github.com", "--include", f"repos/{repository}{suffix}"],
-            cwd=ROOT, capture_output=True, text=True, timeout=30, check=False,
+            cwd=ROOT, capture_output=True, text=True, env=dict(os.environ, LC_ALL="C"), timeout=30, check=False,
         )
     except (OSError, subprocess.SubprocessError):
         raise ReleaseError("GitHub observation is unavailable; use the existing authorized gh client") from None
-    header, separator, body = result.stdout.replace("\r\n", "\n").partition("\n\n")
+    normalized = result.stdout.replace("\r\n", "\n")
+    blocks = re.split(r"\n\n(?=HTTP/\S+ [0-9]{3}\b)", normalized)
+    header, separator, body = blocks[-1].partition("\n\n")
     match = re.match(r"HTTP/\S+ ([0-9]{3})\b", header)
     if not separator or match is None:
         raise ReleaseError("GitHub returned no verifiable HTTP status; publication state is unknown")

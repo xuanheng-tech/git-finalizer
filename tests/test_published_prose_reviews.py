@@ -3,13 +3,10 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import os
 import subprocess
-import sys
 import unittest
 
 import test_fixture_exceptions as fixtures
-
 
 BASELINE = ('BODY_REFUSAL_REASONS = {\n'
             '    "text contains a residual authorization credential": "a credential survived redaction",\n'
@@ -151,26 +148,23 @@ class PublishedProseReviewTests(unittest.TestCase):
         outside = f.base / 'outside.py'
         outside.write_text(PREPARED)
         marker = f.base / 'unauthorized-read'
-        bindir = f.base / 'guard-bin'
-        bindir.mkdir()
-        interpreter = bindir / 'python3'
-        interpreter.write_text(f"#!{sys.executable}\n" + """
-import os, sys
-def audit(event, args):
-    if event == 'open' and args[0] == os.environ['GUARDED_TEST_PATH']:
-        with open(os.environ['GUARDED_TEST_MARKER'], 'w') as marker:
-            marker.write('read attempted')
-        raise ValueError('unauthorized fixture read')
-if sys.argv[1:3] == ['-B', '-']:
-    sys.addaudithook(audit)
-    sys.argv = sys.argv[2:]
-    exec(compile(sys.stdin.read(), '<fixture-interpreter>', 'exec'))
-else:
-    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
-""")
-        interpreter.chmod(0o755)
-        f.env.update(PATH=str(bindir) + os.pathsep + f.env['PATH'],
-                     GUARDED_TEST_PATH=str(outside), GUARDED_TEST_MARKER=str(marker))
+        pyroot = f.base / 'audit-hook'
+        pyroot.mkdir()
+        (pyroot / 'sitecustomize.py').write_text(
+            "import os, sys\n"
+            "def _audit(event, args):\n"
+            "    if event == 'open' and args and str(args[0]) == os.environ.get('GUARDED_TEST_PATH'):\n"
+            "        with open(os.environ['GUARDED_TEST_MARKER'], 'w') as m:\n"
+            "            m.write('read attempted')\n"
+            "        raise ValueError('unauthorized fixture read')\n"
+            "sys.addaudithook(_audit)\n",
+            encoding='utf-8',
+        )
+        f.env.update(
+            PYTHONPATH=str(pyroot),
+            GUARDED_TEST_PATH=str(outside),
+            GUARDED_TEST_MARKER=str(marker),
+        )
         f.approval['exceptions'][0]['path'] = str(outside)
         f.write_approval()
         self.assert_blocked()

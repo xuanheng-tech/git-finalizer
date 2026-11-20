@@ -13,13 +13,11 @@ human for permission:
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
 import tempfile
 import unittest
-
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = json.loads((ROOT / "tool_cli_contract.json").read_text(encoding="utf-8"))
@@ -226,23 +224,26 @@ class AuthorizationBoundaryTests(unittest.TestCase):
         self.assertIn("main", payload["reason"])
 
     def test_no_force_or_tag_mutation_path_exists(self) -> None:
-        """The T3 claim is structural: the entrypoint has no force-push and no tag mutation."""
-        source = (ROOT / "git-finalize").read_text(encoding="utf-8")
-        for line in source.splitlines():
-            if not re.search(r"\bgit\b.*\bpush\b", line):
-                continue
-            tokens = re.findall(r"--?[A-Za-z][\w-]*", line)
+        """The T3 claim is structural: the production surface has no force-push and no tag mutation."""
+        files = [ROOT / "git-finalize", *sorted((ROOT / "src" / "git_finalizer").rglob("*.py"))]
+        for file_path in files:
+            source = file_path.read_text(encoding="utf-8")
+            for line in source.splitlines():
+                if not re.search(r"\bgit\b.*\bpush\b", line):
+                    continue
+                tokens = re.findall(r"--?[A-Za-z][\w-]*", line)
+                self.assertNotIn(
+                    "--force",
+                    tokens,
+                    f"unconditional force push path in {file_path}: {line!r}; "
+                    "only --force-with-lease=<ref>:<oid> compare-and-set is permitted",
+                )
+                self.assertNotIn("-f", tokens, f"short force flag in {file_path}: {line!r}")
             self.assertNotIn(
-                "--force",
-                tokens,
-                f"unconditional force push path: {line!r}; only --force-with-lease=<ref>:<oid> "
-                "compare-and-set is permitted",
+                "git tag",
+                source,
+                f"{file_path} must not create or move tags; release tagging is a separately authorised act",
             )
-            self.assertNotIn("-f", tokens, f"short force flag: {line!r}")
-        self.assertNotIn(
-            "git tag", source, "the entrypoint must not create or move tags; release tagging is a "
-            "separately authorised act"
-        )
         self.assertIn("force_push", CONTRACT["protected_operations"])
         self.assertIn("tag_mutation", CONTRACT["protected_operations"])
 

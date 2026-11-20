@@ -9,9 +9,9 @@ decide on your behalf. It performs one Git write you explicitly authorized and r
 happened in machine-readable JSON. Authorization comes from the caller: an existing task grant can
 cover consecutive deliveries within its stated scope; passing tests does not create a new grant.
 
-Current source version: **1.9.9**.
+Current source version: **2.0.0**.
 
-当前版本：`1.9.9`
+当前版本：`2.0.0`
 
 This is the source version. Source delivery and local installation do not imply a GitHub tag,
 release or downloadable asset.
@@ -44,14 +44,15 @@ terminal and an automation layer can rely on "it stopped, and here is why".
 
 ## Requirements
 
-- GNU Bash, Git and GNU command-line utilities (`realpath`, `stat`, `grep`, `sed`, `timeout`). Verified baseline:
-  **Ubuntu 24.04 LTS** with its system Git. Plan-bound retirement also requires a Controller that
+- Git and POSIX userland utilities; zero GNU-only extension dependencies (portable across Linux and macOS). Verified baseline:
+  **Ubuntu 24.04 LTS** with system Git. Plan-bound retirement also requires a Controller that
   advertises the public verification and execution protocols. Integration publication requires
   `integration_publication_execution_version` 1 and the public locked stdio session.
-- Python **3.11 or newer**, with the standard library only. The entrypoint resolves `python3` from
-  `PATH` once and uses that interpreter for every companion and JSON summary. Verified baseline:
-  **Python 3.11 and 3.12**, including installation from the release bundle with no optional tools
-  or personal configuration; no Debian-specific interpreter path is required.
+- Python **3.12–3.14** (`>=3.12,<3.15`), with the standard library only (zero runtime dependencies;
+  `pyproject.toml` exposes `git-finalize`, `tool-skill-sync`, and `tool-temp-dir` console scripts,
+  while repository-root thin wrappers remain executable directly offline). Verified baseline:
+  **Python 3.12**, including clean installation with no optional tools
+  or personal configuration.
 - Run as an ordinary user. Git Finalizer has no privilege escalation and no daemon, database or
   plugin framework.
 - Nothing else. No remote hosting service, no Worktree Controller, no Snapshot Runner, no Context
@@ -88,20 +89,24 @@ curl -fsSLO "https://github.com/xuanheng-tech/git-finalizer/releases/download/v$
 sha256sum --check SHA256SUMS.txt
 ```
 
-From the verified tarball (files `git-finalize*` must stay in one directory, because the entrypoint
-locates its companions relative to itself):
+From the verified tarball (keep `src/` beside the entrypoints or install as a Python tool via `uv tool install --offline "./git-finalizer-${GF_RELEASE_VERSION}"`):
 
 ```bash
 tar -xzf "git-finalizer-${GF_RELEASE_VERSION}.tar.gz"
-install -d -m 0755 "$HOME/.local/bin"
+install -d -m 0755 "$HOME/.local/share/git-finalizer" "$HOME/.local/bin"
+cp -R "git-finalizer-${GF_RELEASE_VERSION}/src" "$HOME/.local/share/git-finalizer/"
 cp "git-finalizer-${GF_RELEASE_VERSION}/git-finalize" \
-    "git-finalizer-${GF_RELEASE_VERSION}"/git-finalize-*.py "$HOME/.local/bin/"
-chmod 0755 "$HOME/.local/bin/git-finalize"
+    "git-finalizer-${GF_RELEASE_VERSION}/tool-skill-sync" \
+    "git-finalizer-${GF_RELEASE_VERSION}/tool-temp-dir" \
+    "$HOME/.local/share/git-finalizer/"
+ln -sf "$HOME/.local/share/git-finalizer/git-finalize" "$HOME/.local/bin/git-finalize"
 export PATH="$HOME/.local/bin:$PATH"
 git-finalize --version
 ```
 
-The bundle ships the CLI, its companions and the shared Skill. During packaging, `docs/…` links in
+The bundle ships the pure-Python `git-finalizer` package (`pyproject.toml`, `src/git_finalizer/`),
+the root executable wrappers (`git-finalize`, `tool-skill-sync`, `tool-temp-dir`), and the shared Skill.
+During packaging, `docs/…` links in
 the shipped Markdown files become public source links pinned to the release tag. The documentation
 stays outside the tarball; checkout links remain relative.
 
@@ -111,9 +116,9 @@ From a checkout:
 ./git-finalize --version
 ```
 
-The bundle also ships `tool-skill-sync` and `tooling/`, which manage the optional shared
-`git-change-delivery` Skill plus CLI pairing on this machine. They are not required to use
-`git-finalize`; see [docs/tool-skill-sync.md](docs/tool-skill-sync.md).
+The package also ships `tool-skill-sync` and `tool-temp-dir`, which manage the optional shared
+`git-change-delivery` Skill, multi-client links, and registered `/tmp` task directories on this machine.
+They are not required to use `git-finalize`; see [docs/tool-skill-sync.md](docs/tool-skill-sync.md).
 
 ## Quick start
 
@@ -186,7 +191,7 @@ scanner guards are unchanged; see [the diagnostics contract](docs/agent-contract
 The complete per-mode preconditions, guarantees and recovery rules are in
 [docs/cli-guide.zh.md](docs/cli-guide.zh.md) (中文) and in
 [`tool_cli_contract.json`](tool_cli_contract.json), which is the machine-readable public CLI
-contract (`contract_version` 9).
+contract (`contract_version` 10).
 
 ## Agent and automation usage
 
@@ -221,10 +226,9 @@ particular is **optional**: ordinary commit and publication work needs only Bash
 | Context Loader | not used at runtime — the CLI never invokes it | nothing |
 | Shared `git-change-delivery` Skill | optional agent workflow documentation and helpers | not a dependency and not an authorization source |
 
-Each integration's knowledge of another project's layout lives only in the files that carry its
-`# GF-INTEGRATION-ADAPTER` marker — one marker per adapter file, and retirement uses two because both
-the CLI and the authorization/completion companion speak to that integration. That confinement is machine-checked by
-`tests/test_integration_boundaries.sh`.
+Each integration's knowledge of another project's layout lives only in the adapter modules
+under `src/git_finalizer/` that carry a single `# GF-INTEGRATION-ADAPTER` marker per file.
+That confinement is machine-checked by `tests/test_integration_boundaries.sh`.
 
 ## Coding agents
 

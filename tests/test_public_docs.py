@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
+import re
 import subprocess
 import unittest
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -33,6 +32,10 @@ PRIVATE_MARKERS = (
     "/home/hsd",
     "refs/pull/",
     "claude.ai",
+    "QUANT_JQ",
+    "quant_orchestration",
+    "apps/quant_orchestration",
+    "QP ",
 )
 
 

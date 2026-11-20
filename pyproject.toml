@@ -1,0 +1,63 @@
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13"]
+build-backend = "uv_build"
+
+[project]
+name = "git-finalizer"
+version = "2.0.0"
+description = "Fail-closed Git delivery gatekeeper and toolchain compatibility manager for autonomous coding agents"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12,<3.15"
+dependencies = []
+
+[project.scripts]
+git-finalize = "git_finalizer.delivery.cli:main"
+tool-skill-sync = "git_finalizer.toolchain.tool_skill_sync:main"
+tool-temp-dir = "git_finalizer.toolchain.tool_temp_dir:main"
+
+[project.urls]
+Repository = "https://github.com/xuanheng-tech/git-finalizer"
+Issues = "https://github.com/xuanheng-tech/git-finalizer/issues"
+
+[tool.uv.build-backend]
+module-name = "git_finalizer"
+module-root = "src"
+source-include = [
+    "tool_cli_contract.json",
+    "tool_skill_manifest.json",
+    "toolchain_compatibility.json",
+    "manifests/**",
+    "skills/**",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "justfile",
+    ".python-version",
+    "uv.lock",
+    "git-finalize",
+    "tool-skill-sync",
+    "tool-temp-dir",
+    "scripts/**",
+    "docs/**",
+    "tests/**",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "skills/git-change-delivery"]
+pythonpath = ["src"]

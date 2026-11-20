@@ -4,10 +4,10 @@ import copy
 import hashlib
 import json
 import os
+from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FINALIZER = ROOT / json.loads((ROOT / "tool_skill_manifest.json").read_text())["executable"]["entrypoints"][0]

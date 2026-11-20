@@ -3,14 +3,21 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
-from tooling import tool_skill_sync as sync
-from tooling import workflow_health as health
+_SRC = str(Path(__file__).resolve().parents[1] / "src")
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
+
 import test_tool_skill_sync as sync_tests
+
+from git_finalizer.toolchain import tool_skill_sync as sync
+from git_finalizer.toolchain import workflow_health as health
 
 
 class WorkflowHealthTests(unittest.TestCase):
@@ -143,6 +150,8 @@ class WorkflowHealthTests(unittest.TestCase):
                 "storage_layout_version": 4, **requirements["capability_versions"]}
         contract = {**caps, "tool_version": "9.0.0"}
         runtime_root = self.root / f"controller-{contract_version}"
+        if runtime_root.exists():
+            shutil.rmtree(runtime_root)
         runtime = runtime_root / "versions" / directory_name / "worktree-controller"
         site = runtime / "lib/python3.12/site-packages/worktree_controller"
         site.mkdir(parents=True)
@@ -292,12 +301,28 @@ class WorkflowHealthTests(unittest.TestCase):
         self.assertEqual(result["status"], "FAIL")
 
     def test_reviewed_controller_cli_contracts(self) -> None:
-        for version in (37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51):
+        compatibility = sync.read_json(
+            Path(__file__).resolve().parents[1] / "toolchain_compatibility.json"
+        )
+        supported = compatibility["runtime_requirements"]["worktree-controller"]["cli_contract_versions"]
+        for version in (supported[0], supported[-1]):
             with self.subTest(contract_version=version):
                 root, requirements, envelope, frozen = self.controller_fixture(version)
                 result = self.probe_controller(root, requirements, envelope, frozen)
                 self.assertEqual(result["status"], "PASS", result["errors"])
                 self.assertEqual(result["cli_contract_version"], version)
+        # Capability versions must allow backward-compatible >= advances while rejecting < minimum.
+        root, requirements, envelope, frozen = self.controller_fixture(supported[-1])
+        envelope["decision"]["capabilities_version"] = requirements["capability_versions"]["capabilities_version"] + 1
+        higher_frozen = json.dumps({**envelope["decision"], "tool_version": "9.0.0"})
+        ((root / "active").resolve() / "lib/python3.12/site-packages/worktree_controller/tool_cli_contract.json").write_text(higher_frozen)
+        higher = self.probe_controller(root, requirements, envelope, higher_frozen)
+        self.assertEqual(higher["status"], "PASS", higher["errors"])
+        envelope["decision"]["writer_session_version"] = max(0, requirements["capability_versions"]["writer_session_version"] - 1)
+        lower_frozen = json.dumps({**envelope["decision"], "tool_version": "9.0.0"})
+        ((root / "active").resolve() / "lib/python3.12/site-packages/worktree_controller/tool_cli_contract.json").write_text(lower_frozen)
+        lower = self.probe_controller(root, requirements, envelope, lower_frozen)
+        self.assertEqual(lower["status"], "FAIL")
 
     def test_unreviewed_controller_cli_contract_is_rejected_without_writing(self) -> None:
         compatibility = sync.read_json(
@@ -478,9 +503,11 @@ class WorkflowHealthTests(unittest.TestCase):
         fixture.setUp()
         self.addCleanup(fixture.tearDown)
         (fixture.sources.repo("snapshot-runner") / "tool_cli_contract.json").write_text("{}\n")
-        with mock.patch.object(sync, "install_python_tool") as installer:
-            with self.assertRaisesRegex(sync.SyncError, "canonical check failed"):
-                sync.upgrade(fixture.sources, "snapshot-runner", bin_dir=fixture.bin_dir)
+        with (
+            mock.patch.object(sync, "install_python_tool") as installer,
+            self.assertRaisesRegex(sync.SyncError, "canonical check failed"),
+        ):
+            sync.upgrade(fixture.sources, "snapshot-runner", bin_dir=fixture.bin_dir)
         installer.assert_not_called()
 
 if __name__ == "__main__":

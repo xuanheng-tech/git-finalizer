@@ -1,40 +1,33 @@
 from __future__ import annotations
 
-import importlib.util
+from contextlib import suppress
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-import re
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import tomllib
 import unittest
 from unittest import mock
 import urllib.parse
 
-
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location(
-    "repo_bootstrap", ROOT / "git-finalize-repo-bootstrap.py"
-)
-assert SPEC is not None and SPEC.loader is not None
-bootstrap = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = bootstrap
-SPEC.loader.exec_module(bootstrap)
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
+
+from git_finalizer.delivery import repo_bootstrap as bootstrap
 
 
 def declared_finalizer_version() -> str:
-    """The version the entrypoint declares, so this gate survives a version batch."""
-    match = re.search(
-        r'^readonly VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$',
-        (ROOT / "git-finalize").read_text(encoding="utf-8"),
-        re.MULTILINE,
-    )
-    assert match is not None, "cannot read the declared Finalizer version"
-    return match.group(1)
+    """The version pyproject.toml declares, so this gate survives a version batch."""
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    version = data.get("project", {}).get("version")
+    assert isinstance(version, str) and version, "cannot read the declared Finalizer version"
+    return version
 
 
 def git(repo: Path, *arguments: str) -> str:
@@ -91,10 +84,8 @@ class FakeGitea:
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(raw)))
                 self.end_headers()
-                try:
+                with suppress(BrokenPipeError):
                     self.wfile.write(raw)
-                except BrokenPipeError:
-                    pass
 
             def do_GET(self) -> None:
                 if state.deny:

@@ -1,20 +1,29 @@
 from __future__ import annotations
 
-from contextlib import redirect_stderr
 import hashlib
-import io
 import json
 from pathlib import Path
 import re
-import runpy
 import subprocess
+import sys
+import tomllib
 import unittest
 from unittest import mock
 
-from tooling import tool_skill_sync as sync
-
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
+
+from git_finalizer import __version__ as GF_VERSION
+from git_finalizer.delivery import (
+    integration_publish,
+    repo_bootstrap,
+    retirement_plan,
+)
+from git_finalizer.delivery import (
+    parser as cli_parser,
+)
+from git_finalizer.toolchain import tool_skill_sync as sync
 
 # Every canonical Skill payload tree that a released line shipped, paired
 # with the revision that carries it. The registry gate and the history
@@ -31,12 +40,12 @@ RELEASED_CANONICAL_LINEAGE = (
     ("v1.5.0", "0c82bceb12edde749aa6deddab25acb4ec083aeea92a37970ec64179ef92726b"),
     ("v1.6.0", "943ebf4e56ae344cf88ab3dc579d5e497663b052c8ccbade5c42f1f52b5efa93"),
     ("67e3e6c", "288d3126d9459913714aa2e3934773111b2d4430fb73a8385fd33511807a823c"),
+    ("v1.9.9", "010cb09faf50921149b5d22b26093d9445d15461e8d3f10b7faff35259cd8e45"),
 )
 
 
 class ToolContractTests(unittest.TestCase):
     def test_retirement_probe_fails_closed_on_malformed_or_timed_out_capabilities(self) -> None:
-        verifier = runpy.run_path(str(ROOT / "git-finalize-retirement-plan.py"))
         cases = (
             subprocess.CompletedProcess([], 0, json.dumps({"decision": []}), ""),
             subprocess.CompletedProcess([], 0, json.dumps({"decision": {"branch_retirement_version": True}}), ""),
@@ -44,14 +53,13 @@ class ToolContractTests(unittest.TestCase):
         )
         for result in cases:
             with self.subTest(result=type(result).__name__):
-                diagnostics = io.StringIO()
                 outcome = {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
-                with mock.patch("shutil.which", return_value="synthetic-controller"), \
-                     mock.patch("subprocess.run", **outcome), redirect_stderr(diagnostics):
-                    with self.assertRaises(SystemExit) as blocked:
-                        verifier["attest_controller_capability"](ROOT, 1)
-                self.assertEqual(blocked.exception.code, 1)
-                self.assertIn("retirement plan validation blocked", diagnostics.getvalue())
+                with (
+                    mock.patch("shutil.which", return_value="synthetic-controller"),
+                    mock.patch("subprocess.run", **outcome),
+                    self.assertRaises(retirement_plan.RetirementBlocked),
+                ):
+                    retirement_plan.verify_capabilities(ROOT)
 
     def test_readme_declares_the_current_cli_contract_version(self) -> None:
         contract = json.loads((ROOT / "tool_cli_contract.json").read_text(encoding="utf-8"))
@@ -66,38 +74,16 @@ class ToolContractTests(unittest.TestCase):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(sync.read_json(contract_path), contract)
         self.assertEqual(sync.read_json(manifest_path), manifest)
-        version_match = re.search(
-            r'^readonly VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$',
-            (ROOT / "git-finalize").read_text(encoding="utf-8"),
-            re.MULTILINE,
-        )
-        companion_version_match = re.search(
-            r'^VERSION = "([0-9]+\.[0-9]+\.[0-9]+)"$',
-            (ROOT / "git-finalize-integration-publish.py").read_text(
-                encoding="utf-8"
-            ),
-            re.MULTILINE,
-        )
-
-        self.assertIsNotNone(version_match)
-        self.assertIsNotNone(companion_version_match)
-        assert version_match is not None
-        assert companion_version_match is not None
+        pyproject_version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
         self.assertEqual(contract["schema_version"], 1)
         self.assertEqual(manifest["schema_version"], 2)
-        self.assertEqual(contract["contract_version"], 9)
+        self.assertEqual(contract["contract_version"], 10)
         self.assertEqual(contract["tool_name"], "git-finalizer")
         self.assertEqual(contract["tool_version"], manifest["tool_version"])
-        self.assertEqual(contract["tool_version"], version_match.group(1))
-        self.assertEqual(contract["tool_version"], companion_version_match.group(1))
-        bootstrap_version = re.search(
-            r'^VERSION = "([0-9]+\.[0-9]+\.[0-9]+)"$',
-            (ROOT / "git-finalize-repo-bootstrap.py").read_text(encoding="utf-8"),
-            re.MULTILINE,
-        )
-        self.assertIsNotNone(bootstrap_version)
-        assert bootstrap_version is not None
-        self.assertEqual(contract["tool_version"], bootstrap_version.group(1))
+        self.assertEqual(contract["tool_version"], pyproject_version)
+        self.assertEqual(contract["tool_version"], GF_VERSION)
+        self.assertEqual(contract["tool_version"], integration_publish.VERSION)
+        self.assertEqual(contract["tool_version"], repo_bootstrap.VERSION)
         self.assertEqual(manifest["tool_commit"], "@release")
         self.assertEqual(
             manifest["public_cli_contract_sha256"],
@@ -219,12 +205,10 @@ class ToolContractTests(unittest.TestCase):
             (ROOT / "toolchain_compatibility.json").read_text(encoding="utf-8")
         )
         self.assertEqual(compatibility["toolchain_contract_version"], 6)
-        self.assertEqual(compatibility["context_loader_contract_version"], 3)
-        # Sibling contracts advanced to v3 (Context Loader 1.3.1, Snapshot Runner 2.3.1);
-        # per-tool contract advances do not move toolchain_contract_version by themselves.
-        self.assertEqual(compatibility["snapshot_runner_contract_version"], 3)
-        self.assertEqual(compatibility["git_finalizer_contract_version"], 9)
-        self.assertEqual(compatibility["worktree_controller_contract_version"], 3)
+        self.assertEqual(compatibility["context_loader_contract_version"], 4)
+        self.assertEqual(compatibility["snapshot_runner_contract_version"], 4)
+        self.assertEqual(compatibility["git_finalizer_contract_version"], 10)
+        self.assertEqual(compatibility["worktree_controller_adapter_version"], 3)
         self.assertEqual(
             compatibility["worktree_controller_status"],
             "available_external",
@@ -258,7 +242,7 @@ class ToolContractTests(unittest.TestCase):
                 for flag in linkage:
                     self.assertIn(flag, command["flags"])
                 self.assertIn(precondition, command["preconditions"])
-        help_text = (ROOT / "git-finalize").read_text(encoding="utf-8")
+        help_text = cli_parser.usage_text()
         for flag in linkage:
             self.assertIn(f"{flag} <", help_text)
         self.assertNotIn(
@@ -274,32 +258,15 @@ class ToolContractTests(unittest.TestCase):
             sorted(key for key in exit_codes if key != "scope"),
             ["0", "1", "2", "3"],
         )
-        bash_lines = (ROOT / "git-finalize").read_text(encoding="utf-8").splitlines()
-        bash_codes = {
-            match.group(1)
-            for line in bash_lines
-            if (match := re.search(r"^\s*exit ([0-9])$", line)) is not None
-        }
-        self.assertEqual(bash_codes, {"0", "1"})
+        cli_text = (ROOT / "src" / "git_finalizer" / "delivery" / "cli.py").read_text(encoding="utf-8")
+        self.assertIn("return 0", cli_text)
+        self.assertIn("return 1", cli_text)
+        self.assertIn("return exc.exit_code", cli_text)
         self.assertIn("bash-owned commands", exit_codes["scope"])
 
     def test_skill_payload_digests_agree_across_authorities(self) -> None:
-        import importlib
-        import sys
-
         skill_dir = ROOT / "skills" / "git-change-delivery"
-        sys.path.insert(0, str(skill_dir))
-        try:
-            deploy = importlib.import_module("deploy")
-        finally:
-            sys.path.remove(str(skill_dir))
         payload_digest = sync.tree_sha256(skill_dir, sync.SKILL_PAYLOAD)
-        deploy_digest = deploy.payload_tree_digest(skill_dir)
-        self.assertEqual(payload_digest, deploy_digest)
-        self.assertEqual(
-            set(sync.RELEASED_CANONICAL_SKILL_SHA256),
-            set(deploy.RELEASED_CANONICAL_SKILL_SHA256),
-        )
         manifest_paths = [ROOT / "tool_skill_manifest.json"]
         manifest_paths.extend(
             sorted((ROOT / "manifests").glob("*/tool_skill_manifest.json"))
@@ -308,18 +275,6 @@ class ToolContractTests(unittest.TestCase):
             manifest = sync.read_json(manifest_path)
             with self.subTest(manifest=str(manifest_path.relative_to(ROOT))):
                 self.assertEqual(manifest["canonical_skill_sha256"], payload_digest)
-
-    @staticmethod
-    def load_deploy_module():
-        import importlib
-        import sys
-
-        skill_dir = ROOT / "skills" / "git-change-delivery"
-        sys.path.insert(0, str(skill_dir))
-        try:
-            return importlib.import_module("deploy")
-        finally:
-            sys.path.remove(str(skill_dir))
 
     def _tagged_skill_tree(self, ref: str) -> str | None:
         lines = []
@@ -337,13 +292,8 @@ class ToolContractTests(unittest.TestCase):
         return hashlib.sha256("".join(lines).encode()).hexdigest()
 
     def test_released_lineage_registry_is_exact(self) -> None:
-        deploy = self.load_deploy_module()
         expected = {digest for _, digest in RELEASED_CANONICAL_LINEAGE}
         self.assertEqual(set(sync.RELEASED_CANONICAL_SKILL_SHA256), expected)
-        self.assertEqual(
-            set(sync.RELEASED_CANONICAL_SKILL_SHA256),
-            set(deploy.RELEASED_CANONICAL_SKILL_SHA256),
-        )
         # The hand-enriched production tree captured during migration stays
         # untrusted on purpose: it was never a released canonical payload.
         self.assertNotIn(
@@ -392,7 +342,7 @@ class ToolContractTests(unittest.TestCase):
         )
         exit_codes = contract["exit_codes"]
         bootstrap = (
-            ROOT / "git-finalize-repo-bootstrap.py"
+            ROOT / "src" / "git_finalizer" / "delivery" / "repo_bootstrap.py"
         ).read_text(encoding="utf-8")
         self.assertIn(
             'return (2 if decision.startswith("BLOCK_") else 3), receipt', bootstrap
@@ -416,8 +366,6 @@ class ToolContractTests(unittest.TestCase):
         self.assertIn("unclassifiable failure", exit_codes["scope"])
         self.assertIn("pre-execution guard", exit_codes["scope"])
         self.assertNotIn("never returns", exit_codes["scope"])
-        finalizer = (ROOT / "git-finalize").read_text(encoding="utf-8")
-        self.assertIn("repository bootstrap companion is missing", finalizer)
         self.assertIn('"executed": bootstrap_executed', bootstrap)
         boundaries = (
             ROOT / "docs" / "integration-boundaries.md"

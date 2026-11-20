@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import hashlib
 import json
 import os
@@ -11,19 +10,15 @@ import sys
 import tempfile
 import unittest
 
-
 ROOT = Path(__file__).resolve().parents[1]
-DESCRIPTION = (
-    "a 256-bit Controller-generated capability returned only by authorize and "
-    "compared constant-time at complete or abandon; it is excluded from the "
-    "identity so it cannot change the authorization address"
-)
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
+
+from git_finalizer.delivery import content_scan as SCANNER
+
 OPAQUE_VALUE = "A" * 32  # Artificial values, never caller credentials.
-DIRECTORY = "/run/credentials/jq-production-docker.service"
-DIRECTORY_KEY = "QUANT_JQ_CONTAINER_CREDENTIALS"
-SCANNER_SPEC = importlib.util.spec_from_file_location("content_scan", ROOT / "git-finalize-content-scan.py")
-SCANNER = importlib.util.module_from_spec(SCANNER_SPEC)
-SCANNER_SPEC.loader.exec_module(SCANNER)
+DIRECTORY = "/run/credentials/worker-docker.service"
+DIRECTORY_KEY = "SERVICE_CONTAINER_CREDENTIALS"
 
 
 def environment_item(value: str = DIRECTORY, key: str = DIRECTORY_KEY) -> bytes:
@@ -36,21 +31,13 @@ def additional_directory_forms(value: str = DIRECTORY) -> tuple[bytes, bytes]:
             f'config = {{"container_credentials": {quoted}}}\n'.encode())
 
 
-def schema(version: str = "1.13.3") -> dict:
+def metadata_document(version: str = "2.0.0") -> dict:
     return {
         "schema_version": 1,
         "tool_name": "worktree-controller",
         "tool_version": version,
-        "contract_version": 39,
-        "branch_retirement_execution_version": 1,
-        "branch_retirement_contract": {
-            "contract": "branch-retirement/v3",
-            "execution_authorization": {
-                "contract": "branch-retirement-execution/v1",
-                "capability": "branch_retirement_execution_version",
-                "token": DESCRIPTION,
-            },
-        },
+        "contract_version": 62,
+        "description": "synthetic public controller metadata",
     }
 
 
@@ -141,7 +128,7 @@ class AssignmentContentTests(unittest.TestCase):
         self.git("commit", "-qm", message)
 
     def application_test_path(self) -> None:
-        self.path = "apps/quant_orchestration/tests/test_jq_breakglass.py"
+        self.path = "apps/worker_service/tests/test_worker_breakglass.py"
         self.source = self.repo / self.path
         self.source.parent.mkdir(parents=True)
 
@@ -168,9 +155,9 @@ class AssignmentContentTests(unittest.TestCase):
         self.assertEqual(self.git("status", "--porcelain"), "")
 
     def test_module_constant_and_container_field_pass_default_preflight(self) -> None:
-        paths = ("apps/quant_orchestration/tests/test_jq_container.py",
+        paths = ("apps/worker_service/tests/test_worker_container.py",
                  "tests/platform/control_plane_admin/test_docker_runtime.py")
-        for path, raw in zip(paths, additional_directory_forms()):
+        for path, raw in zip(paths, additional_directory_forms(), strict=True):
             self.path = path
             self.source = self.repo / path
             self.source.parent.mkdir(parents=True, exist_ok=True)
@@ -201,7 +188,7 @@ class AssignmentContentTests(unittest.TestCase):
                 })
                 runtime = summary["diagnostics"]["runtime"]
                 for key, name in (("entrypoint", "git-finalize"),
-                                  ("content_scanner", "git-finalize-content-scan.py")):
+                                  ("content_scanner", "src/git_finalizer/delivery/content_scan.py")):
                     source = (ROOT / name).resolve()
                     self.assertEqual(runtime[key], {
                         "path": str(source), "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
@@ -235,7 +222,7 @@ class AssignmentContentTests(unittest.TestCase):
 
     def test_additional_directory_forms_reject_credential_files_and_secret_values(self) -> None:
         for value in (DIRECTORY + "/password", DIRECTORY + "/", OPAQUE_VALUE,
-                      "/run/credentials/../jq-production-docker.service"):
+                      "/run/credentials/../worker-production-docker.service"):
             for raw in additional_directory_forms(value):
                 with self.subTest(raw=raw):
                     self.assertEqual(SCANNER.scan(raw), "ASSIGNMENT")
@@ -258,9 +245,9 @@ class AssignmentContentTests(unittest.TestCase):
     def test_resolved_merge_preflight_and_commit_accept_application_directory(self) -> None:
         self.application_test_path()
         self.write(environment_item())
-        extra_paths = ("apps/quant_orchestration/tests/test_jq_container.py",
+        extra_paths = ("apps/worker_service/tests/test_worker_container.py",
                        "tests/platform/control_plane_admin/test_docker_runtime.py")
-        for path, raw in zip(extra_paths, additional_directory_forms()):
+        for path, raw in zip(extra_paths, additional_directory_forms(), strict=True):
             source = self.repo / path
             source.parent.mkdir(parents=True, exist_ok=True)
             source.write_bytes(raw)
@@ -302,7 +289,7 @@ class AssignmentContentTests(unittest.TestCase):
     def test_directory_classification_requires_canonical_service_directory(self) -> None:
         for value in (
             DIRECTORY + "/password", DIRECTORY + "/", DIRECTORY + " ",
-            "/run/credentials/../jq-production-docker.service",
+            "/run/credentials/../worker-docker.service",
             "/run/credentials/.hidden.service", "/run/credentials/unit.socket",
             "/run/credentials/unit name.service", "run/credentials/unit.service",
             "file:///run/credentials/unit.service", "/run/credentials/" + "a" * 248 + ".service",
@@ -315,8 +302,8 @@ class AssignmentContentTests(unittest.TestCase):
         self.assertEqual(status, 0, summary)
 
     def test_directory_value_does_not_exempt_other_sensitive_names(self) -> None:
-        for key in ("credentials", "QUANT_JQ_CREDENTIAL", "quant_jq_credentials",
-                    "QUANT_JQ_PASSWORD", "QUANT_JQ_TOKEN", "QUANT_JQ_CLIENT_SECRET"):
+        for key in ("credentials", "SERVICE_CREDENTIAL", "service_credentials",
+                    "SERVICE_PASSWORD", "SERVICE_TOKEN", "SERVICE_CLIENT_SECRET"):
             with self.subTest(key=key):
                 self.assert_blocked(environment_item(key=key))
         self.assert_blocked(f'{DIRECTORY_KEY} = "{DIRECTORY}"\n'.encode())
@@ -341,17 +328,17 @@ class AssignmentContentTests(unittest.TestCase):
         for replacement in (
             b"r" + value, b"u" + value, b"f" + value,
             value + b' ""', b'"""' + DIRECTORY.encode() + b'"""',
-            value.replace(b"jq-", b"j\\u0071-"),
+            value.replace(b"worker-", b"\\u0077orker-"),
         ):
             content = raw.replace(value, replacement)
             with self.subTest(replacement=replacement):
                 self.assertEqual(SCANNER.mask_systemd_directory_references(content), content)
-        escaped_key = raw.replace(b"QUANT", b"QU\\u0041NT")
+        escaped_key = raw.replace(b"SERVICE", b"SERV\\u0049CE")
         self.assertEqual(SCANNER.mask_systemd_directory_references(escaped_key), escaped_key)
         self.assert_blocked(escaped_key)
         # These raw assignments were already detected and must stay detected.
         self.assert_blocked(raw.replace(value, value + b' ""'))
-        self.assert_blocked(raw.replace(value, value.replace(b"jq-", b"j\\u0071-")))
+        self.assert_blocked(raw.replace(value, value.replace(b"worker-", b"\\u0077orker-")))
 
     def test_directory_masking_preserves_adjacent_assignments_and_comments(self) -> None:
         for suffix in (
@@ -465,89 +452,50 @@ class AssignmentContentTests(unittest.TestCase):
                 with self.subTest(prefix=prefix, raw=raw):
                     self.assert_blocked(raw)
 
-    def test_exact_declaration_accepts_version_and_format_changes(self) -> None:
-        for version, formatting in (
-            ("1.13.3", {"indent": 2}),
-            ("1.13.5", {"separators": (",", ":")}),
-        ):
-            with self.subTest(version=version):
-                self.write(schema(version), **formatting)
-                status, summary = self.finalize()
-                self.assertEqual(status, 0, summary)
-                self.assertEqual(summary["status"], "success")
-
-    def test_escaped_exact_declaration_is_still_semantic(self) -> None:
-        raw = json.dumps(schema()).encode().replace(b"256-bit", b"256\\u002dbit")
-        self.write(raw)
-        status, summary = self.finalize()
-        self.assertEqual(status, 0, summary)
-
-    def test_token_values_are_not_classified_by_spaces_or_prose(self) -> None:
-        values = (
-            OPAQUE_VALUE, "Bearer " + OPAQUE_VALUE,
-            "a long password with spaces", DESCRIPTION + " " + OPAQUE_VALUE,
-            DESCRIPTION.replace("256-bit", "512-bit"),
-        )
-        for value in values:
-            with self.subTest(value=value[:12]):
-                document = schema()
-                document["branch_retirement_contract"]["execution_authorization"]["token"] = value
-                self.assertIn("硬编码", self.assert_blocked(document)["reason"])
-
-    def test_declaration_requires_explicit_matching_schema(self) -> None:
-        cases = []
-        document = schema()
-        document["tool_name"] = "unrelated-tool"
-        cases.append(document)
-        document = schema()
-        document["schema_version"] = True
-        cases.append(document)
-        document = schema()
-        document["branch_retirement_contract"]["contract"] = "branch-retirement/v2"
-        cases.append(document)
-        document = schema()
-        document["branch_retirement_contract"]["execution_authorization"]["capability"] = "unrelated"
-        cases.append(document)
-        cases.append({"token": DESCRIPTION})
-        for document in cases:
-            with self.subTest(document=document.get("tool_name")):
-                self.assert_blocked(document)
+    def test_decayed_branch_retirement_v3_declaration_is_not_exempted(self) -> None:
+        decayed = {
+            "schema_version": 1,
+            "tool_name": "worktree-controller",
+            "tool_version": "1.13.3",
+            "contract_version": 39,
+            "branch_retirement_execution_version": 1,
+            "branch_retirement_contract": {
+                "contract": "branch-retirement/v3",
+                "execution_authorization": {
+                    "contract": "branch-retirement-execution/v1",
+                    "capability": "branch_retirement_execution_version",
+                    "to" + "ken": "synthetic long " + "token prose value for retirement contract",
+                },
+            },
+        }
+        self.assertIn("硬编码", self.assert_blocked(decayed)["reason"])
 
     def test_other_sensitive_assignments_remain_blocked(self) -> None:
         for key in ("token", "password", "passwd", "secret", "credential", "credentials", "api_key", "client_secret"):
             with self.subTest(key=key):
-                document = schema()
+                document = metadata_document()
                 document["extra"] = {key: OPAQUE_VALUE}
                 self.assertIn("硬编码", self.assert_blocked(document)["reason"])
 
-    def test_description_elsewhere_does_not_get_an_exception(self) -> None:
-        document = schema()
-        document["extra"] = {"token": DESCRIPTION}
-        self.assert_blocked(document)
-        document = schema()
-        authorization = document["branch_retirement_contract"]["execution_authorization"]
-        authorization["password"] = authorization.pop("token")
-        self.assert_blocked(document)
-
     def test_masking_preserves_raw_assignment_length(self) -> None:
         # Raw escapes exceed the detector threshold; decoded value does not.
-        raw = json.dumps(schema()).encode()
+        raw = json.dumps(metadata_document()).encode()
         extra = b', "password": "1234' + b'\\u0061' * 3 + b'"}'
         self.assert_blocked(raw[:-1] + extra)
 
     def test_masking_preserves_raw_assignment_with_escaped_apostrophe(self) -> None:
-        raw = json.dumps(schema()).encode()
+        raw = json.dumps(metadata_document()).encode()
         extra = b', "password": "abc' + b'\\u0027' + b'SYNTHETIC_VALUE_0123456789"}'
         self.assert_blocked(raw[:-1] + extra)
 
     def test_escaped_sensitive_field_name_does_not_hide_an_assignment(self) -> None:
-        document = schema()
+        document = metadata_document()
         document["extra"] = {"password": OPAQUE_VALUE}
         raw = json.dumps(document).encode().replace(b'"password"', b'"pass\\u0077ord"')
         self.assert_blocked(raw)
 
     def test_escaped_key_and_quoted_value_cannot_hide_an_assignment(self) -> None:
-        base = json.dumps(schema()).encode()
+        base = json.dumps(metadata_document()).encode()
         for escaped_quote in (b'\\u0027', b'\\u0022'):
             with self.subTest(quote=escaped_quote):
                 extra = (
@@ -563,24 +511,24 @@ class AssignmentContentTests(unittest.TestCase):
             " ssh-" + "ed25519 " + "A" * 48,
         ):
             with self.subTest(value=value[:12]):
-                document = schema()
+                document = metadata_document()
                 document["description"] = value
                 self.assert_blocked(document)
 
     def test_escaped_signatures_cannot_hide_in_schema_strings(self) -> None:
-        document = schema()
+        document = metadata_document()
         document["description"] = "github" + "_pat_" + OPAQUE_VALUE
         raw = json.dumps(document).encode().replace(b"github_pat_", b"github\\u005fpat_")
         self.assert_blocked(raw)
 
     def test_fully_escaped_public_and_sensitive_keys_remain_blocked(self) -> None:
-        document = schema()
+        document = metadata_document()
         document["extra"] = {"password": OPAQUE_VALUE}
-        raw = json.dumps(document).encode().replace(b'"token"', b'"to\\u006ben"')
+        raw = json.dumps(document).encode().replace(b'"tool_name"', b'"to\\u006fl_name"')
         raw = raw.replace(b'"password"', b'"pass\\u0077ord"')
         self.assert_blocked(raw)
-        document = schema()
-        document["branch_retirement_contract"]["execution_authorization"]["token"] = OPAQUE_VALUE
+        document = metadata_document()
+        document["extra"] = {"token": OPAQUE_VALUE}
         raw = json.dumps(document).encode().replace(b'"token"', b'"to\\u006ben"')
         self.assert_blocked(raw)
 
@@ -598,9 +546,9 @@ class AssignmentContentTests(unittest.TestCase):
         self.git("config", "filter.synthetic.clean", shlex.join([sys.executable, str(script), str(target)]))
         self.git("config", "filter.synthetic.required", "true")
         variants = []
-        document = schema()
+        document = metadata_document()
         document["extra"] = {"password": OPAQUE_VALUE}
-        variants.append(json.dumps(document).encode().replace(b'"token"', b'"to\\u006ben"')
+        variants.append(json.dumps(document).encode().replace(b'"tool_name"', b'"to\\u006fl_name"')
                         .replace(b'"password"', b'"pass\\u0077ord"'))
         for value, literal, escaped in (
             ("github" + "_pat_" + OPAQUE_VALUE, b"github_pat_", b"github\\u005fpat_"),
@@ -608,13 +556,13 @@ class AssignmentContentTests(unittest.TestCase):
             ("-----BEGIN " + "PRIVATE KEY-----", b"PRIVATE", b"PRIV\\u0041TE"),
             (" ssh-" + "ed25519 " + "A" * 48, b"ssh-", b"ss\\u0068-"),
         ):
-            document = schema()
+            document = metadata_document()
             document["description"] = value
             variants.append(json.dumps(document).encode().replace(literal, escaped))
         for raw in variants:
             with self.subTest(kind=variants.index(raw)):
                 target.write_bytes(raw)
-                self.write(schema())
+                self.write(metadata_document())
                 head = self.git("rev-parse", "HEAD")
                 status, summary = self.finalize("commit-only")
                 self.assertEqual(status, 1, summary)
@@ -626,51 +574,57 @@ class AssignmentContentTests(unittest.TestCase):
                 self.git("reset", "-q", "HEAD", "--", self.path)
 
     def test_invalid_duplicate_or_non_utf8_json_remains_strict(self) -> None:
-        raw = json.dumps(schema()).encode()
+        unsafe = metadata_document()
+        unsafe["extra"] = {"password": OPAQUE_VALUE}
+        raw = json.dumps(unsafe).encode()
         for content in (
             raw[:-1],
             raw.replace(b'"tool_name":', b'"tool_name": "other", "tool_name":', 1),
-            raw[:-1] + b', "extra": NaN}',
+            raw[:-1] + b', "extra2": NaN}',
             raw + b'\xff',
         ):
             with self.subTest(content=content[-10:]):
                 self.assert_blocked(content)
 
     def test_classifier_process_failure_keeps_the_strict_result(self) -> None:
-        binary = self.base / "bin"
-        binary.mkdir()
-        wrapper = binary / "python3"
-        for exit_code in (0, 1, 2, 137):
-            with self.subTest(exit_code=exit_code):
-                wrapper.write_text(
-                    '#!/bin/sh\n'
-                    'case "$3" in file|blob|report-file|report-blob)\n'
-                    f'  exit {exit_code}\n'
-                    'esac\n'
-                    f'exec {shlex.quote(sys.executable)} "$@"\n'
-                )
-                wrapper.chmod(0o755)
-                self.env["PATH"] = str(binary) + os.pathsep + os.defpath
-                summary = self.assert_blocked(schema())
-                self.assertEqual(summary["diagnostics"]["content_scan"]["detector"],
-                                 "content-scan-error")
+        pyroot = self.base / "scan-error"
+        pyroot.mkdir()
+        (pyroot / "sitecustomize.py").write_text(
+            "import sys\n"
+            f"sys.path.insert(0, {str(ROOT / 'src')!r})\n"
+            "import git_finalizer.delivery.content_scan as cs\n"
+            "cs.scan = lambda *a, **kw: 'ERROR'\n"
+        )
+        old_pp = self.env.get("PYTHONPATH")
+        self.env["PYTHONPATH"] = str(pyroot)
+        try:
+            summary = self.assert_blocked(metadata_document())
+            self.assertEqual(summary["diagnostics"]["content_scan"]["detector"], "content-scan-error")
+        finally:
+            if old_pp is None:
+                self.env.pop("PYTHONPATH", None)
+            else:
+                self.env["PYTHONPATH"] = old_pp
 
     def test_scanner_reports_preserve_legacy_verdict_and_candidate_protocol(self) -> None:
         self.write(environment_item())
         self.commit_fixture("Synthetic scanner report fixture")
         oid = self.git("rev-parse", "HEAD:" + self.path)
-        for kind, source in (("file", str(self.source)), ("blob", oid), ("candidate", self.path)):
-            with self.subTest(kind=kind):
-                command = [sys.executable, str(ROOT / "git-finalize-content-scan.py")]
-                arguments = [source, str(self.repo), "", ""]
-                legacy = subprocess.check_output([*command, kind, *arguments], text=True).split()
-                reported = subprocess.check_output([*command, "report-" + kind, *arguments],
-                                                   text=True).split()
-                self.assertEqual(legacy, reported[:5] if kind == "candidate" else reported[:1])
-                self.assertEqual(reported[3], hashlib.sha256(self.source.read_bytes()).hexdigest())
-                self.assertEqual(reported[4], "-" if kind == "file" else oid)
-                self.assertEqual(reported[5],
-                                 hashlib.sha256((ROOT / "git-finalize-content-scan.py").read_bytes()).hexdigest())
+        raw = self.source.read_bytes()
+        expected_sha = hashlib.sha256(raw).hexdigest()
+        cand_oid, cand_bytes = SCANNER.hash_candidate_clean(self.repo, self.path, self.source)
+        self.assertEqual(SCANNER.scan(raw), "CLEAR")
+        self.assertIsNone(SCANNER.scan_diagnostic(raw, path=self.path, stage="worktree"))
+        self.assertEqual(cand_bytes, raw)
+        self.assertEqual(cand_oid, oid)
+        blocked_raw = b'pass' + b'word = "SYNTHETIC_VALUE_012345"\n'
+        diag = SCANNER.scan_diagnostic(blocked_raw, path=self.path, stage="index", blob_oid=oid)
+        self.assertIsNotNone(diag)
+        assert diag is not None
+        self.assertEqual(diag["verdict"], "ASSIGNMENT")
+        self.assertEqual(diag["sha256"], hashlib.sha256(blocked_raw).hexdigest())
+        self.assertEqual(diag["blob_oid"], oid)
+        self.assertNotEqual(expected_sha, diag["sha256"])
 
     def test_invalid_json_cannot_hide_escaped_signatures(self) -> None:
         signatures = (
@@ -715,9 +669,9 @@ class AssignmentContentTests(unittest.TestCase):
 
     def test_initial_branch_publish_accepts_schema_blobs_in_history(self) -> None:
         self.prepare_publication()
-        self.write(schema())
+        self.write(metadata_document())
         self.commit_fixture("Synthetic public schema")
-        self.write(schema("1.13.5"))
+        self.write(metadata_document("2.0.1"))
         status, summary = self.finalize("initial-branch")
         self.assertEqual(status, 0, summary)
         self.assertTrue(summary["commit"]["created"])
@@ -730,13 +684,13 @@ class AssignmentContentTests(unittest.TestCase):
 
     def test_initial_branch_publish_refuses_secret_in_older_blob(self) -> None:
         self.prepare_publication()
-        unsafe = schema()
-        unsafe["branch_retirement_contract"]["execution_authorization"]["token"] = OPAQUE_VALUE
+        unsafe = metadata_document()
+        unsafe["extra"] = {"token": OPAQUE_VALUE}
         self.write(unsafe)
         self.commit_fixture("Synthetic unsafe historical blob")
-        self.write(schema())
+        self.write(metadata_document())
         self.commit_fixture("Synthetic safe schema")
-        self.assert_blocked(schema("1.13.5"), mode="initial-branch")
+        self.assert_blocked(metadata_document("2.0.1"), mode="initial-branch")
         self.assertEqual(self.git("ls-remote", "origin", "refs/heads/feature/schema"), "")
 
     def test_clean_filter_cannot_replace_descriptor_with_staged_secret(self) -> None:
@@ -744,7 +698,7 @@ class AssignmentContentTests(unittest.TestCase):
         script.write_text(
             "import json, sys\n"
             "data = json.load(sys.stdin)\n"
-            "data['branch_retirement_contract']['execution_authorization']['token'] = 'A' * 32\n"
+            "data['token'] = 'A' * 32\n"
             "print(json.dumps(data))\n"
         )
         (self.repo / ".gitattributes").write_text("metadata.json filter=synthetic\n")
@@ -752,7 +706,7 @@ class AssignmentContentTests(unittest.TestCase):
         self.git("commit", "-qm", "Synthetic filter configuration")
         self.git("config", "filter.synthetic.clean", shlex.join([sys.executable, str(script)]))
         self.git("config", "filter.synthetic.required", "true")
-        self.write(schema())
+        self.write(metadata_document())
         before = self.state()
         status, summary = self.finalize("commit-only")
         self.assertEqual(status, 1, summary)

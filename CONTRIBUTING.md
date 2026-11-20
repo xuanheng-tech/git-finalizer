@@ -75,10 +75,10 @@ These are byte-bound and must be updated together, in one commit:
 | --- | --- |
 | `tool_cli_contract.json` | `public_cli_contract_sha256` in `tool_skill_manifest.json` |
 | `skills/git-change-delivery/` payload files | `canonical_skill_sha256` in the root manifest **and** both mirrors under `manifests/` |
-| `git-finalize` + companion `VERSION` literals | README current-release declarations, `CHANGELOG.md` section, `tool_version` in contract and manifest |
+| `git-finalize` + `pyproject.toml` version literals | README current-release declarations, `CHANGELOG.md` section, `tool_version` in contract and manifest |
 | `tool_cli_contract.json` `contract_version` | `git_finalizer_contract_version` in `toolchain_compatibility.json` |
 | `LICENSE` | required to exist; `preflight` refuses a release without it |
-| the two `RELEASED_CANONICAL_SKILL_SHA256` registries (`tooling/tool_skill_sync.py`, `skills/git-change-delivery/deploy.py`) | kept equal to each other, and each entry must be a payload a released ref actually carries |
+| `RELEASED_CANONICAL_SKILL_SHA256` (`src/git_finalizer/toolchain/tool_skill_sync.py`) | each entry must be a payload a released ref actually carries |
 
 A released `CHANGELOG.md` section and any pushed tag are history: they are never edited or
 rewritten. Correct the record in a new section instead.
@@ -92,8 +92,8 @@ the root manifest and one key per mirror, in place, preserving each file's forma
 ```bash
 python3 -B - <<'PY'
 import pathlib, re, sys
-sys.path.insert(0, "tooling")
-import tool_skill_sync as sync
+sys.path.insert(0, "src")
+from git_finalizer.toolchain import tool_skill_sync as sync
 
 root = pathlib.Path.cwd()
 contract = sync.sha256_file(root / "tool_cli_contract.json")

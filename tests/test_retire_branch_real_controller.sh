@@ -475,8 +475,8 @@ test_namespace_and_capability_blockers() {
     mkdir -p -- "$case_dir/repo/.git/worktree-controller/v1"
     touch "$case_dir/repo/.git/worktree-controller/v1/repo.lock"
     chmod 600 "$case_dir/repo/.git/worktree-controller/v1/repo.lock"
-    expect_failure "$case_dir/companion-noplan.log" python3 -B \
-        "$project_root/git-finalize-retirement-plan.py" \
+    expect_failure "$case_dir/companion-noplan.log" env PYTHONPATH="$project_root/src" python3 -B \
+        -m git_finalizer.delivery.retirement_plan \
         --repo "$case_dir/repo" --plan-id "$(printf 'e%.0s' $(seq 64))" \
         --operation local --branch main --remote origin --integrated-into main \
         --expected-oid "$(printf '0%.0s' $(seq 40))" \

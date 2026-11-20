@@ -12,7 +12,7 @@ if [[ ! -f git-finalize || ! -d tests ]]; then
     exit 2
 fi
 
-targets=(git-finalize tool-skill-sync scripts/*.sh tests/*.sh)
+targets=(scripts/*.sh tests/*.sh)
 options=(--exclude=SC2016 --)
 
 probe() {

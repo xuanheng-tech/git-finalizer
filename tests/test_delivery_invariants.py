@@ -8,7 +8,6 @@ import sys
 import tempfile
 import unittest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -290,18 +289,12 @@ class DeliveryInvariantTests(unittest.TestCase):
         git_wrapper = binary / "git"
         git_wrapper.write_text(
             f"#!{sys.executable}\nimport os, sys, time\n"
-            "if 'push' in sys.argv[1:]: time.sleep(60)\n"
+            "if 'push' in sys.argv[1:]: time.sleep(5)\n"
             "os.execv('/usr/bin/git', ['git', *sys.argv[1:]])\n"
         )
-        deadline_wrapper = binary / "timeout"
-        deadline_wrapper.write_text(
-            f"#!{sys.executable}\nimport os, sys\nargs=sys.argv[1:]\n"
-            "if 'push' in args: args[1]='0.1s'\n"
-            "os.execv('/usr/bin/timeout', ['timeout', *args])\n"
-        )
-        for wrapper in (git_wrapper, deadline_wrapper):
-            wrapper.chmod(0o755)
+        git_wrapper.chmod(0o755)
         self.environment["PATH"] = str(binary) + os.pathsep + os.defpath
+        self.environment["GF_REMOTE_GIT_TIMEOUT"] = "0.2"
         result, data = self.finalize()
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertTrue(data["commit"]["created"])

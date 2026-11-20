@@ -160,9 +160,8 @@ test_multi_commit_to_empty_remote() {
     make_repo "$case_dir" 3
     expect_success "$output" "$finalizer" --summary --publish-existing-history \
         "$expected_head" --remote origin --remote-branch main --repo "$test_repo"
-        local declared_version
-    declared_version=$(sed -n 's/^readonly VERSION="\([0-9.]*\)"$/\1/p' \
-        "$project_root/git-finalize" | head -1)
+    local declared_version
+    declared_version=$(python3 -B -c "import pathlib, tomllib; print(tomllib.loads(pathlib.Path('$project_root/pyproject.toml').read_text(encoding='utf-8'))['project']['version'])")
     [[ -n $declared_version ]] || fail_assertion 'Finalizer version is unreadable'
 python3 -B - "$output" "$expected_head" "$declared_version" <<'PY'
 import json

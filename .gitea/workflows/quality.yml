@@ -74,7 +74,7 @@ jobs:
         run: |
           set -euo pipefail
           chown -R ubuntu:ubuntu "$GITHUB_WORKSPACE"
-          for GF_TEST_PYTHON in 3.11 3.12; do
+          for GF_TEST_PYTHON in 3.12 3.13; do
             sudo -u ubuntu -H env "PATH=$PATH" \
               uv run --no-project --no-config --python "$GF_TEST_PYTHON" \
               python -B -m unittest discover -s tests -p 'test_clean_install.py' -v

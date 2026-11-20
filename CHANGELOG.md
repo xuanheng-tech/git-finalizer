@@ -13,6 +13,29 @@ section is invented for it.
 
 ## Unreleased
 
+## 2.0.0 - 2026-11-20
+
+- Changed: re-architected Git Finalizer into a zero-dependency pure-Python package (`pyproject.toml`,
+  `requires-python = ">=3.12,<3.15"`, console entrypoints `git-finalize`, `tool-skill-sync`,
+  `tool-temp-dir` under `src/git_finalizer/delivery/` and `src/git_finalizer/toolchain/`) with thin
+  repository-root wrappers preserving all CLI flags, exit codes, JSON schemas, and POSIX/macOS portability.
+- Changed: bumped public CLI contract to `contract_version` **10**, unified structured `error_code`
+  across CLI errors, expanded `tool-skill-sync` multi-client governance (`codex`, `claude`, `gemini`,
+  `cursor`, `qoder`/`qoder-cn`), and pinned `context-loader` `1.4.0` (`contract_version` 4),
+  `snapshot-runner` `2.6.0` (`contract_version` 4, Epoch 6), and `worktree-controller` `1.36.0`
+  (`contract_version` 62).
+- Added: AI provenance trailers (`--trailer-agent`, `--trace-ref`, auto `Snapshot-Evidence-Id`),
+  optional Agent Trace Git notes (`--agent-trace` under `refs/notes/agent-trace`), pluggable SARIF 2.1.0
+  external scanners (`--scanner gitleaks|trufflehog|osv|sarif-cmd`), and declarative `.agents/delivery-policy.toml`
+  with optional `--opa-policy` evaluation.
+- Fixed: state-aware CLI flag parsing (`--message` payloads, `--summary --version` diagnostics),
+  isolated temporary `GIT_INDEX_FILE` / `GIT_OBJECT_DIRECTORY` candidate validation with zero pollution on refusal,
+  non-inherited `O_CLOEXEC` bounded `LOCK_SH`/`LOCK_EX` execution locking, `--reviewed-sensitive-source`
+  post-commit baseline scan & `0664` permissions & `--literal-pathspecs`, `content-scan` case-sensitive
+  `sk-` & Epoch-6 secret patterns, fail-closed retirement `show-ref` & `git config`, `integration-publish`
+  crash/timeout recovery (removing `os._exit(97)`), `repo-bootstrap` HTTP Basic loopback guard & SSH/timeouts,
+  `workflow_health` `>=` capability matching, and `snapshot-verify` batch `read --fields` with `file_context.content` verification.
+
 ## 1.9.9
 
 - Content scans report only detector matches that are new relative to the file's committed

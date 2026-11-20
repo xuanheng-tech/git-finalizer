@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import os
 import io
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import tarfile
+import tempfile
+import tomllib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,14 +17,7 @@ SCRIPT = ROOT / "scripts" / "release.py"
 
 
 def declared_version() -> str:
-    match = re.search(
-        r'^readonly VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$',
-        (ROOT / "git-finalize").read_text(encoding="utf-8"),
-        re.MULTILINE,
-    )
-    if match is None:
-        raise AssertionError("cannot read the declared Finalizer version")
-    return match.group(1)
+    return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
 
 
 # Derived so a version batch cannot silently leave this gate behind.
@@ -65,7 +59,9 @@ class ReleaseProcedureTests(unittest.TestCase):
             check=True,
         )
         for relative in untracked.stdout.splitlines():
-            modes.setdefault(relative, 0o644)
+            source_path = ROOT / relative
+            mode = 0o755 if source_path.is_file() and (source_path.stat().st_mode & 0o111) else 0o644
+            modes.setdefault(relative, mode)
         for relative, mode in sorted(modes.items()):
             source = ROOT / relative
             target = destination / relative
@@ -356,7 +352,7 @@ class ReleaseProcedureTests(unittest.TestCase):
             self.assertEqual(override.returncode, 0, override.stderr)
             invocations = log.read_text(encoding="utf-8")
             self.assertIn("--exclude=SC2016", invocations)
-            self.assertIn("git-finalize", invocations)
+            self.assertIn("tests/run.sh", invocations)
 
             missing = subprocess.run(
                 ["/bin/bash", "scripts/lint.sh"],
@@ -444,18 +440,20 @@ class ReleaseProcedureTests(unittest.TestCase):
         original = artifact.read_bytes()
         for kind in ("symlink", "hardlink", "duplicate"):
             with self.subTest(kind=kind):
-                with tarfile.open(fileobj=io.BytesIO(original), mode="r:gz") as source:
-                    with tarfile.open(artifact, "w:gz") as target:
-                        for member in source.getmembers():
-                            target.addfile(member, source.extractfile(member) if member.isfile() else None)
-                        if kind == "duplicate":
-                            member = source.getmember(f"{PACKAGE}/LICENSE")
-                            target.addfile(member, source.extractfile(member))
-                        else:
-                            member = tarfile.TarInfo(f"{PACKAGE}/extra-link")
-                            member.type = tarfile.SYMTYPE if kind == "symlink" else tarfile.LNKTYPE
-                            member.linkname = "/outside-the-package"
-                            target.addfile(member)
+                with (
+                    tarfile.open(fileobj=io.BytesIO(original), mode="r:gz") as source,
+                    tarfile.open(artifact, "w:gz") as target,
+                ):
+                    for member in source.getmembers():
+                        target.addfile(member, source.extractfile(member) if member.isfile() else None)
+                    if kind == "duplicate":
+                        member = source.getmember(f"{PACKAGE}/LICENSE")
+                        target.addfile(member, source.extractfile(member))
+                    else:
+                        member = tarfile.TarInfo(f"{PACKAGE}/extra-link")
+                        member.type = tarfile.SYMTYPE if kind == "symlink" else tarfile.LNKTYPE
+                        member.linkname = "/outside-the-package"
+                        target.addfile(member)
                 # Check the archive contract independently of the checksum gate.
                 namespace = __import__("runpy").run_path(str(repository / "scripts/release.py"))
                 with self.assertRaises(namespace["ReleaseError"]):

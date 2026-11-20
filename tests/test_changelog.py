@@ -1,12 +1,11 @@
 from contextlib import redirect_stderr, redirect_stdout
 import io
 from pathlib import Path
-import re
 import tempfile
+import tomllib
 import unittest
 
 from scripts import changelog
-
 
 ROOT = Path(__file__).resolve().parents[1]
 VALID_CHANGELOG = """# Changelog
@@ -25,24 +24,19 @@ VALID_CHANGELOG = """# Changelog
 
 class ChangelogTests(unittest.TestCase):
     def test_current_source_version_has_one_nonempty_changelog_section(self) -> None:
-        script_match = re.search(
-            r'^readonly VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$',
-            (ROOT / "git-finalize").read_text(encoding="utf-8"),
-            re.MULTILINE,
-        )
+        import re
+        version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
         readme_match = re.search(
             r"^当前版本：`([0-9]+\.[0-9]+\.[0-9]+)`$",
             (ROOT / "README.md").read_text(encoding="utf-8"),
             re.MULTILINE,
         )
-        self.assertIsNotNone(script_match)
         self.assertIsNotNone(readme_match)
-        assert script_match is not None
         assert readme_match is not None
-        self.assertEqual(script_match.group(1), readme_match.group(1))
+        self.assertEqual(version, readme_match.group(1))
 
         body = changelog.validate_version(
-            (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"), script_match.group(1)
+            (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"), version
         )
         self.assertTrue(body)
 

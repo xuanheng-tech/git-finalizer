@@ -85,7 +85,11 @@
         "--authority-key",
         "--summary",
         "--diagnostics",
-        "--"
+        "--",
+        "--scanner",
+        "--sarif-cmd",
+        "--opa-policy",
+        "--opa-query"
       ],
       "name": "verify_only",
       "operation_class": "read_only",
@@ -122,7 +126,14 @@
         "--authority-key",
         "--summary",
         "--diagnostics",
-        "--"
+        "--",
+        "--trailer-agent",
+        "--trace-ref",
+        "--agent-trace",
+        "--scanner",
+        "--sarif-cmd",
+        "--opa-policy",
+        "--opa-query"
       ],
       "name": "commit_only",
       "operation_class": "local_mutation",
@@ -151,7 +162,14 @@
         "--dry-run",
         "--summary",
         "--diagnostics",
-        "--"
+        "--",
+        "--trailer-agent",
+        "--trace-ref",
+        "--agent-trace",
+        "--scanner",
+        "--sarif-cmd",
+        "--opa-policy",
+        "--opa-query"
       ],
       "name": "initial_commit_only",
       "operation_class": "local_mutation",
@@ -182,7 +200,14 @@
         "--summary",
         "--diagnostics",
         "--",
-        "--fixture-exceptions"
+        "--fixture-exceptions",
+        "--trailer-agent",
+        "--trace-ref",
+        "--agent-trace",
+        "--scanner",
+        "--sarif-cmd",
+        "--opa-policy",
+        "--opa-query"
       ],
       "name": "normal_publish",
       "operation_class": "remote_mutation",
@@ -212,7 +237,14 @@
         "--dry-run",
         "--summary",
         "--diagnostics",
-        "--"
+        "--",
+        "--trailer-agent",
+        "--trace-ref",
+        "--agent-trace",
+        "--scanner",
+        "--sarif-cmd",
+        "--opa-policy",
+        "--opa-query"
       ],
       "name": "initial_publish",
       "operation_class": "remote_mutation",
@@ -240,7 +272,14 @@
         "--dry-run",
         "--summary",
         "--diagnostics",
-        "--"
+        "--",
+        "--trailer-agent",
+        "--trace-ref",
+        "--agent-trace",
+        "--scanner",
+        "--sarif-cmd",
+        "--opa-policy",
+        "--opa-query"
       ],
       "name": "initial_branch_publish",
       "operation_class": "remote_mutation",
@@ -264,7 +303,9 @@
         "--summary",
         "--diagnostics",
         "--allow-large-binary",
-        "--allow-test-fixture"
+        "--allow-test-fixture",
+        "--opa-policy",
+        "--opa-query"
       ],
       "name": "resume_initial_publish",
       "operation_class": "remote_mutation",
@@ -294,7 +335,9 @@
         "--allocation-id",
         "--task-key",
         "--authority-key",
-        "--"
+        "--",
+        "--opa-policy",
+        "--opa-query"
       ],
       "name": "resume_publish",
       "operation_class": "remote_mutation",
@@ -324,7 +367,9 @@
         "--dry-run",
         "--fixture-exceptions",
         "--summary",
-        "--diagnostics"
+        "--diagnostics",
+        "--opa-policy",
+        "--opa-query"
       ],
       "name": "sync_published_branch",
       "operation_class": "remote_mutation",
@@ -358,7 +403,9 @@
         "--allocation-id",
         "--task-key",
         "--authority-key",
-        "--allow-large-binary"
+        "--allow-large-binary",
+        "--opa-policy",
+        "--opa-query"
       ],
       "name": "publish_existing_branch",
       "operation_class": "remote_mutation",
@@ -385,7 +432,9 @@
         "--summary",
         "--diagnostics",
         "--fixture-exceptions",
-        "--allow-large-binary"
+        "--allow-large-binary",
+        "--opa-policy",
+        "--opa-query"
       ],
       "name": "publish_existing_history",
       "operation_class": "remote_mutation",
@@ -413,7 +462,9 @@
         "--summary",
         "--diagnostics",
         "--fixture-exceptions",
-        "--allow-large-binary"
+        "--allow-large-binary",
+        "--opa-policy",
+        "--opa-query"
       ],
       "name": "resume_existing_history_publish",
       "operation_class": "remote_mutation",
@@ -526,7 +577,7 @@
       ]
     }
   ],
-  "contract_version": 9,
+  "contract_version": 10,
   "exit_codes": {
     "0": "success or verification passed",
     "1": "blocked, failed verification, or Finalizer preflight refusal",
@@ -536,11 +587,14 @@
   },
   "flags": {
     "entrypoint": "git-finalize",
+    "error_code": "structured uppercase ErrorCode string included on every non-success summary or companion JSON verdict",
     "integration_publication_progress": "blocked verdicts add schema-versioned progress with validated request identity, exact execution phase, mutation_attempted, push_returncode, independent remote observation and Controller completion; blocked never implies no remote write",
     "metadata": [
       "--version",
       "--help"
     ],
+    "policy_and_scanners": "declarative .agents/delivery-policy.toml, optional OPA/Rego hook (--opa-policy), and pluggable SARIF 2.1.0 scanners (--scanner gitleaks|trufflehog|osv|sarif-cmd)",
+    "provenance_trailers": "RFC-822 Assisted-by / Agent-Trace-Ref / auto Snapshot-Evidence-Id applied via git interpret-trailers, plus optional refs/notes/agent-trace JSON note (--agent-trace)",
     "resource_limits": "core Git commands have a 120-second deadline and five-second forced-stop grace; content scanning refuses raw files and blobs above 64 MiB; managed production readers coordinate with activation and rollback",
     "summary": "bounded_deterministic_json",
     "summary_diagnostics": "optional metadata-only runtime identity and same-scan refusal; automatic for content refusals/risks, otherwise core --summary --diagnostics; no matched values or source excerpts; fixed fields, classification triple and exit codes unchanged"
@@ -560,5 +614,5 @@
   ],
   "schema_version": 1,
   "tool_name": "git-finalizer",
-  "tool_version": "1.9.9"
+  "tool_version": "2.0.0"
 }

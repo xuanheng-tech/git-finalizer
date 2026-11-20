@@ -6,7 +6,6 @@ import subprocess
 import tempfile
 import unittest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 FINALIZER = ROOT / "git-finalize"
 PATCH = b"--- a/example.txt\n+++ b/example.txt\n@@ -1,3 +1,3 @@\n start\n \n-old\n+new\n"
