@@ -16,7 +16,6 @@ import subprocess
 import sys
 import time
 from typing import Any
-import uuid
 
 from git_finalizer import __version__
 from git_finalizer.errors import ErrorCode
@@ -168,13 +167,15 @@ def verify_controller_capabilities(controller: str, repo: Path) -> None:
 class ControllerChannel:
     """Bounded line-oriented JSON-line session speaking integration-publication-session/v1."""
 
-    def __init__(self, controller: str, repo: Path, lease_id: str, run_id: str) -> None:
+    def __init__(self, controller: str, repo: Path, candidate_oid: str, lease_id: str, run_id: str) -> None:
         self.process = subprocess.Popen(
             [
                 controller,
                 "publication-execution-session",
                 "--repo",
                 str(repo),
+                "--candidate-oid",
+                candidate_oid,
                 "--lease-id",
                 lease_id,
                 "--run-id",
@@ -183,7 +184,7 @@ class ControllerChannel:
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             text=False,
             close_fds=True,
         )
@@ -303,14 +304,20 @@ def _validate_phase_message(
     if not isinstance(expires_raw, str):
         raise PublishError("Controller lease expiry is missing")
     try:
-        if datetime.fromisoformat(expires_raw).astimezone(UTC) <= datetime.now(UTC):
-            raise PublishError("Controller publication lease has expired")
+        expires_at = datetime.fromisoformat(expires_raw).astimezone(UTC)
     except ValueError as exc:
         raise PublishError("Controller lease expiry is malformed") from exc
     if expected_phase in {"verified", "authorized"}:
         action = message.get("action")
         if not isinstance(action, str) or action not in {"PUSH_CANDIDATE", "RECOVER_ALREADY_PUBLISHED"}:
             raise PublishError("Controller publication action is invalid")
+        expected_remote = (
+            identity["candidate_oid"] if action == "RECOVER_ALREADY_PUBLISHED" else identity["expected_main_oid"]
+        )
+        if message.get("remote_oid") != expected_remote:
+            raise PublishError("Controller publication authorization action differs")
+        if action == "PUSH_CANDIDATE" and expires_at <= datetime.now(UTC):
+            raise PublishError("Controller publication lease has expired")
     return identity
 
 
@@ -328,7 +335,7 @@ def publish(arguments: argparse.Namespace, progress: PublicationProgress | None 
     if head_res.returncode != 0 or head_res.stdout.strip() != candidate_oid:
         raise PublishError("candidate worktree HEAD does not match requested candidate OID")
 
-    channel = ControllerChannel(controller, repo, lease_id, run_id)
+    channel = ControllerChannel(controller, repo, candidate_oid, lease_id, run_id)
     try:
         prog.phase = "verify"
         verified = channel.read_message()
@@ -351,7 +358,12 @@ def publish(arguments: argparse.Namespace, progress: PublicationProgress | None 
 
         prog.phase = "authorize"
         authorized = channel.send_json(
-            {"schema_version": 1, "contract": CONTRACT, "action": "authorize"}
+            {
+                "schema_version": 1,
+                "contract": CONTRACT,
+                "action": "authorize",
+                "identity": identity,
+            }
         )
         auth_identity = _validate_phase_message(
             authorized,
@@ -364,7 +376,7 @@ def publish(arguments: argparse.Namespace, progress: PublicationProgress | None 
             raise PublishError("Controller authorization identity differs from verified identity")
 
         action = str(authorized["action"])
-        record_id = str(uuid.uuid4())
+        record_id = f"git-finalizer-integration-{lease_id}-{candidate_oid}"
         prog.record_id = record_id
 
         if action == "RECOVER_ALREADY_PUBLISHED":
@@ -389,8 +401,8 @@ def publish(arguments: argparse.Namespace, progress: PublicationProgress | None 
                     push = run_git(
                         repo,
                         "push",
+                        "--porcelain",
                         "--no-follow-tags",
-                        f"--force-with-lease={target_ref}:{expected_main_oid}",
                         "--",
                         remote,
                         f"{candidate_oid}:{target_ref}",
@@ -421,10 +433,12 @@ def publish(arguments: argparse.Namespace, progress: PublicationProgress | None 
                 "schema_version": 1,
                 "contract": CONTRACT,
                 "action": "complete",
+                "identity": identity,
                 "result": {
                     "record_id": record_id,
+                    "executor": {"name": "git-finalizer", "version": VERSION},
+                    "push_executed": prog.mutation_attempted,
                     "remote_oid": prog.remote_oid,
-                    "push_result": result_push,
                 },
             }
         )
@@ -435,8 +449,14 @@ def publish(arguments: argparse.Namespace, progress: PublicationProgress | None 
             expected_run=run_id,
             expected_candidate=candidate_oid,
         )
-        if completed.get("record_id") != record_id:
+        if (
+            completed.get("record_id") != record_id
+            or completed.get("remote_verify") != {"status": "verified", "oid": candidate_oid}
+            or completed.get("lifecycle_completion_required") is not True
+        ):
             raise PublishError("Controller completion record_id mismatch")
+        if channel.process.wait(timeout=3) != 0:
+            raise PublishError("Controller publication session failed after result verification")
         prog.controller_completed = True
         prog.phase = "complete"
 

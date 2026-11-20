@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import fcntl
 import json
 from pathlib import Path
@@ -21,7 +22,21 @@ def main() -> int:
         return 0
     if command != "publication-execution-session":
         return 2
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--repo", required=True)
+    parser.add_argument("--candidate-oid", required=True)
+    parser.add_argument("--lease-id", required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(sys.argv[3:])
     identity = config["identity"]
+    if (
+        not args.json
+        or args.candidate_oid != identity["candidate_oid"]
+        or args.lease_id != identity["lease_id"]
+        or args.run_id != identity["run_id"]
+    ):
+        return 2
 
     def observed() -> str:
         result = subprocess.run(
@@ -51,14 +66,39 @@ def main() -> int:
         if not emit("verified", **recipe()):
             return 1
         request = sys.stdin.readline()
-        if not request or json.loads(request)["action"] != "authorize":
+        if not request:
+            return 1
+        auth_req = json.loads(request)
+        if (
+            set(auth_req) != {"schema_version", "contract", "action", "identity"}
+            or auth_req["schema_version"] != 1
+            or auth_req["contract"] != CONTRACT
+            or auth_req["action"] != "authorize"
+            or auth_req["identity"] != identity
+        ):
             return 1
         if not emit("authorized", **recipe()):
             return 1
         request = sys.stdin.readline()
         if not request:
             return 1
-        result = json.loads(request)["result"]
+        comp_req = json.loads(request)
+        if (
+            set(comp_req) != {"schema_version", "contract", "action", "identity", "result"}
+            or comp_req["schema_version"] != 1
+            or comp_req["contract"] != CONTRACT
+            or comp_req["action"] != "complete"
+            or comp_req["identity"] != identity
+        ):
+            return 1
+        result = comp_req["result"]
+        if (
+            not isinstance(result, dict)
+            or set(result) != {"record_id", "executor", "push_executed", "remote_oid"}
+            or not isinstance(result["executor"], dict)
+            or set(result["executor"]) != {"name", "version"}
+        ):
+            return 1
         if observed() != identity["candidate_oid"]:
             return 1
         if not emit(

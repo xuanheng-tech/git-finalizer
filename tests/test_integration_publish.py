@@ -144,6 +144,10 @@ class IntegrationPublishTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         summary = json.loads(result.stdout)
         self.assertEqual(summary["remote_verify"]["oid"], self.fixture.candidate_oid)
+        self.assertEqual(
+            summary["record_id"],
+            f"git-finalizer-integration-{self.fixture.lease_id}-{self.fixture.candidate_oid}",
+        )
         self.assertEqual(summary["controller_execution"]["contract"], "integration-publication-session/v1")
         self.assertTrue(summary["controller_execution"]["lifecycle_completion_required"])
         self.assertFalse((common / "worktree-controller").exists())
