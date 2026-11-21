@@ -32,7 +32,111 @@ from git_finalizer.git_io import (
 from git_finalizer.json_io import loads_unique, sha256_bytes
 
 MAX_FIXTURE_EXCEPTIONS = 16
+MAX_WHITESPACE_DIAGNOSTICS = 50
 BACKEND_TEST_PATH_RE = re.compile(r"^backend/tests/test_[A-Za-z0-9_]+\.py$")
+WHITESPACE_HEADER_RE = re.compile(r"^(?P<path>[^:\n]+):(?P<line>[0-9]+): (?P<reason>.+)$")
+DIFF_PREVIEW_PREFIXES = ("+", "-", " ", "@@", "diff --git ", "index ", "--- ", "+++ ", "\\ No newline")
+
+
+def parse_whitespace_diagnostics(
+    diag_text: str,
+    known_paths: list[str],
+    *,
+    commit_oid: str | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Parse `git diff --check` output into metadata-only `{path, line, reason}` records.
+
+    Never captures offending source-line text (`+...` / `-...` / ` ...`), preventing both
+    source-line colon misparsing and secret/code excerpt leakage into structured summaries.
+    """
+    ordered_known = sorted(set(known_paths), key=len, reverse=True)
+    violations: list[dict[str, Any]] = []
+    unparsed: list[str] = []
+    seen: set[tuple[str, int, str]] = set()
+
+    for raw_line in diag_text.splitlines():
+        line = raw_line.rstrip("\r")
+        if not line.strip():
+            continue
+
+        matched_known = False
+        for rel in ordered_known:
+            prefix = f"{rel}:"
+            if not line.startswith(prefix):
+                continue
+            rest = line[len(prefix) :]
+            line_str, sep, msg = rest.partition(":")
+            if sep and line_str.isdigit():
+                lineno = int(line_str)
+                reason = msg.strip().rstrip(".")
+                key = (rel, lineno, reason)
+                if key not in seen:
+                    seen.add(key)
+                    entry: dict[str, Any] = {"path": rel, "line": lineno, "reason": reason}
+                    if commit_oid:
+                        entry["commit"] = commit_oid[:12]
+                    violations.append(entry)
+                matched_known = True
+                break
+        if matched_known:
+            continue
+
+        if line.startswith(DIFF_PREVIEW_PREFIXES):
+            continue
+
+        m = WHITESPACE_HEADER_RE.match(line)
+        if m:
+            rel = m.group("path")
+            lineno = int(m.group("line"))
+            reason = m.group("reason").strip().rstrip(".")
+            key = (rel, lineno, reason)
+            if key not in seen:
+                seen.add(key)
+                entry = {"path": rel, "line": lineno, "reason": reason}
+                if commit_oid:
+                    entry["commit"] = commit_oid[:12]
+                violations.append(entry)
+        else:
+            unparsed.append(line.strip())
+
+    violations.sort(key=lambda item: (str(item["path"]), int(item["line"]), str(item["reason"])))
+    return violations, unparsed
+
+
+def _raise_whitespace_error(
+    violations: list[dict[str, Any]],
+    *,
+    prefix: str,
+    fallback_message: str,
+) -> None:
+    if not violations:
+        raise FinalizerError(
+            ErrorCode.WHITESPACE_VIOLATION,
+            fallback_message,
+            final_phase="local_validation",
+        )
+    total = len(violations)
+    bounded = violations[:MAX_WHITESPACE_DIAGNOSTICS]
+    files = sorted({str(item["path"]) for item in violations})
+    summary_items = [
+        f"{item['path']}:{item['line']}:{item['reason']}"
+        for item in violations[:8]
+    ]
+    suffix = f" 等共{total}处" if total > 8 else ""
+    reason = f"{prefix} ({total}处): {', '.join(summary_items)}{suffix}"
+    raise FinalizerError(
+        ErrorCode.WHITESPACE_VIOLATION,
+        reason,
+        final_phase="local_validation",
+        diagnostics={
+            "whitespace": {
+                "violations": bounded,
+                "total_count": total,
+                "omitted_count": max(0, total - len(bounded)),
+                "files": files,
+            }
+        },
+    )
 
 
 @dataclasses.dataclass
@@ -781,42 +885,46 @@ def validate_staged_candidate(
 
     if ws_failed:
         diag_text = "\n".join(chunk for chunk in diag_chunks if chunk)
-        # Check if every reported file is `.patch` and passes exact counted empty-context validation
-        violating_files: set[str] = set()
-        for line in diag_text.splitlines():
-            if ":" in line:
-                violating_files.add(line.split(":", 1)[0])
-        if not violating_files:
+        parsed_violations, unparsed_lines = parse_whitespace_diagnostics(diag_text, paths)
+        if not parsed_violations:
             raise FinalizerError(
                 ErrorCode.WHITESPACE_VIOLATION,
                 "git diff --check 失败；staged diff 存在 whitespace 错误",
                 final_phase="local_validation",
             )
-        for vfile in violating_files:
+        by_file: dict[str, list[dict[str, Any]]] = {}
+        for item in parsed_violations:
+            by_file.setdefault(str(item["path"]), []).append(item)
+
+        failing_violations: list[dict[str, Any]] = []
+        for vfile in sorted(by_file):
+            file_items = by_file[vfile]
             if not vfile.endswith(".patch"):
-                raise FinalizerError(
-                    ErrorCode.WHITESPACE_VIOLATION,
-                    f"git diff --check 失败；存在 whitespace 错误: {vfile}",
-                    final_phase="local_validation",
-                )
+                failing_violations.extend(file_items)
+                continue
             if cli.action == "verify-only":
                 blob_raw = candidate_blobs.get(vfile)
                 if blob_raw is None:
-                    raise FinalizerError(ErrorCode.WHITESPACE_VIOLATION, f"git diff --check 失败；patch 候选不可读: {vfile}", final_phase="local_validation")
+                    failing_violations.extend(file_items)
+                    continue
             else:
                 ls = run_git(repo, "--literal-pathspecs", "ls-files", "--stage", "-z", "--", vfile, env=iso_env)
                 entries = parse_nul_records(ls.stdout)
                 if len(entries) != 1:
-                    raise FinalizerError(ErrorCode.WHITESPACE_VIOLATION, f"git diff --check 失败；patch 文件暂存项异常: {vfile}", final_phase="local_validation")
+                    failing_violations.extend(file_items)
+                    continue
                 blob_oid = entries[0].partition("\t")[0].split()[1]
                 blob_raw = read_blob_bytes(repo, blob_oid, max_bytes=patch_check.MAX_PATCH_BYTES + 1, env=iso_env)
-            file_diags = "\n".join(ln for ln in diag_text.splitlines() if ln.startswith(f"{vfile}:"))
+            file_diags = "\n".join(f"{it['path']}:{it['line']}: {it['reason']}." for it in file_items)
             if not patch_check.allow_patch_context_whitespace_only(repo, vfile, blob_raw, file_diags, env=iso_env):
-                raise FinalizerError(
-                    ErrorCode.WHITESPACE_VIOLATION,
-                    f"git diff --check 失败；patch 文件包含无效或超限的 whitespace 错误: {vfile}",
-                    final_phase="local_validation",
-                )
+                failing_violations.extend(file_items)
+
+        if failing_violations or unparsed_lines:
+            _raise_whitespace_error(
+                failing_violations,
+                prefix="git diff --check 失败；存在 whitespace 错误",
+                fallback_message="git diff --check 失败；staged diff 存在 whitespace 错误",
+            )
 
     # 5. Staged blob size, unified NUL binary check, content scan & reviewed source check (skipped re-staging in verify-only)
     staged_blobs: dict[str, bytes] = dict(candidate_blobs) if cli.action == "verify-only" else {}
@@ -962,31 +1070,36 @@ def validate_commit_range(
         chk = run_git(repo, "diff", "--check", base_tree, commit_oid)
         if chk.returncode != 0:
             diag_text = chk.stdout.decode("utf-8", errors="replace")
-            violating_files: set[str] = set()
-            for line in diag_text.splitlines():
-                if ":" in line:
-                    violating_files.add(line.split(":", 1)[0])
-            if not violating_files:
+            parsed_violations, unparsed_lines = parse_whitespace_diagnostics(
+                diag_text, changed_paths, commit_oid=commit_oid
+            )
+            if not parsed_violations:
                 raise FinalizerError(
                     ErrorCode.WHITESPACE_VIOLATION,
                     f"历史提交存在 whitespace 错误 ({commit_oid[:12]}): diff",
                     final_phase="local_validation",
                 )
-            for vfile in violating_files:
+            by_file: dict[str, list[dict[str, Any]]] = {}
+            for item in parsed_violations:
+                by_file.setdefault(str(item["path"]), []).append(item)
+
+            failing_violations: list[dict[str, Any]] = []
+            for vfile in sorted(by_file):
+                file_items = by_file[vfile]
                 if not vfile.endswith(".patch"):
-                    raise FinalizerError(
-                        ErrorCode.WHITESPACE_VIOLATION,
-                        f"历史提交存在 whitespace 错误 ({commit_oid[:12]}): {vfile}",
-                        final_phase="local_validation",
-                    )
+                    failing_violations.extend(file_items)
+                    continue
                 _, patch_blob = _baseline_blob(repo, commit_oid, vfile)
-                file_diags = "\n".join(ln for ln in diag_text.splitlines() if ln.startswith(f"{vfile}:"))
+                file_diags = "\n".join(f"{it['path']}:{it['line']}: {it['reason']}." for it in file_items)
                 if patch_blob is None or not patch_check.allow_patch_context_whitespace_only(repo, vfile, patch_blob, file_diags):
-                    raise FinalizerError(
-                        ErrorCode.WHITESPACE_VIOLATION,
-                        f"历史提交 patch whitespace 错误: {vfile}",
-                        final_phase="local_validation",
-                    )
+                    failing_violations.extend(file_items)
+
+            if failing_violations or unparsed_lines:
+                _raise_whitespace_error(
+                    failing_violations,
+                    prefix=f"历史提交存在 whitespace 错误 ({commit_oid[:12]})",
+                    fallback_message=f"历史提交存在 whitespace 错误 ({commit_oid[:12]}): diff",
+                )
 
         for rel in changed_paths:
             if not rel or rel.startswith("/") or ".." in PurePosixPath(rel).parts or rel == ".git" or rel.startswith(".git/"):

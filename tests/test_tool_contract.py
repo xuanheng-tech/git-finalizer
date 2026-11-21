@@ -41,6 +41,7 @@ RELEASED_CANONICAL_LINEAGE = (
     ("v1.6.0", "943ebf4e56ae344cf88ab3dc579d5e497663b052c8ccbade5c42f1f52b5efa93"),
     ("67e3e6c", "288d3126d9459913714aa2e3934773111b2d4430fb73a8385fd33511807a823c"),
     ("v1.9.9", "010cb09faf50921149b5d22b26093d9445d15461e8d3f10b7faff35259cd8e45"),
+    ("v2.0.0", "d1525f9aeb9dcdda18fc9a5e8914ba3ba7c7ed26d9ec5463ca1359b428940bf1"),
 )
 
 
@@ -206,7 +207,7 @@ class ToolContractTests(unittest.TestCase):
         )
         self.assertEqual(compatibility["toolchain_contract_version"], 6)
         self.assertEqual(compatibility["context_loader_contract_version"], 4)
-        self.assertEqual(compatibility["snapshot_runner_contract_version"], 4)
+        self.assertEqual(compatibility["snapshot_runner_contract_version"], 5)
         self.assertEqual(compatibility["git_finalizer_contract_version"], 10)
         self.assertEqual(compatibility["worktree_controller_adapter_version"], 3)
         self.assertEqual(

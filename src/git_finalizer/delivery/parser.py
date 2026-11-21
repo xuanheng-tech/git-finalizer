@@ -8,6 +8,8 @@ combined with `--summary` from emitting a fabricated success summary.
 from __future__ import annotations
 
 import dataclasses
+import shlex
+from typing import Any
 
 from git_finalizer import __version__
 
@@ -140,6 +142,77 @@ class ParsedCLI:
     paths: list[str] = dataclasses.field(default_factory=list)
     unknown_flags: list[str] = dataclasses.field(default_factory=list)
     parse_error: str | None = None
+    parse_diagnostics: dict[str, Any] | None = None
+
+
+def _format_command_hint(tokens: list[str]) -> str:
+    return shlex.join(["git-finalize", *tokens])
+
+
+def _strip_flags(
+    argv: list[str],
+    flag_names: set[str],
+    *,
+    value_flags: set[str] | None = None,
+) -> list[str]:
+    vflags = value_flags or set()
+    cleaned: list[str] = []
+    idx = 0
+    total = len(argv)
+    while idx < total:
+        tok = argv[idx]
+        if tok == "--":
+            cleaned.extend(argv[idx:])
+            break
+        flag = tok.partition("=")[0] if tok.startswith("--") and "=" in tok else tok
+        if flag in flag_names:
+            if flag in vflags and "=" not in tok and idx + 1 < total:
+                idx += 2
+            else:
+                idx += 1
+            continue
+        cleaned.append(tok)
+        if flag in VALUE_FLAGS and "=" not in tok and idx + 1 < total:
+            cleaned.append(argv[idx + 1])
+            idx += 2
+            continue
+        idx += 1
+    return cleaned
+
+
+def _strip_paths_after_separator(argv: list[str]) -> list[str]:
+    idx = 0
+    total = len(argv)
+    while idx < total:
+        tok = argv[idx]
+        if tok == "--":
+            return list(argv[:idx])
+        flag = tok.partition("=")[0] if tok.startswith("--") and "=" in tok else tok
+        if flag in VALUE_FLAGS and "=" not in tok and idx + 1 < total:
+            idx += 2
+            continue
+        idx += 1
+    return list(argv)
+
+
+def _set_cli_error(
+    parsed: ParsedCLI,
+    message: str,
+    *,
+    issue: str,
+    suggested_argv: list[str] | None = None,
+    note: str | None = None,
+) -> None:
+    parsed.parse_error = message
+    hint: dict[str, Any] = {
+        "issue": issue,
+        "action": parsed.action,
+    }
+    if suggested_argv is not None:
+        hint["suggested_command"] = _format_command_hint(suggested_argv)
+    if note:
+        hint["note"] = note
+    parsed.parse_diagnostics = {"cli_hint": hint}
 
 
 def usage_text() -> str:
@@ -207,6 +280,9 @@ def parse_cli(argv: list[str]) -> ParsedCLI:
     explicit_mode_flag = False
     seen_flags: set[str] = set()
     repeatable_flags = {"--allow-test-fixture", "--scanner"}
+    stray_positionals: list[str] = []
+    option_tokens_before_sep: list[str] = []
+    stray_error_only = False
 
     idx = 0
     total = len(argv)
@@ -225,12 +301,14 @@ def parse_cli(argv: list[str]) -> ParsedCLI:
             if inline_value is not None:
                 parsed.parse_error = f"选项 {flag} 不接受参数值"
             parsed.dispatch = "version"
+            option_tokens_before_sep.append(token)
             idx += 1
             continue
         if flag in {"--help", "-h"}:
             if inline_value is not None:
                 parsed.parse_error = f"选项 {flag} 不接受参数值"
             parsed.dispatch = "help"
+            option_tokens_before_sep.append(token)
             idx += 1
             continue
 
@@ -240,6 +318,7 @@ def parse_cli(argv: list[str]) -> ParsedCLI:
             if flag in seen_flags and parsed.parse_error is None:
                 parsed.parse_error = f"选项 {flag} 只允许指定一次 ({flag} may be supplied once)"
             seen_flags.add(flag)
+            option_tokens_before_sep.append(token)
             if flag == "--summary":
                 parsed.summary = True
             elif flag == "--diagnostics":
@@ -276,12 +355,14 @@ def parse_cli(argv: list[str]) -> ParsedCLI:
             if inline_value is not None:
                 value = inline_value
                 step = 1
+                option_tokens_before_sep.append(token)
             else:
                 if idx + 1 >= total:
                     parsed.parse_error = f"选项 {flag} 缺少参数值"
                     break
                 value = argv[idx + 1]
                 step = 2
+                option_tokens_before_sep.extend([token, value])
 
             if flag == "--mode":
                 explicit_mode_flag = True
@@ -408,18 +489,32 @@ def parse_cli(argv: list[str]) -> ParsedCLI:
                 parsed.parse_error = f"不支持的选项: {token}"
         else:
             parsed.unknown_flags.append(token)
+            stray_positionals.append(token)
             if parsed.parse_error is None:
                 parsed.parse_error = f"位置参数必须放在 `--` 之后: {token}"
+                stray_error_only = True
         idx += 1
 
     if parsed.dispatch in {"version", "help"}:
         if parsed.summary:
             parsed.dispatch = "core"
-            parsed.parse_error = "--version/--help 不能与 --summary 混用"
+            _set_cli_error(
+                parsed,
+                "--version/--help 不能与 --summary 混用",
+                issue="metadata_with_summary",
+                suggested_argv=_strip_flags(argv, {"--summary"}),
+                note="Remove --summary when requesting --version or --help.",
+            )
         return parsed
 
     if parsed.diagnostics and not parsed.summary and parsed.parse_error is None:
-        parsed.parse_error = "--diagnostics requires --summary"
+        _set_cli_error(
+            parsed,
+            "--diagnostics requires --summary",
+            issue="diagnostics_requires_summary",
+            suggested_argv=["--summary", *argv],
+            note="Add --summary alongside --diagnostics.",
+        )
         return parsed
 
     if "repo-plan" in exclusive_actions or "repo-ensure" in exclusive_actions:
@@ -436,18 +531,60 @@ def parse_cli(argv: list[str]) -> ParsedCLI:
             parsed.dispatch = "integration_publish"
         return parsed
 
+    if stray_error_only and stray_positionals:
+        path_taking_actions = {
+            "normal",
+            "verify-only",
+            "commit-only",
+            "initial-publish",
+            "initial-commit-only",
+            "initial-branch-publish",
+        }
+        first_tok = stray_positionals[0]
+        if parsed.action in path_taking_actions:
+            suggested = [*option_tokens_before_sep, "--", *stray_positionals, *parsed.paths]
+            _set_cli_error(
+                parsed,
+                f"位置参数必须放在 `--` 之后: {first_tok}（修正: {_format_command_hint(suggested)}）",
+                issue="missing_double_dash_before_paths",
+                suggested_argv=suggested,
+                note="Place `--` before explicit repository-relative file paths.",
+            )
+        else:
+            suggested = list(option_tokens_before_sep)
+            _set_cli_error(
+                parsed,
+                f"位置参数必须放在 `--` 之后（且 --{parsed.action} 不接受文件列表）: {first_tok}（修正: {_format_command_hint(suggested)}）",
+                issue="paths_disallowed_for_mode",
+                suggested_argv=suggested,
+                note=f"--{parsed.action} operates on existing commits/refs and does not take file paths.",
+            )
+        return parsed
+
     if parsed.parse_error:
         return parsed
 
     if len(exclusive_actions) > 1:
         if "resume-initial-publish" in exclusive_actions and "initial-publish" in exclusive_actions:
-            parsed.parse_error = "--resume-initial-publish 不接受 --initial-publish"
+            _set_cli_error(
+                parsed,
+                "--resume-initial-publish 不接受 --initial-publish",
+                issue="conflicting_actions",
+                suggested_argv=_strip_flags(argv, {"--initial-publish"}),
+                note="Use --resume-initial-publish alone to resume an existing root commit.",
+            )
         else:
             parsed.parse_error = "互斥模式选项不能同时指定"
         return parsed
 
     if exclusive_actions and explicit_mode_flag:
-        parsed.parse_error = "--mode 不能与互斥模式选项同时指定"
+        _set_cli_error(
+            parsed,
+            "--mode 不能与互斥模式选项同时指定",
+            issue="mode_conflicts_with_action",
+            suggested_argv=_strip_flags(argv, {"--mode"}, value_flags={"--mode"}),
+            note="Remove --mode when invoking a dedicated action flag.",
+        )
         return parsed
 
     if parsed.action not in {
@@ -470,56 +607,199 @@ def parse_cli(argv: list[str]) -> ParsedCLI:
         return parsed
 
     if parsed.action == "initial-publish" and not parsed.remote:
-        parsed.parse_error = "--initial-publish 必须指定 --remote"
+        _set_cli_error(
+            parsed,
+            "--initial-publish 必须指定 --remote",
+            issue="missing_remote",
+            suggested_argv=[*option_tokens_before_sep, "--remote", "origin", *(["--", *parsed.paths] if parsed.paths else [])],
+            note="Pass --remote <remote> (for example --remote origin) with --initial-publish.",
+        )
         return parsed
 
-    if parsed.action in {"initial-branch-publish", "publish-existing-branch", "publish-existing-history", "resume-initial-publish", "resume-existing-history-publish", "sync-published-branch", "retire-remote-branch", "retire-local-branch"} and not parsed.remote:
-        parsed.parse_error = f"--{parsed.action} 必须指定 --remote"
+    if parsed.action in {
+        "initial-branch-publish",
+        "publish-existing-branch",
+        "publish-existing-history",
+        "resume-initial-publish",
+        "resume-existing-history-publish",
+        "sync-published-branch",
+        "retire-remote-branch",
+        "retire-local-branch",
+    } and not parsed.remote:
+        _set_cli_error(
+            parsed,
+            f"--{parsed.action} 必须指定 --remote",
+            issue="missing_remote",
+            suggested_argv=[*option_tokens_before_sep, "--remote", "origin", *(["--", *parsed.paths] if parsed.paths else [])],
+            note=f"Pass --remote <remote> with --{parsed.action}.",
+        )
         return parsed
 
     if parsed.action in {"normal", "commit-only", "verify-only", "initial-commit-only"} and parsed.remote is not None:
-        parsed.parse_error = "--remote 只允许与 --initial-publish 或 --initial-branch-publish 一起使用"
+        suggested = _strip_flags(argv, {"--remote"}, value_flags={"--remote"})
+        _set_cli_error(
+            parsed,
+            "--remote 只允许与 --initial-publish 或 --initial-branch-publish 一起使用（当前模式请移除 --remote，或改用 --initial-branch-publish / --publish-existing-branch）",
+            issue="remote_disallowed_for_mode",
+            suggested_argv=suggested,
+            note="Normal mode uses the branch's configured upstream; remove --remote or use --publish-existing-branch.",
+        )
         return parsed
+
+    if parsed.action in {"publish-existing-branch", "publish-existing-history", "resume-existing-history-publish"}:
+        if not parsed.remote_branch:
+            _set_cli_error(
+                parsed,
+                f"--{parsed.action} 必须指定 --remote-branch",
+                issue="missing_remote_branch",
+                suggested_argv=[*option_tokens_before_sep, "--remote-branch", "<branch>"],
+                note=f"Pass --remote-branch <branch> with --{parsed.action}.",
+            )
+            return parsed
+        if parsed.message is not None:
+            _set_cli_error(
+                parsed,
+                f"--{parsed.action} 不接受 --message",
+                issue="message_disallowed_for_mode",
+                suggested_argv=_strip_flags(argv, {"--message", "-m"}, value_flags={"--message", "-m"}),
+                note=f"--{parsed.action} publishes existing commits without creating a new commit.",
+            )
+            return parsed
+        if parsed.dry_run:
+            _set_cli_error(
+                parsed,
+                f"--{parsed.action} 不支持 --dry-run",
+                issue="dry_run_unsupported_for_mode",
+                suggested_argv=_strip_flags(argv, {"--dry-run"}),
+                note=f"Remove --dry-run when running --{parsed.action}.",
+            )
+            return parsed
+        if parsed.paths and not (parsed.action == "publish-existing-branch" and parsed.reviewed_sensitive_source is not None):
+            _set_cli_error(
+                parsed,
+                f"--{parsed.action} 不接受文件列表或 -- 分隔符",
+                issue="paths_disallowed_for_mode",
+                suggested_argv=_strip_paths_after_separator(argv),
+                note=f"Remove `-- <paths>` when publishing existing commits with --{parsed.action}.",
+            )
+            return parsed
 
     if parsed.action == "resume-publish":
         if parsed.remote is not None:
-            parsed.parse_error = "--resume-publish 不接受 --remote"
+            _set_cli_error(
+                parsed,
+                "--resume-publish 不接受 --remote",
+                issue="remote_disallowed_for_mode",
+                suggested_argv=_strip_flags(argv, {"--remote"}, value_flags={"--remote"}),
+                note="--resume-publish pushes to the branch's configured upstream.",
+            )
             return parsed
         if parsed.message is not None:
-            parsed.parse_error = "--resume-publish 不接受 --message"
+            _set_cli_error(
+                parsed,
+                "--resume-publish 不接受 --message",
+                issue="message_disallowed_for_mode",
+                suggested_argv=_strip_flags(argv, {"--message", "-m"}, value_flags={"--message", "-m"}),
+                note="--resume-publish publishes existing commits without creating a new commit.",
+            )
             return parsed
         if parsed.reviewed_sensitive_source is not None:
             if not parsed.paths:
                 parsed.parse_error = "reviewed resume publication 要求 exact review scope 文件列表"
                 return parsed
         elif parsed.paths:
-            parsed.parse_error = "--resume-publish 不接受文件列表"
+            _set_cli_error(
+                parsed,
+                "--resume-publish 不接受文件列表",
+                issue="paths_disallowed_for_mode",
+                suggested_argv=_strip_paths_after_separator(argv),
+                note="Remove `-- <paths>` when resuming publication of existing commits.",
+            )
             return parsed
         if parsed.dry_run:
-            parsed.parse_error = "--resume-publish 不支持 --dry-run"
+            _set_cli_error(
+                parsed,
+                "--resume-publish 不支持 --dry-run",
+                issue="dry_run_unsupported_for_mode",
+                suggested_argv=_strip_flags(argv, {"--dry-run"}),
+                note="Remove --dry-run when running --resume-publish.",
+            )
             return parsed
 
     if parsed.action == "resume-initial-publish":
         if parsed.message is not None:
-            parsed.parse_error = "--resume-initial-publish 不接受 --message"
+            _set_cli_error(
+                parsed,
+                "--resume-initial-publish 不接受 --message",
+                issue="message_disallowed_for_mode",
+                suggested_argv=_strip_flags(argv, {"--message", "-m"}, value_flags={"--message", "-m"}),
+                note="--resume-initial-publish publishes the existing root commit.",
+            )
             return parsed
         if parsed.paths:
-            parsed.parse_error = "--resume-initial-publish 不接受文件列表"
+            _set_cli_error(
+                parsed,
+                "--resume-initial-publish 不接受文件列表",
+                issue="paths_disallowed_for_mode",
+                suggested_argv=_strip_paths_after_separator(argv),
+                note="Remove `-- <paths>` when resuming initial root commit publication.",
+            )
             return parsed
         if parsed.dry_run:
-            parsed.parse_error = "--resume-initial-publish 不支持 --dry-run"
+            _set_cli_error(
+                parsed,
+                "--resume-initial-publish 不支持 --dry-run",
+                issue="dry_run_unsupported_for_mode",
+                suggested_argv=_strip_flags(argv, {"--dry-run"}),
+                note="Remove --dry-run when running --resume-initial-publish.",
+            )
             return parsed
         if len(parsed.allow_test_fixtures) != len(set(parsed.allow_test_fixtures)):
             parsed.parse_error = "duplicate root resume test fixture path"
             return parsed
 
-    if parsed.action in {"retire-remote-branch", "retire-local-branch"} and parsed.ci_required and parsed.ci_status in (None, "", "NOT_REQUIRED"):
-        parsed.parse_error = "--ci-required 必须指定 --ci-status"
-        return parsed
+    if parsed.action in {"retire-remote-branch", "retire-local-branch"}:
+        if parsed.ci_required and parsed.ci_status in (None, "", "NOT_REQUIRED"):
+            _set_cli_error(
+                parsed,
+                "--ci-required 必须指定 --ci-status（示例: --ci-required --ci-status SUCCESS --ci-commit-oid <oid> --ci-verification-source tool_authenticated）",
+                issue="missing_ci_status",
+                suggested_argv=[*option_tokens_before_sep, "--ci-status", "SUCCESS", "--ci-commit-oid", "<integrated-oid>", "--ci-verification-source", "tool_authenticated"],
+                note="Provide --ci-status SUCCESS, --ci-commit-oid, and --ci-verification-source alongside --ci-required.",
+            )
+            return parsed
+        has_active_ci_evidence = (
+            parsed.ci_status not in (None, "NOT_REQUIRED")
+            or parsed.ci_verification_source not in (None, "not_required")
+            or bool(parsed.ci_commit_oid)
+            or bool(parsed.ci_verified_at)
+        )
+        if not parsed.ci_required and has_active_ci_evidence:
+            ci_flags = {"--ci-status", "--ci-commit-oid", "--ci-verification-source", "--ci-verified-at"}
+            suggested = (
+                _strip_flags(argv, ci_flags, value_flags=ci_flags)
+                if parsed.action == "retire-local-branch"
+                else [*option_tokens_before_sep, "--ci-required"]
+            )
+            _set_cli_error(
+                parsed,
+                "未启用 --ci-required 时 CI evidence 必须为 not_required（若需校验 CI 请补加 --ci-required，否则移除 --ci-* 参数）",
+                issue="ci_evidence_without_ci_required",
+                suggested_argv=suggested,
+                note="Add --ci-required to enforce CI evidence, or remove --ci-* flags when CI is not required.",
+            )
+            return parsed
 
     if parsed.snapshot is not None:
         if parsed.action != "initial-publish":
-            parsed.parse_error = "--snapshot 只允许与 --initial-publish 一起使用"
+            suggested = _strip_flags(argv, {"--snapshot"}, value_flags={"--snapshot"})
+            _set_cli_error(
+                parsed,
+                f"--snapshot 只允许与 --initial-publish 一起使用（当前模式 {parsed.action} 请移除 --snapshot；如需在 commit trailer 记录引用请改用 --trace-ref）",
+                issue="snapshot_disallowed_for_mode",
+                suggested_argv=suggested,
+                note="Remove --snapshot (valid only with --initial-publish on an unborn repo); use --trace-ref to record a provenance trailer.",
+            )
             return parsed
         if len(parsed.snapshot) != 64 or not all(ch in "0123456789abcdef" for ch in parsed.snapshot):
             parsed.parse_error = "--snapshot 要求 64 位小写十六进制 ID"
@@ -533,7 +813,20 @@ def parse_cli(argv: list[str]) -> ParsedCLI:
         or parsed.snapshot
         or parsed.reviewed_sensitive_source
     ):
-        parsed.parse_error = "--sync-published-branch 不接受提交内容、fixture override 或路径参数"
+        suggested = _strip_paths_after_separator(
+            _strip_flags(
+                argv,
+                {"--message", "-m", "--allow-test-fixture", "--merge-parent", "--snapshot", "--reviewed-sensitive-source"},
+                value_flags={"--message", "-m", "--allow-test-fixture", "--merge-parent", "--snapshot", "--reviewed-sensitive-source"},
+            )
+        )
+        _set_cli_error(
+            parsed,
+            "--sync-published-branch 不接受提交内容、fixture override 或路径参数",
+            issue="disallowed_flags_for_sync",
+            suggested_argv=suggested,
+            note="Remove commit/path/review flags from --sync-published-branch.",
+        )
         return parsed
 
     if parsed.action in {"retire-remote-branch", "retire-local-branch"} and (
@@ -546,7 +839,63 @@ def parse_cli(argv: list[str]) -> ParsedCLI:
         or parsed.paths
         or parsed.snapshot
     ):
-        parsed.parse_error = f"--{parsed.action} 不接受提交内容、exception、review 或路径参数"
+        disallowed = {
+            "--message",
+            "-m",
+            "--allow-test-fixture",
+            "--fixture-exceptions",
+            "--allow-large-binary",
+            "--reviewed-sensitive-source",
+            "--merge-parent",
+            "--snapshot",
+        }
+        suggested = _strip_paths_after_separator(_strip_flags(argv, disallowed, value_flags=disallowed))
+        _set_cli_error(
+            parsed,
+            f"--{parsed.action} 不接受提交内容、exception、review 或路径参数",
+            issue="disallowed_flags_for_retirement",
+            suggested_argv=suggested,
+            note=f"Remove commit/path/exception flags from --{parsed.action}.",
+        )
+        return parsed
+
+    if (
+        parsed.action in {"normal", "commit-only", "initial-publish", "initial-commit-only", "initial-branch-publish"}
+        and not parsed.dry_run
+        and parsed.message is None
+    ):
+        # Detect common mistake: `--` placed before `-m` / `--message`.
+        misplaced_idx = next(
+            (i for i, tok in enumerate(parsed.paths) if tok in {"-m", "--message"} or tok.startswith("--message=")),
+            None,
+        )
+        if misplaced_idx is not None:
+            tok = parsed.paths[misplaced_idx]
+            remaining_paths = list(parsed.paths)
+            moved_flags: list[str]
+            if tok.startswith("--message="):
+                moved_flags = [remaining_paths.pop(misplaced_idx)]
+            elif misplaced_idx + 1 < len(remaining_paths):
+                moved_flags = [remaining_paths.pop(misplaced_idx), remaining_paths.pop(misplaced_idx)]
+            else:
+                moved_flags = [remaining_paths.pop(misplaced_idx), "<message>"]
+            suggested = [*option_tokens_before_sep, *moved_flags, "--", *remaining_paths]
+            _set_cli_error(
+                parsed,
+                f"缺少 --message（检测到 {tok} 位于 `--` 之后；请把 --message/-m 移到 `--` 之前）",
+                issue="message_flag_after_double_dash",
+                suggested_argv=suggested,
+                note="Move --message/-m before the `--` path separator.",
+            )
+            return parsed
+        suggested = [*option_tokens_before_sep, "--message", "<commit-message>", "--", *parsed.paths]
+        _set_cli_error(
+            parsed,
+            "缺少 --message/-m 提交说明",
+            issue="missing_message",
+            suggested_argv=suggested,
+            note="Supply --message <text> (or -m <text>) before `--`.",
+        )
         return parsed
 
     return parsed

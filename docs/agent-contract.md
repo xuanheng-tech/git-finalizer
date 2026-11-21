@@ -36,7 +36,7 @@ warnings_omitted, worktree_path
 | `resume` | a resume interface reported recovery context |
 | `fixture_exceptions` | the run consumed documented fixture exceptions |
 | `reviewed_sensitive_sources` | `--reviewed-sensitive-source` reviews were consumed |
-| `diagnostics` | runtime identity was captured and a content refusal/risk occurred, or `--diagnostics` was requested |
+| `diagnostics` | runtime identity was captured and a content/whitespace/CLI/retirement refusal or risk occurred, or `--diagnostics` was requested |
 
 ### Metadata-only diagnostics
 
@@ -44,9 +44,12 @@ warnings_omitted, worktree_path
 keys, their order, the classification triple and exit codes remain unchanged. Consumers must
 ignore unfamiliar optional keys and classify the operation from the existing triple.
 Exec-forwarded companions and the serialization-failure fallback retain their existing shapes.
-Ordinary summaries omit diagnostics to preserve their output efficiency budget. Content refusals
-and dry-run content risks include it automatically; `--summary --diagnostics` requests runtime
-identity even without a finding. `--diagnostics` requires `--summary`, may appear once, and is
+Ordinary summaries omit diagnostics to preserve their output efficiency budget. Content refusals,
+dry-run content risks, whitespace violations (`diagnostics.whitespace`), CLI flag-matrix hints
+(`diagnostics.cli_hint`), and Controller retirement-plan blocks (`diagnostics.retirement`) include
+it automatically with metadata-only details (never source line excerpts, secret values, or raw
+Controller stdout/stderr prose); `--summary --diagnostics` requests runtime identity even without
+a finding. `--diagnostics` requires `--summary`, may appear once, and is
 supported by the bash core modes, not the exec-forwarded bootstrap/integration companions.
 
 `runtime.entrypoint` and `runtime.content_scanner` each contain `path` and `sha256`. The entrypoint

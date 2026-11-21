@@ -2131,7 +2131,13 @@ def _run_retire_branch(cli: ParsedCLI, summary: SummaryState) -> tuple[int, Summ
             retirement_plan.verify_capabilities(repo)
             retirement_plan.preflight(plan_args)
         except retirement_plan.RetirementBlocked as exc:
-            raise FinalizerError(ErrorCode.RETIREMENT_BLOCKED, str(exc), final_phase="preflight") from exc
+            summary.retirement_result = "RETIREMENT_BLOCKED"
+            raise FinalizerError(
+                exc.error_code,
+                str(exc),
+                final_phase="preflight",
+                diagnostics={"retirement": exc.details} if exc.details else None,
+            ) from exc
 
     _require_clean_repo_state(repo, info)
     summary.worktree_before_state = "clean"
@@ -2150,7 +2156,21 @@ def _run_retire_branch(cli: ParsedCLI, summary: SummaryState) -> tuple[int, Summ
         raise FinalizerError(ErrorCode.RETIREMENT_BLOCKED, "live remote integration target 不存在", final_phase="remote_preflight")
     live_int_oid = live_refs[integration_ref]
     if expected_integrated_oid and live_int_oid != expected_integrated_oid:
-        raise FinalizerError(ErrorCode.RETIREMENT_BLOCKED, "live integration target OID 与 expected_integrated_oid 不一致", final_phase="remote_preflight")
+        summary.retirement_result = "RETIREMENT_BLOCKED"
+        replan = retirement_plan.replan_command(repo, branch, remote, cli.integrated_into or "main")
+        raise FinalizerError(
+            ErrorCode.RETIREMENT_BLOCKED,
+            f"live integration target OID 与 expected_integrated_oid 不一致（live={live_int_oid[:12]}, expected={expected_integrated_oid[:12]}）；plan 已过时，请重新生成计划: {replan}",
+            final_phase="remote_preflight",
+            diagnostics={
+                "retirement": {
+                    "mismatched_fields": ["expected_integrated_oid"],
+                    "live_integrated_oid": live_int_oid,
+                    "expected_integrated_oid": expected_integrated_oid,
+                    "replan_command": replan,
+                }
+            },
+        )
     summary.retirement_integrated_oid = live_int_oid
 
     if plan_args is not None and not plan_args.expected_integrated_oid:
@@ -2258,14 +2278,24 @@ def _run_retire_branch(cli: ParsedCLI, summary: SummaryState) -> tuple[int, Summ
         try:
             exec_res = retirement_plan.execute(plan_args, progress=prog)
         except retirement_plan.RetirementBlocked as exc:
+            mutated = bool(prog.get("mutation_attempted"))
             summary.retirement_lease_bound = bool(prog.get("expected_oid_lease_bound"))
-            summary.retirement_result = f"{'LOCAL' if is_local else 'REMOTE'}_DELETE_UNVERIFIED"
+            summary.retirement_result = exc.result_code or (
+                f"{'LOCAL' if is_local else 'REMOTE'}_DELETE_UNVERIFIED"
+                if mutated
+                else "RETIREMENT_BLOCKED"
+            )
             raise FinalizerError(
-                ErrorCode.RETIREMENT_BLOCKED,
+                exc.error_code,
                 str(exc),
-                status="failed" if prog.get("mutation_attempted") else "blocked",
+                status="failed" if mutated else "blocked",
                 final_phase=summary.final_phase,
-                next_action=exc.next_action or "inspect_remote_state_then_rerun_same_retirement",
+                next_action=(
+                    exc.next_action
+                    if mutated
+                    else "resolve_blocker_and_retry"
+                ),
+                diagnostics={"retirement": exc.details} if exc.details else None,
             ) from exc
         summary.retirement_lease_bound = bool(exec_res.get("expected_oid_lease_bound", True))
         summary.retirement_receipt_id = exec_res.get("receipt_id")

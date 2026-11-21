@@ -1,6 +1,6 @@
 ---
 name: git-change-delivery
-description: "用于仓库文件变更的上下文加载、测试与 evidence 范围选择、Snapshot Runner 审查，以及按授权边界使用 Git Finalizer commit、bootstrap、publication 和 remote verify；不管理 worktree lifecycle。"
+description: "用于仓库文件变更的测试与 evidence 范围选择、Snapshot Runner 审查，以及按授权边界使用 Git Finalizer commit、bootstrap、publication 和 remote verify；不管理 worktree lifecycle。"
 ---
 
 # Git change delivery
@@ -20,9 +20,8 @@ description: "用于仓库文件变更的上下文加载、测试与 evidence �
 选定的仓库开始，不创建或移除 worktree。`toolchain_compatibility.json` 绑定各工具的 public
 contract version。
 
-1. 读取适用规则；需要确定性上下文时用 Context Loader，见
-   [references/context-loader.md](references/context-loader.md)。
-2. 在三个工具之外实施最小变更，运行从定向到必要程度的真实检查。工具输出不替代测试。
+1. 按需直接读取适用规则与目标文件（`rg`/`git status`/定点读文件）；历史只读工具 Context Loader 已冻结，不再作为常规前置步骤（遗留说明见 [references/context-loader.md](references/context-loader.md)）。
+2. 在工具之外实施最小变更，运行从定向到必要程度的真实检查。工具输出不替代测试。
 3. 需要审查证据时用 Snapshot Runner，默认 `--summary`，摘要不足再读 artifact，见
    [references/snapshot-runner.md](references/snapshot-runner.md)。简单且不发布的任务可跳过；
    发布前通常至少审查当前 diff。
@@ -83,9 +82,9 @@ merge/main integration、force push、history rewrite、tag/release、branch 删
 
 ## 职责分离
 
-Context Loader 只读上下文；Snapshot Runner 只收集只读快照、不运行测试、不提交；Git
-Finalizer 只做提交前验证、显式路径暂存、commit、fast-forward-safe push 和发布后核验。审阅、
-核验和验收由执行 agent 完成；仓库或平台明确要求独立审核时等待该审核。
+Snapshot Runner 只收集只读快照、不运行测试、不提交；Git Finalizer 只做提交前验证、显式路径
+暂存、commit、fast-forward-safe push 和发布后核验（历史只读工具 Context Loader 已冻结，不
+参与常规交付）。审阅、核验和验收由执行 agent 完成；仓库或平台明确要求独立审核时等待该审核。
 
 ## 停止发布的情况
 

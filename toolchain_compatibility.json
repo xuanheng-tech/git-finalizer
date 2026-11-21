@@ -54,7 +54,7 @@
     }
   },
   "schema_version": 1,
-  "snapshot_runner_contract_version": 4,
+  "snapshot_runner_contract_version": 5,
   "toolchain_contract_version": 6,
   "tools": {
     "context-loader": {
@@ -69,7 +69,7 @@
       "source_directory": "git-finalizer"
     },
     "snapshot-runner": {
-      "public_cli_contract_version": 4,
+      "public_cli_contract_version": 5,
       "skill_contract_version": 2,
       "skill_manifest": "manifests/snapshot-runner/tool_skill_manifest.json",
       "source_directory": "snapshot-runner",

@@ -73,14 +73,16 @@ without the reader protocol cannot protect invocations already running that olde
 
 ## Installation
 
-There is no package index. Releases are published as GitHub Release assets:
+`git-finalizer` (v2.0.0+) is published on PyPI (<https://pypi.org/project/git-finalizer/>) for
+direct installation via `uv tool install git-finalizer` or `pip install git-finalizer`. Releases
+are also published as verifiable GitHub Release assets:
 each one carries `git-finalizer-<version>.tar.gz` plus a `SHA256SUMS.txt` that names it, from
 <https://github.com/xuanheng-tech/git-finalizer/releases>. GitHub carries every release from `v1.5.0`
 onward; earlier versions were published on the governed delivery remote described in
-[docs/release-governance.md](docs/release-governance.md), so they are not listed here. Fetch both,
-verify the artifact, then install it. Select an actual published release from that page and set
-`GF_RELEASE_VERSION` to its version number without the `v` prefix; it can differ from the source
-version above.
+[docs/release-governance.md](docs/release-governance.md), so they are not listed here. To install
+from a verified release tarball, fetch both, verify the artifact, then install it. Select an actual
+published release from that page and set `GF_RELEASE_VERSION` to its version number without the `v`
+prefix; it can differ from the source version above.
 
 ```bash
 GF_RELEASE_VERSION='<published-version>'

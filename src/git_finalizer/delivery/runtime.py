@@ -208,6 +208,7 @@ class SummaryState:
     diagnostics_requested: bool = False
     entrypoint: Path | None = None
     scan_diagnostic: dict[str, Any] | None = None
+    extra_diagnostics: dict[str, Any] | None = None
     trailers_applied: list[str] = dataclasses.field(default_factory=list)
     agent_trace_note: dict[str, Any] | None = None
     external_scanners: list[dict[str, Any]] = dataclasses.field(default_factory=list)
@@ -284,7 +285,7 @@ class SummaryState:
                 for rev in reviews:
                     rev["content_scan"] = "passed"
             payload["reviewed_sensitive_sources"] = reviews
-        if self.diagnostics_requested or self.scan_diagnostic is not None:
+        if self.diagnostics_requested or self.scan_diagnostic is not None or self.extra_diagnostics:
             rt = runtime_identity(self.entrypoint)
             if self.scan_diagnostic and self.scan_diagnostic.get("scanner_sha256") and "content_scanner" in rt:
                 rt["content_scanner"]["sha256"] = str(self.scan_diagnostic["scanner_sha256"])
@@ -301,6 +302,10 @@ class SummaryState:
             }
             if self.scan_diagnostic and "external_scanners" in self.scan_diagnostic:
                 diag_obj["external_scanners"] = self.scan_diagnostic["external_scanners"]
+            if self.extra_diagnostics:
+                for key, value in self.extra_diagnostics.items():
+                    if key not in {"schema_version", "runtime", "content_scan"}:
+                        diag_obj[key] = value
             payload["diagnostics"] = diag_obj
         return payload
 

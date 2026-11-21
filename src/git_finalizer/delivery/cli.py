@@ -48,9 +48,31 @@ def _apply_error_to_summary(summary: SummaryState, exc: FinalizerError) -> Summa
         summary.resume_remote = str(exc.resume.get("remote") or "") or None
     if exc.scan_diagnostic:
         summary.scan_diagnostic = dict(exc.scan_diagnostic)
+    if exc.diagnostics:
+        summary.extra_diagnostics = dict(exc.diagnostics)
     if exc.reviewed_sensitive_sources:
         summary.reviewed_sensitive_sources = [dict(x) for x in exc.reviewed_sensitive_sources]
     return summary
+
+
+def _emit_human_diagnostics(diagnostics: dict[str, object] | None) -> None:
+    if not isinstance(diagnostics, dict):
+        return
+    cli_hint = diagnostics.get("cli_hint")
+    if isinstance(cli_hint, dict) and cli_hint.get("suggested_command"):
+        print(f"建议命令: {cli_hint['suggested_command']}", file=sys.stderr)
+    whitespace = diagnostics.get("whitespace")
+    if isinstance(whitespace, dict):
+        violations = whitespace.get("violations")
+        if isinstance(violations, list):
+            for item in violations:
+                if isinstance(item, dict) and item.get("path"):
+                    loc = f"{item['path']}:{item['line']}" if item.get("line") is not None else str(item["path"])
+                    commit_tag = f" ({item['commit']})" if item.get("commit") else ""
+                    print(f"  - {loc}: {item.get('reason', 'whitespace violation')}{commit_tag}", file=sys.stderr)
+    retirement = diagnostics.get("retirement")
+    if isinstance(retirement, dict) and retirement.get("replan_command"):
+        print(f"恢复计划命令: {retirement['replan_command']}", file=sys.stderr)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -72,11 +94,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             summary = engine.create_summary(cli, entrypoint=entrypoint)
             if cli.parse_error:
-                err = FinalizerError(ErrorCode.CLI_INVALID_ARGS, cli.parse_error, final_phase="cli")
+                err = FinalizerError(
+                    ErrorCode.CLI_INVALID_ARGS,
+                    cli.parse_error,
+                    final_phase="cli",
+                    diagnostics=cli.parse_diagnostics,
+                )
                 if cli.summary:
                     _emit_summary_json(_apply_error_to_summary(summary, err).to_dict())
                 else:
                     print(f"ERROR [{err.code}]: {err.message}", file=sys.stderr)
+                    _emit_human_diagnostics(err.diagnostics)
                 return err.exit_code
 
             if cli.dispatch == "bootstrap":
@@ -103,6 +131,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         else:
             print(f"ERROR [{exc.code}]: {exc.message}", file=sys.stderr)
+            _emit_human_diagnostics(exc.diagnostics)
             if exc.commit_created and exc.commit_sha and cli is not None:
                 if cli.action == "initial-branch-publish":
                     from git_finalizer.git_io import run_git

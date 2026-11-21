@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -17,7 +18,7 @@ from typing import Any
 import uuid
 
 from git_finalizer import __version__
-from git_finalizer.errors import ErrorCode
+from git_finalizer.errors import VALID_ERROR_CODE, ErrorCode
 from git_finalizer.git_io import FULL_OID_RE, clean_git_env, validate_remote_name
 from git_finalizer.json_io import loads_unique
 
@@ -44,6 +45,7 @@ class RetirementBlocked(RuntimeError):
         controller_complete: bool = False,
         result_code: str | None = None,
         receipt_id: str | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         self.error_code = error_code
         self.next_action = next_action
@@ -52,7 +54,53 @@ class RetirementBlocked(RuntimeError):
         self.controller_complete = controller_complete
         self.result_code = result_code
         self.receipt_id = receipt_id
+        self.details = dict(details) if details is not None else None
         super().__init__(message)
+
+
+def replan_command(
+    repo: Path | str,
+    branch: str,
+    remote: str,
+    integrated_into: str,
+) -> str:
+    return shlex.join(
+        [
+            "worktree-controller",
+            "branch-retirement-plan",
+            "--repo",
+            str(Path(repo).resolve()),
+            "--branch",
+            branch,
+            "--remote",
+            remote,
+            "--integrated-into",
+            integrated_into,
+            "--json",
+        ]
+    )
+
+
+def _extract_controller_error_codes(stdout: str) -> list[str]:
+    """Extract only validated uppercase error code tokens from Controller JSON; never forward prose."""
+    if not stdout or not stdout.strip():
+        return []
+    try:
+        payload = loads_unique(stdout)
+    except (ValueError, UnicodeDecodeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    errors = payload.get("errors")
+    if not isinstance(errors, list):
+        return []
+    codes: list[str] = []
+    for item in errors[:8]:
+        if isinstance(item, dict):
+            code = item.get("code")
+            if isinstance(code, str) and VALID_ERROR_CODE.fullmatch(code) and code not in codes:
+                codes.append(code)
+    return codes
 
 
 def git_run(
@@ -97,21 +145,47 @@ def controller_call(repo: Path, command: str, *arguments: str) -> dict[str, Any]
             close_fds=True,
             check=False,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise RetirementBlocked(
+            f"Controller {command} refused or failed (timed out)",
+            error_code=ErrorCode.CONTROLLER_UNAVAILABLE,
+            details={"controller_command": command, "controller_error_codes": ["TIMEOUT"]},
+        ) from exc
     except (OSError, subprocess.SubprocessError) as exc:
         raise RetirementBlocked(
             f"Controller {command} refused or failed: {exc}",
             error_code=ErrorCode.CONTROLLER_UNAVAILABLE,
+            details={"controller_command": command},
         ) from exc
     if completed.returncode != 0 or not completed.stdout.strip():
+        err_codes = _extract_controller_error_codes(completed.stdout)
+        if err_codes:
+            err_code = (
+                ErrorCode.RETIREMENT_BLOCKED
+                if any(c in {"UNKNOWN_RETIREMENT_PLAN", "INVALID_PLAN_ID", "RETIREMENT_EXECUTION_ACTIVE"} for c in err_codes)
+                else ErrorCode.CONTROLLER_UNAVAILABLE
+            )
+            raise RetirementBlocked(
+                f"Controller {command} refused or failed (codes={','.join(err_codes)})",
+                error_code=err_code,
+                details={"controller_command": command, "controller_error_codes": err_codes},
+            )
         raise RetirementBlocked(
             f"Controller {command} refused or failed",
             error_code=ErrorCode.CONTROLLER_UNAVAILABLE,
+            details={"controller_command": command},
         )
     try:
         payload = loads_unique(completed.stdout)
     except (ValueError, UnicodeDecodeError) as exc:
         raise RetirementBlocked("Controller returned invalid JSON") from exc
     if not isinstance(payload, dict) or payload.get("errors"):
+        err_codes = _extract_controller_error_codes(completed.stdout)
+        if err_codes:
+            raise RetirementBlocked(
+                f"Controller {command} refused or failed (codes={','.join(err_codes)})",
+                details={"controller_command": command, "controller_error_codes": err_codes},
+            )
         raise RetirementBlocked("Controller returned invalid or error payload")
     decision = payload.get("decision")
     if not isinstance(decision, dict):
@@ -229,26 +303,41 @@ def identity_matches(
     status_only: bool = False,
     check_expiry: bool = True,
 ) -> None:
+    replan = replan_command(arguments.repo, arguments.branch, arguments.remote, arguments.integrated_into)
     if status_only:
         if type(doc.get("schema_version")) is not int or doc["schema_version"] != 1:
             raise RetirementBlocked("Controller plan status schema_version mismatch")
-        if (
-            doc.get("plan_id") != arguments.plan_id
-            or doc.get("branch") != arguments.branch
-            or doc.get("remote") != arguments.remote
-            or doc.get("expected_oid") != arguments.expected_oid
-        ):
-            raise RetirementBlocked("Controller retirement identity differs")
+        mismatched: list[str] = []
+        if doc.get("plan_id") != arguments.plan_id:
+            mismatched.append("plan_id")
+        if doc.get("branch") != arguments.branch:
+            mismatched.append("branch")
+        if doc.get("remote") != arguments.remote:
+            mismatched.append("remote")
+        if doc.get("expected_oid") != arguments.expected_oid:
+            mismatched.append("expected_oid")
+        if mismatched:
+            raise RetirementBlocked(
+                f"Controller retirement identity differs (fields={','.join(mismatched)}; create a fresh plan: {replan})",
+                details={"mismatched_fields": mismatched, "replan_command": replan},
+            )
         expected_int = normalize_integrated_ref(arguments.integrated_into, arguments.remote)
         if doc.get("integrated_ref") != expected_int:
             raise RetirementBlocked(
-                f"Controller plan integration ref differs: {doc.get('integrated_ref')} != {expected_int}"
+                f"Controller plan integration ref differs: {doc.get('integrated_ref')} != {expected_int}",
+                details={"mismatched_fields": ["integrated_ref"], "replan_command": replan},
             )
         exp_int_oid = doc.get("expected_integrated_oid")
         if not isinstance(exp_int_oid, str) or FULL_OID_RE.fullmatch(exp_int_oid) is None:
-            raise RetirementBlocked("Controller retirement identity differs (expected_integrated_oid invalid)")
+            raise RetirementBlocked(
+                f"Controller retirement identity differs (fields=expected_integrated_oid_invalid; create a fresh plan: {replan})",
+                details={"mismatched_fields": ["expected_integrated_oid_invalid"], "replan_command": replan},
+            )
         if arguments.expected_integrated_oid and exp_int_oid != arguments.expected_integrated_oid:
-            raise RetirementBlocked("Controller retirement identity differs (expected_integrated_oid)")
+            raise RetirementBlocked(
+                f"Controller retirement identity differs (fields=expected_integrated_oid; create a fresh plan: {replan})",
+                details={"mismatched_fields": ["expected_integrated_oid"], "replan_command": replan},
+            )
         return
     if grant:
         if type(doc.get("schema_version")) is not int or doc["schema_version"] != 1:
@@ -315,15 +404,38 @@ def _ref_present(repo: Path, arguments: argparse.Namespace) -> bool:
 
 def preflight(arguments: argparse.Namespace) -> dict[str, Any]:
     repo = Path(arguments.repo).resolve()
-    status = controller_call(
-        repo,
-        "branch-retirement-status",
-        "--plan-id",
-        arguments.plan_id,
-    )
-    if str(status.get("code") or "") == "BRANCH_RETIREMENT_DRIFTED":
-        raise RetirementBlocked("Controller retirement verdict blocks: plan is stale; create a fresh plan")
+    replan = replan_command(repo, arguments.branch, arguments.remote, arguments.integrated_into)
+    try:
+        status = controller_call(
+            repo,
+            "branch-retirement-status",
+            "--plan-id",
+            arguments.plan_id,
+        )
+    except RetirementBlocked as exc:
+        err_codes = (exc.details or {}).get("controller_error_codes") or []
+        if "UNKNOWN_RETIREMENT_PLAN" in err_codes:
+            details = dict(exc.details or {})
+            details["replan_command"] = replan
+            raise RetirementBlocked(
+                f"{exc}; create a fresh plan: {replan}",
+                error_code=exc.error_code,
+                details=details,
+            ) from exc
+        raise
+    status_code = str(status.get("code") or "")
     current = status.get("current")
+    status_blockers = list(current.get("blockers") or []) if isinstance(current, dict) else []
+    if status_code in {"BRANCH_RETIREMENT_DRIFTED", "BRANCH_RETIREMENT_PARTIAL_DRIFTED"} or "PLAN_STATE_DRIFT" in status_blockers:
+        raise RetirementBlocked(
+            f"Controller retirement verdict blocks ({status_code}; blockers={status_blockers}): plan is stale; create a fresh plan: {replan}",
+            details={
+                "controller_code": status_code,
+                "blockers": status_blockers,
+                "completed_operations": list(status.get("completed_operations") or []),
+                "replan_command": replan,
+            },
+        )
     if not isinstance(current, dict):
         raise RetirementBlocked("Controller branch-retirement-status returned invalid current payload")
     identity_matches(arguments, current, status_only=True)
@@ -337,24 +449,37 @@ def preflight(arguments: argparse.Namespace) -> dict[str, Any]:
         arguments.operation,
     )
     code = str(decision.get("code") or "")
-    blockers = decision.get("blockers") or []
-    if code == "BRANCH_RETIREMENT_DRIFTED":
-        raise RetirementBlocked("Controller retirement verdict blocks: plan is stale; create a fresh plan")
+    blockers = list(decision.get("blockers") or [])
+    if code in {"BRANCH_RETIREMENT_DRIFTED", "RETIREMENT_STALE"} or "PLAN_STATE_DRIFT" in blockers:
+        raise RetirementBlocked(
+            f"Controller retirement verdict blocks ({code}; blockers={blockers}): plan is stale; create a fresh plan: {replan}",
+            details={
+                "controller_code": code,
+                "blockers": blockers,
+                "replan_command": replan,
+            },
+        )
     reval = decision.get("minimum_revalidation")
     if isinstance(reval, dict):
         expected_int = normalize_integrated_ref(arguments.integrated_into, arguments.remote)
-        if (
-            reval.get("plan_id") != arguments.plan_id
-            or reval.get("operation") != arguments.operation
-            or reval.get("branch") != arguments.branch
-            or reval.get("expected_oid") != arguments.expected_oid
-            or reval.get("integrated_ref") != expected_int
-            or (
-                arguments.expected_integrated_oid
-                and reval.get("expected_integrated_oid") != arguments.expected_integrated_oid
+        mismatched: list[str] = []
+        if reval.get("plan_id") != arguments.plan_id:
+            mismatched.append("plan_id")
+        if reval.get("operation") != arguments.operation:
+            mismatched.append("operation")
+        if reval.get("branch") != arguments.branch:
+            mismatched.append("branch")
+        if reval.get("expected_oid") != arguments.expected_oid:
+            mismatched.append("expected_oid")
+        if reval.get("integrated_ref") != expected_int:
+            mismatched.append("integrated_ref")
+        if arguments.expected_integrated_oid and reval.get("expected_integrated_oid") != arguments.expected_integrated_oid:
+            mismatched.append("expected_integrated_oid")
+        if mismatched:
+            raise RetirementBlocked(
+                f"Controller retirement identity differs (minimum_revalidation; fields={','.join(mismatched)}; create a fresh plan: {replan})",
+                details={"mismatched_fields": mismatched, "replan_command": replan},
             )
-        ):
-            raise RetirementBlocked("Controller retirement identity differs (minimum_revalidation)")
     elif code == "RETIREMENT_EXECUTABLE":
         raise RetirementBlocked("Controller branch-retirement-verify missing minimum_revalidation")
     if code == "RETIREMENT_OPERATION_COMPLETE" and (
@@ -371,7 +496,10 @@ def preflight(arguments: argparse.Namespace) -> dict[str, Any]:
         and set(blockers) <= {"RETIREMENT_AUTHORIZATION_ACTIVE", "ABSENT_UNATTESTED"}
     ):
         return decision
-    raise RetirementBlocked(f"Controller retirement verdict blocks ({code}; blockers={blockers})")
+    raise RetirementBlocked(
+        f"Controller retirement verdict blocks ({code}; blockers={blockers})",
+        details={"controller_code": code, "blockers": blockers, "replan_command": replan},
+    )
 
 
 def _write_result_file(directory: Path, payload: dict[str, Any]) -> Path:
@@ -692,7 +820,16 @@ def execute(
             "expected_oid_lease_bound": False,
         }
 
-    raise RetirementBlocked(f"Controller retirement verdict blocks ({auth_code}; blockers={blockers})")
+    replan = replan_command(repo, arguments.branch, arguments.remote, arguments.integrated_into)
+    if auth_code == "RETIREMENT_STALE" or "PLAN_STATE_DRIFT" in blockers:
+        raise RetirementBlocked(
+            f"Controller retirement verdict blocks ({auth_code}; blockers={blockers}): plan is stale; create a fresh plan: {replan}",
+            details={"controller_code": auth_code, "blockers": list(blockers), "replan_command": replan},
+        )
+    raise RetirementBlocked(
+        f"Controller retirement verdict blocks ({auth_code}; blockers={blockers})",
+        details={"controller_code": auth_code, "blockers": list(blockers), "replan_command": replan},
+    )
 
 
 def _holder_is_foreign(holder: Any) -> bool:

@@ -36,9 +36,12 @@ retirement 的 `--dry-run` 会做完整 live preflight，成功为 `RETIREMENT_P
 `push.executed=true`、`push.result=succeeded`（integration candidate 为 `published`，
 中断后重入为 `already_published_recovered`）。commit-only 要求 `commit.created=true` 并给出 OID。
 
-`status` 为 `blocked`/`failed` 时，读 `reason`、`next_action` 和 `resume`：
+`status` 为 `blocked`/`failed` 时，读 `reason`、`next_action`、`resume` 与可选 `diagnostics`：
 
-- `resolve_blocker_and_retry`：修正 `reason` 指出的问题后，用同一入口重试。
+- `resolve_blocker_and_retry`：修正 `reason` 或 `diagnostics` 指出的问题后重试。参数错误时可直接
+  采用 `diagnostics.cli_hint.suggested_command`；whitespace 拒绝时按 `diagnostics.whitespace.violations`
+  列出的精确 `path:line:reason` 一次性修完；retirement plan 漂移/过期时直接执行
+  `diagnostics.retirement.replan_command` 重新生成计划。
 - commit 已创建但 push 失败：保留该 commit，用 resume 入口和报告的 OID 继续，不要 recommit。
 - push 结果不确定：先用 `git ls-remote` 读远端事实，再决定 resume 还是已完成。
 
