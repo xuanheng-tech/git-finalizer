@@ -26,10 +26,10 @@
       "tool-temp-dir"
     ]
   },
-  "public_cli_contract_sha256": "20c9a33eeeb47d80a1b83ccf878b906e13bda4465e044cbe525894e3bf5f36a5",
+  "public_cli_contract_sha256": "7319caee679318f58b58fe88394a0ef0f4ddf56681385c5b2a795acf93cb01b6",
   "schema_version": 2,
   "skill_contract_version": 2,
   "tool_commit": "@release",
   "tool_name": "git-finalizer",
-  "tool_version": "2.0.0"
+  "tool_version": "2.0.1"
 }

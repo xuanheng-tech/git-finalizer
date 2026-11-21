@@ -18,6 +18,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from git_finalizer import __version__ as GF_VERSION
 from git_finalizer.delivery import (
     content_scan,
     policy,
@@ -917,7 +918,7 @@ class Overhaul200Tests(unittest.TestCase):
             up = sync.upgrade(sources_v2, "git-finalizer", bin_dir=bin_dir)
         self.assertEqual(up["status"], "UPGRADED")
         self.assertEqual(up["previous_version"], "1.9.9")
-        self.assertEqual(up["target_version"], "2.0.0")
+        self.assertEqual(up["target_version"], GF_VERSION)
 
         # Activate production bundle: obsolete legacy_sidecar.py retires while new console scripts remain intact.
         with mock.patch.dict(os.environ, up_env):
@@ -938,7 +939,7 @@ class Overhaul200Tests(unittest.TestCase):
             self.assertTrue((bin_dir / name).is_symlink(), f"active console script deleted: {name}")
             ver = subprocess.run([str(bin_dir / name), "--version"], capture_output=True, text=True, check=False)
             self.assertEqual(ver.returncode, 0, msg=ver.stderr)
-            self.assertIn("2.0.0", ver.stdout)
+            self.assertIn(GF_VERSION, ver.stdout)
 
 
 if __name__ == "__main__":

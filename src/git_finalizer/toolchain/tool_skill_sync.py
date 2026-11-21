@@ -25,7 +25,7 @@ import time
 import tomllib
 from typing import Any
 
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 SCHEMA_VERSION = 1
 TOOL_SKILL_MANIFEST_SCHEMA_VERSION = 2
 SKILL_NAME = "git-change-delivery"

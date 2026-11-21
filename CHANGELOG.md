@@ -13,6 +13,23 @@ section is invented for it.
 
 ## Unreleased
 
+## 2.0.1 - 2026-11-22
+
+- Added: actionable `diagnostics.cli_hint` structured suggestions on CLI flag-matrix blocks
+  (missing `--`, `--message`/`-m` after `--`, missing `--message`, disallowed paths or `--snapshot`
+  for the selected mode, and `--ci-*` retirement flags without `--ci-required`) while preserving
+  all fail-closed safety guards.
+- Added: metadata-only `diagnostics.whitespace` reporting (`files`, `total_count`, `omitted_count`,
+  and exact `path`/`line`/`reason` plus `commit` on commit-range scans with zero source excerpts)
+  and `diagnostics.retirement` reporting (exact mismatched fields, sanitized Controller error codes,
+  and fresh `worktree-controller branch-retirement-plan` recovery commands on stale/drifted/unknown
+  plans).
+- Changed: removed routine Context Loader pre-step guidance from the `git-change-delivery` Skill
+  (`SKILL.md`, `references/context-loader.md`, `references/git-finalizer.md`), synced the
+  `snapshot-runner` mirror manifest and `toolchain_compatibility.json` to `2.7.0` (`contract_version`
+  **5**), registered the `v2.0.0` canonical Skill payload lineage, and updated `README.md` with PyPI
+  installation instructions (`v2.0.0+`).
+
 ## 2.0.0 - 2026-11-20
 
 - Changed: re-architected Git Finalizer into a zero-dependency pure-Python package (`pyproject.toml`,

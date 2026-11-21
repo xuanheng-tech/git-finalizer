@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "git-finalizer"
-version = "2.0.0"
+version = "2.0.1"
 description = "Fail-closed Git delivery gatekeeper and toolchain compatibility manager for autonomous coding agents"
 readme = "README.md"
 license = "Apache-2.0"
