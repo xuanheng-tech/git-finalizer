@@ -50,6 +50,8 @@ compatibility shim 的独立 SHA-256 由 ToolSkillManifest v2 绑定，并随 bu
 ./tool-skill-sync --source-root /absolute/projects --source-repo git-finalizer=/absolute/worktree check --source-only git-finalizer
 ./tool-skill-sync status
 ./tool-skill-sync doctor --repo /absolute/checkout --summary
+./tool-skill-sync skill-check [--strict-clients]
+./tool-skill-sync skill-install
 ./tool-skill-sync check <context-loader|snapshot-runner|git-finalizer>
 ./tool-skill-sync --install-root <isolated-root> install <tool> --allow-dirty-source
 ./tool-skill-sync --install-root <isolated-root> rollback <tool>
@@ -57,6 +59,15 @@ compatibility shim 的独立 SHA-256 由 ToolSkillManifest v2 绑定，并随 bu
 ./tool-skill-sync rollback <tool> --activate-production
 ./tool-skill-sync upgrade <tool> [--dry-run]
 ```
+
+`skill-check` 的顶层 `status` 与默认退出码（`status == "PASS"` 返回 `0`，否则返回 `1`）仅反映共享根
+`--agents-root` 内受管 Skill payload 与谱系校验结果，以保持既有调用方兼容；多客户端暴露状态由独立字段
+`client_status`（优先级 `FAIL > DRIFT > PASS > SKIP`）与 `clients_summary`（含各状态计数与分组列表）汇总，
+需要把客户端 `DRIFT`/`FAIL` 纳入失败退出码时可显式传入 `--strict-clients`。客户端支持
+`--codex-home`、`--claude-home`、`--gemini-home`、`--cursor-home`、`--qoder-home` 与 `--qoder-cn-home`
+覆盖：`codex`、`cursor` 与 `qoder` 识别 `~/.agents/skills` 原生发现且严格拦截残留断链/错链/遮蔽目录；
+`claude` 与 `qoder-cn` 维护并校验逐 Skill 符号链接（禁止整根链接）；`gemini`（AGY）按官方
+`~/.gemini/config/skills.json` 的 `entries: [{"path": "..."}]` 架构无损读写（兼容读取旧 `paths`/`skillPaths`/`skills`）。
 
 `status` 只读取 canonical source、PATH 中 stable entries 与 active Skill，输出 `none`、
 `binary_only`、`skill_only` 或 `incompatible`。`check` 对 schema、tool/version、entrypoints、Skill

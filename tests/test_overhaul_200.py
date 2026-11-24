@@ -33,9 +33,25 @@ FINALIZER = ROOT / "git-finalize"
 SKILL_SYNC = ROOT / "tool-skill-sync"
 
 
-def _clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+_CLIENT_HOME_ENV_VARS = (
+    "CODEX_HOME",
+    "CLAUDE_CONFIG_DIR",
+    "GEMINI_HOME",
+    "CURSOR_HOME",
+    "QODER_HOME",
+    "QODER_CN_HOME",
+)
+
+
+def _clean_env(extra: dict[str, str] | None = None, *, home: Path | None = None) -> dict[str, str]:
     env = dict(os.environ)
-    for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY"):
+    for key in (
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        *_CLIENT_HOME_ENV_VARS,
+    ):
         env.pop(key, None)
     env.update(
         {
@@ -48,6 +64,8 @@ def _clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:
             "GIT_COMMITTER_EMAIL": "tester@example.com",
         }
     )
+    if home is not None:
+        env["HOME"] = str(home)
     if extra:
         env.update(extra)
     return env
@@ -86,9 +104,29 @@ class Overhaul200Tests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
+        self.home = self.root / "home"
+        self.home.mkdir()
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
+
+    def _isolated_client_env(
+        self,
+        home: Path | None = None,
+        extra: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        base = home or self.home
+        client_env = {
+            "CODEX_HOME": str(base / ".codex"),
+            "CLAUDE_CONFIG_DIR": str(base / ".claude"),
+            "GEMINI_HOME": str(base / ".gemini"),
+            "CURSOR_HOME": str(base / ".cursor"),
+            "QODER_HOME": str(base / ".qoder"),
+            "QODER_CN_HOME": str(base / ".qoder-cn"),
+        }
+        if extra:
+            client_env.update(extra)
+        return _clean_env(client_env, home=base)
 
     def _run_finalizer(
         self, *args: str, extra_env: dict[str, str] | None = None
@@ -654,17 +692,18 @@ class Overhaul200Tests(unittest.TestCase):
         self.assertEqual((norm, host, port), ("http://127.0.0.1:3000", "127.0.0.1", 3000))
 
     def test_multi_client_skill_install_and_check_without_shared_root_leak(self) -> None:
-        agents_root = self.root / "agents"
+        agents_root = self.home / ".agents"
         bin_dir = self.root / "bin"
         hooks_dir = self.root / "hooks"
         bin_dir.mkdir()
         hooks_dir.mkdir()
-        codex_home = self.root / ".codex"
-        claude_home = self.root / ".claude"
-        gemini_home = self.root / ".gemini"
-        cursor_home = self.root / ".cursor"
-        qoder_home = self.root / ".qoder"
-        for d in (codex_home, claude_home, gemini_home, cursor_home, qoder_home):
+        codex_home = self.home / ".codex"
+        claude_home = self.home / ".claude"
+        gemini_home = self.home / ".gemini"
+        cursor_home = self.home / ".cursor"
+        qoder_home = self.home / ".qoder"
+        qoder_cn_home = self.home / ".qoder-cn"
+        for d in (codex_home, claude_home, gemini_home, cursor_home, qoder_home, qoder_cn_home):
             d.mkdir()
 
         common_args = [
@@ -689,13 +728,16 @@ class Overhaul200Tests(unittest.TestCase):
             str(cursor_home),
             "--qoder-home",
             str(qoder_home),
+            "--qoder-cn-home",
+            str(qoder_cn_home),
         ]
+        isolated_env = self._isolated_client_env(self.home)
 
         res_inst = subprocess.run(
             [*common_args, "skill-install", *client_flags],
             capture_output=True,
             text=True,
-            env=_clean_env(),
+            env=isolated_env,
             check=False,
         )
         self.assertEqual(res_inst.returncode, 0, msg=res_inst.stderr or res_inst.stdout)
@@ -703,27 +745,377 @@ class Overhaul200Tests(unittest.TestCase):
         self.assertEqual(install_doc["status"], "INSTALLED")
         self.assertFalse((agents_root / "skills" / "synced").exists())
 
-        for cdir in (claude_home, cursor_home, qoder_home):
-            link = cdir / "skills" / "git-change-delivery"
-            self.assertTrue(link.is_symlink(), msg=f"missing per-skill symlink in {cdir}")
-            self.assertEqual(link.resolve(), (agents_root / "skills" / "git-change-delivery").resolve())
-        self.assertFalse((codex_home / "skills" / "git-change-delivery").exists())
+        resolved_fixture_root = self.root.resolve()
+        for cdir in (claude_home, qoder_cn_home):
+            for sname in ("git-change-delivery", "three-tool-git-workflow"):
+                link = cdir / "skills" / sname
+                self.assertTrue(link.is_symlink(), msg=f"missing per-skill symlink {sname} in {cdir}")
+                target = (agents_root / "skills" / sname).resolve()
+                self.assertEqual(link.resolve(), target)
+                self.assertTrue(link.resolve().is_relative_to(resolved_fixture_root))
+                self.assertTrue(Path(os.readlink(link)).resolve().is_relative_to(resolved_fixture_root))
+
+        for cname, cdir in (("codex", codex_home), ("cursor", cursor_home), ("qoder", qoder_home)):
+            self.assertEqual(install_doc["clients"][cname]["status"], "NATIVE")
+            self.assertFalse((cdir / "skills" / "git-change-delivery").exists())
+            self.assertFalse((cdir / "skills" / "git-change-delivery").is_symlink())
 
         gemini_cfg = json.loads((gemini_home / "config" / "skills.json").read_text(encoding="utf-8"))
-        self.assertIn(str(agents_root / "skills"), gemini_cfg["paths"])
+        self.assertNotIn("paths", gemini_cfg)
+        self.assertEqual(gemini_cfg["entries"], [{"path": str((agents_root / "skills").resolve())}])
 
         res_chk = subprocess.run(
             [*common_args, "skill-check", *client_flags],
             capture_output=True,
             text=True,
-            env=_clean_env(),
+            env=isolated_env,
             check=False,
         )
         self.assertEqual(res_chk.returncode, 0, msg=res_chk.stderr or res_chk.stdout)
         chk_doc = json.loads(res_chk.stdout)
         self.assertEqual(chk_doc["status"], "PASS")
-        for cname in ("codex", "claude", "gemini", "cursor", "qoder"):
+        self.assertEqual(chk_doc["client_status"], "PASS")
+        self.assertEqual(
+            chk_doc["clients_summary"],
+            {
+                "status": "PASS",
+                "counts": {"PASS": 6, "DRIFT": 0, "FAIL": 0, "SKIP": 0},
+                "passed": ["claude", "codex", "cursor", "gemini", "qoder", "qoder-cn"],
+                "drifted": [],
+                "failing": [],
+                "skipped": [],
+            },
+        )
+        for cname in ("codex", "claude", "gemini", "cursor", "qoder", "qoder-cn"):
             self.assertEqual(chk_doc["clients"][cname]["status"], "PASS")
+        self.assertEqual(
+            chk_doc["clients"]["qoder-cn"]["per_skill_links"],
+            {"git-change-delivery": True, "three-tool-git-workflow": True},
+        )
+        self.assertEqual(chk_doc["clients"]["qoder-cn"]["invalid_links"], [])
+
+        # Verify default HOME/QODER_CN_HOME env isolation without explicit --*-home flags.
+        env_home = self.root / "env-only-home"
+        env_home.mkdir()
+        (env_home / ".qoder-cn").mkdir()
+        env_only = self._isolated_client_env(env_home)
+        res_env_inst = subprocess.run(
+            [*common_args, "skill-install"],
+            capture_output=True,
+            text=True,
+            env=env_only,
+            check=False,
+        )
+        self.assertEqual(res_env_inst.returncode, 0, msg=res_env_inst.stderr or res_env_inst.stdout)
+        for sname in ("git-change-delivery", "three-tool-git-workflow"):
+            qcn_link = env_home / ".qoder-cn" / "skills" / sname
+            self.assertTrue(qcn_link.is_symlink())
+            self.assertEqual(qcn_link.resolve(), (agents_root / "skills" / sname).resolve())
+            self.assertTrue(qcn_link.resolve().is_relative_to(resolved_fixture_root))
+
+    def test_gemini_agy_skills_json_lossless_and_legacy_tolerance(self) -> None:
+        agents_root = self.home / ".agents"
+        gemini_home = self.home / ".gemini"
+        (gemini_home / "config").mkdir(parents=True)
+        cfg_path = gemini_home / "config" / "skills.json"
+        original_cfg = {
+            "inherits": [{"path": "/shared/base/skills.json", "include_only": ["linter"]}],
+            "entries": [{"path": "/custom/team/skills", "exclude": ["experimental-.*"], "note": "keep"}],
+            "custom_extra": {"preserve": True},
+        }
+        cfg_path.write_text(json.dumps(original_cfg, indent=2) + "\n", encoding="utf-8")
+
+        base_cmd = [
+            str(SKILL_SYNC),
+            "--source-repo",
+            f"git-finalizer={ROOT}",
+            "--agents-root",
+            str(agents_root),
+        ]
+        isolated_env = self._isolated_client_env(self.home)
+
+        res1 = subprocess.run(
+            [*base_cmd, "skill-install"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res1.returncode, 0, msg=res1.stderr or res1.stdout)
+        after1 = json.loads(cfg_path.read_text(encoding="utf-8"))
+        self.assertNotIn("paths", after1)
+        self.assertEqual(after1["inherits"], original_cfg["inherits"])
+        self.assertEqual(after1["custom_extra"], original_cfg["custom_extra"])
+        self.assertEqual(after1["entries"][0], original_cfg["entries"][0])
+        self.assertEqual(after1["entries"][1], {"path": str((agents_root / "skills").resolve())})
+
+        # Second install must be idempotent without duplicating entries or mutating existing objects.
+        raw_before_second = cfg_path.read_text(encoding="utf-8")
+        res2 = subprocess.run(
+            [*base_cmd, "skill-install"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res2.returncode, 0, msg=res2.stderr or res2.stdout)
+        self.assertEqual(cfg_path.read_text(encoding="utf-8"), raw_before_second)
+
+        # Home-relative (~/) entry with filter is recognized and preserved without duplication.
+        tilde_cfg = {
+            "inherits": original_cfg["inherits"],
+            "entries": [{"path": "~/.agents/skills", "exclude": ["scratch-.*"]}],
+        }
+        cfg_path.write_text(json.dumps(tilde_cfg, indent=2) + "\n", encoding="utf-8")
+        raw_tilde = cfg_path.read_text(encoding="utf-8")
+        res_tilde_chk = subprocess.run(
+            [*base_cmd, "skill-check"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res_tilde_chk.returncode, 0, msg=res_tilde_chk.stderr or res_tilde_chk.stdout)
+        tilde_chk = json.loads(res_tilde_chk.stdout)
+        self.assertEqual(tilde_chk["clients"]["gemini"]["status"], "PASS")
+        self.assertEqual(
+            tilde_chk["clients"]["gemini"]["registered_paths"],
+            [str((agents_root / "skills").resolve())],
+        )
+        res_tilde_inst = subprocess.run(
+            [*base_cmd, "skill-install"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res_tilde_inst.returncode, 0, msg=res_tilde_inst.stderr or res_tilde_inst.stdout)
+        self.assertEqual(cfg_path.read_text(encoding="utf-8"), raw_tilde)
+
+        # Relative path resolves against gemini_dir.parent per AGY json_configs.md.
+        cfg_path.write_text(json.dumps({"entries": [{"path": ".agents/skills"}]}) + "\n", encoding="utf-8")
+        res_rel = subprocess.run(
+            [*base_cmd, "skill-check"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res_rel.returncode, 0, msg=res_rel.stderr or res_rel.stdout)
+        self.assertEqual(json.loads(res_rel.stdout)["clients"]["gemini"]["status"], "PASS")
+
+        # Legacy paths list is tolerated on read.
+        cfg_path.write_text(
+            json.dumps({"paths": [str((agents_root / "skills").resolve())]}) + "\n",
+            encoding="utf-8",
+        )
+        res_legacy = subprocess.run(
+            [*base_cmd, "skill-check"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res_legacy.returncode, 0, msg=res_legacy.stderr or res_legacy.stdout)
+        self.assertEqual(json.loads(res_legacy.stdout)["clients"]["gemini"]["status"], "PASS")
+
+        # Malformed entries schema fails closed on check and install.
+        cfg_path.write_text(json.dumps({"entries": [{"not_path": "x"}]}) + "\n", encoding="utf-8")
+        res_bad_chk = subprocess.run(
+            [*base_cmd, "skill-check"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res_bad_chk.returncode, 0, msg=res_bad_chk.stderr or res_bad_chk.stdout)
+        bad_doc = json.loads(res_bad_chk.stdout)
+        self.assertEqual(bad_doc["status"], "PASS")
+        self.assertEqual(bad_doc["clients"]["gemini"]["status"], "FAIL")
+        self.assertEqual(bad_doc["client_status"], "FAIL")
+
+        res_bad_inst = subprocess.run(
+            [*base_cmd, "skill-install"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res_bad_inst.returncode, 2)
+
+        # Symlinked skills.json fails closed on check and install.
+        real_target = self.root / "external-skills.json"
+        real_target.write_text(json.dumps({"entries": [{"path": str(agents_root / "skills")}]}), encoding="utf-8")
+        cfg_path.unlink()
+        os.symlink(str(real_target), cfg_path)
+        res_sym_chk = subprocess.run(
+            [*base_cmd, "skill-check"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res_sym_chk.returncode, 0, msg=res_sym_chk.stderr or res_sym_chk.stdout)
+        self.assertEqual(json.loads(res_sym_chk.stdout)["clients"]["gemini"]["status"], "FAIL")
+        res_sym_inst = subprocess.run(
+            [*base_cmd, "skill-install"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res_sym_inst.returncode, 2)
+
+    def test_native_clients_broken_links_and_client_summary_semantics(self) -> None:
+        agents_root = self.home / ".agents"
+        base_cmd = [
+            str(SKILL_SYNC),
+            "--source-repo",
+            f"git-finalizer={ROOT}",
+            "--agents-root",
+            str(agents_root),
+        ]
+        isolated_env = self._isolated_client_env(self.home)
+
+        # 1. All client homes absent -> payload PASS + client_status SKIP.
+        res_inst = subprocess.run(
+            [*base_cmd, "skill-install"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res_inst.returncode, 0, msg=res_inst.stderr or res_inst.stdout)
+
+        res_skip = subprocess.run(
+            [*base_cmd, "skill-check", "--strict-clients"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res_skip.returncode, 0, msg=res_skip.stderr or res_skip.stdout)
+        skip_doc = json.loads(res_skip.stdout)
+        self.assertEqual(skip_doc["status"], "PASS")
+        self.assertEqual(skip_doc["client_status"], "SKIP")
+        self.assertEqual(skip_doc["clients_summary"]["counts"], {"PASS": 0, "DRIFT": 0, "FAIL": 0, "SKIP": 6})
+
+        # 2. Native Cursor & Qoder pass without per-client links; missing Claude link gives payload PASS + client DRIFT.
+        cursor_home = self.home / ".cursor"
+        qoder_home = self.home / ".qoder"
+        claude_home = self.home / ".claude"
+        qoder_cn_home = self.home / ".qoder-cn"
+        for d in (cursor_home, qoder_home, claude_home, qoder_cn_home):
+            d.mkdir()
+        # Give qoder-cn valid links, leave claude missing links -> DRIFT.
+        (qoder_cn_home / "skills").mkdir()
+        for sname in ("git-change-delivery", "three-tool-git-workflow"):
+            os.symlink(str(agents_root / "skills" / sname), qoder_cn_home / "skills" / sname)
+
+        res_drift = subprocess.run(
+            [*base_cmd, "skill-check"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res_drift.returncode, 0, msg=res_drift.stderr or res_drift.stdout)
+        drift_doc = json.loads(res_drift.stdout)
+        self.assertEqual(drift_doc["status"], "PASS")
+        self.assertEqual(drift_doc["client_status"], "DRIFT")
+        self.assertEqual(drift_doc["clients"]["cursor"]["status"], "PASS")
+        self.assertTrue(drift_doc["clients"]["cursor"]["uses_shared_root"])
+        self.assertEqual(drift_doc["clients"]["qoder"]["status"], "PASS")
+        self.assertTrue(drift_doc["clients"]["qoder"]["uses_shared_root"])
+        self.assertEqual(drift_doc["clients"]["qoder-cn"]["status"], "PASS")
+        self.assertEqual(drift_doc["clients"]["claude"]["status"], "DRIFT")
+        self.assertEqual(drift_doc["clients_summary"]["drifted"], ["claude"])
+        self.assertEqual(drift_doc["clients_summary"]["passed"], ["cursor", "qoder", "qoder-cn"])
+
+        res_drift_strict = subprocess.run(
+            [*base_cmd, "skill-check", "--strict-clients"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res_drift_strict.returncode, 1)
+        self.assertEqual(json.loads(res_drift_strict.stdout)["status"], "PASS")
+        self.assertEqual(json.loads(res_drift_strict.stdout)["client_status"], "DRIFT")
+
+        # 3. Broken /tmp/... symlinks in Cursor, Qoder, and Qoder CN must FAIL (never masked by native discovery).
+        (cursor_home / "skills").mkdir()
+        os.symlink("/tmp/nonexistent-stale-root/agents/skills/git-change-delivery", cursor_home / "skills" / "git-change-delivery")
+        (qoder_home / "skills").mkdir()
+        wrong_target = self.root / "wrong-skill"
+        wrong_target.mkdir()
+        os.symlink(str(wrong_target), qoder_home / "skills" / "three-tool-git-workflow")
+        (qoder_cn_home / "skills" / "git-change-delivery").unlink()
+        os.symlink("/tmp/nonexistent-stale-root/agents/skills/git-change-delivery", qoder_cn_home / "skills" / "git-change-delivery")
+
+        res_fail = subprocess.run(
+            [*base_cmd, "skill-check"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        # Default exit code preserves payload compatibility (status == PASS -> exit 0).
+        self.assertEqual(res_fail.returncode, 0, msg=res_fail.stderr or res_fail.stdout)
+        fail_doc = json.loads(res_fail.stdout)
+        self.assertEqual(fail_doc["status"], "PASS")
+        self.assertEqual(fail_doc["client_status"], "FAIL")
+        self.assertEqual(fail_doc["clients"]["cursor"]["status"], "FAIL")
+        self.assertEqual(fail_doc["clients"]["cursor"]["invalid_links"], ["git-change-delivery"])
+        self.assertEqual(fail_doc["clients"]["qoder"]["status"], "FAIL")
+        self.assertEqual(fail_doc["clients"]["qoder"]["invalid_links"], ["three-tool-git-workflow"])
+        self.assertEqual(fail_doc["clients"]["qoder-cn"]["status"], "FAIL")
+        self.assertEqual(fail_doc["clients"]["qoder-cn"]["invalid_links"], ["git-change-delivery"])
+        self.assertEqual(fail_doc["clients_summary"]["failing"], ["cursor", "qoder", "qoder-cn"])
+        self.assertEqual(fail_doc["clients_summary"]["drifted"], ["claude"])
+
+        res_fail_strict = subprocess.run(
+            [*base_cmd, "skill-check", "--strict-clients"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res_fail_strict.returncode, 1)
+
+        # skill-install fails closed on broken/wrong symlinks in native clients (cursor/qoder)
+        # before mutating link-managed clients.
+        res_fail_inst = subprocess.run(
+            [*base_cmd, "skill-install"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res_fail_inst.returncode, 2)
+        self.assertFalse((claude_home / "skills").exists())
+
+        # 4. Shadowing non-symlink dir, whole-root symlink, and non-dir skills path all FAIL.
+        shutil.rmtree(cursor_home / "skills")
+        (cursor_home / "skills" / "git-change-delivery").mkdir(parents=True)
+        shutil.rmtree(qoder_home / "skills")
+        os.symlink(str(agents_root / "skills"), qoder_home / "skills")
+        (claude_home / "skills").write_text("not-a-dir\n", encoding="utf-8")
+        res_edge = subprocess.run(
+            [*base_cmd, "skill-check"],
+            capture_output=True,
+            text=True,
+            env=isolated_env,
+            check=False,
+        )
+        self.assertEqual(res_edge.returncode, 0, msg=res_edge.stderr or res_edge.stdout)
+        edge_doc = json.loads(res_edge.stdout)
+        self.assertEqual(edge_doc["clients"]["cursor"]["status"], "FAIL")
+        self.assertEqual(edge_doc["clients"]["cursor"]["invalid_links"], ["git-change-delivery"])
+        self.assertEqual(edge_doc["clients"]["qoder"]["status"], "FAIL")
+        self.assertIn("whole-root symlink", edge_doc["clients"]["qoder"]["error"])
+        self.assertEqual(edge_doc["clients"]["claude"]["status"], "FAIL")
+        self.assertIn("not a directory", edge_doc["clients"]["claude"]["error"])
 
     def test_wheel_installed_tool_skill_sync_doctor_and_source_files_upgrade(self) -> None:
         from git_finalizer.toolchain import tool_skill_sync as sync
